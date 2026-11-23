@@ -1,0 +1,9 @@
+# Only what the Dockerfile copies is needed; everything else is excluded so
+# secrets (.env) and local artifacts never reach the build context.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!migrations/
+**/*_test.go

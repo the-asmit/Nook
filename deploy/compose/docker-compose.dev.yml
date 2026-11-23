@@ -1,0 +1,84 @@
+# Local development dependencies for Nook. Start with `make dev-up`.
+#
+# Every image is pinned to an exact tag plus its multi-arch index digest, so
+# all developers (and CI) run byte-identical images on amd64 and arm64.
+# Credentials come from the repository's .env file (`make .env` creates one
+# with random passwords); compose refuses to start if any is missing.
+# Ports are published on 127.0.0.1 only, never on the LAN.
+
+name: nook-dev
+
+services:
+  postgres:
+    image: postgres:18.7-trixie@sha256:eb63372c1e05c755f55fa30cbd07aecc443676fc6c0fa90b9002d01537841e1a
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18+ images keep data in a version-specific subdirectory
+      # of /var/lib/postgresql, which makes major-version upgrades possible.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username=\"$${POSTGRES_USER}\" --dbname=\"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.10.3-alpine3.23@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
+    # Append-only persistence so queued jobs survive a container restart.
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+    environment:
+      # Lets redis-cli in the healthcheck authenticate without putting the
+      # password on its command line.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    # Upstream MinIO stopped publishing container images in late 2025, so
+    # this is Chainguard's build from the MinIO source (amd64 + arm64).
+    # Chainguard publishes only a moving "latest" tag for free, so the
+    # digest is the pin. See docs/decisions/0007-dev-stack-images.md.
+    image: cgr.dev/chainguard/minio:latest@sha256:bd92a45b821c0d85772c607ed7b49693efe78b3ffffae301b5d1b0981660de22
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      # Alias used by the healthcheck; readiness endpoints need no credentials.
+      MC_HOST_local: http://127.0.0.1:9000
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  default:
+    # A fixed name lets `make docker-run` attach the server container.
+    name: nook-dev
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

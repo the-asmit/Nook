@@ -1,0 +1,137 @@
+# golangci-lint v2 configuration. Run with `make lint`.
+version: "2"
+
+run:
+  timeout: 5m
+  # Lint integration tests too; they are code we maintain.
+  build-tags:
+    - integration
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - errorlint       # errors compared or type-asserted without errors.Is/As
+    - nilerr          # returning nil after checking err != nil
+    - bodyclose       # unclosed HTTP response bodies
+    - noctx           # network calls without a context
+    - sqlclosecheck   # unclosed sql.Rows / statements
+    - rowserrcheck    # rows.Err() not checked
+    - contextcheck    # functions that drop the incoming context
+    - durationcheck   # multiplying two durations
+    - makezero        # append to a slice created with non-zero length
+    - forcetypeassert # unchecked type assertions
+    - exhaustive      # switch statements missing enum cases
+    - copyloopvar
+    - fatcontext      # contexts nested in loops
+    # Security
+    - gosec
+    # Style and maintainability
+    - revive
+    - gocritic
+    - misspell
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - predeclared
+    - errname
+    - nolintlint      # //nolint must name the linter and give a reason
+    - thelper
+    - tparallel
+    - intrange
+    - perfsprint
+    - godot
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        # Reordering struct fields for padding hurts readability for no
+        # measurable gain in this code base.
+        - fieldalignment
+    errcheck:
+      check-type-assertions: true
+    gosec:
+      excludes:
+        # G104 duplicates errcheck.
+        - G104
+    revive:
+      rules:
+        - name: exported          # every exported identifier is documented
+        - name: package-comments
+        - name: blank-imports
+        - name: context-as-argument
+          arguments:
+            # Test helpers conventionally take t first.
+            - allow-types-before: "*testing.T"
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: errorf
+        - name: increment-decrement
+        - name: var-naming
+        - name: range
+        - name: receiver-naming
+        - name: indent-error-flow
+        - name: superfluous-else
+        - name: unreachable-code
+        - name: redefines-builtin-id
+        - name: unused-parameter
+        - name: unexported-return
+        - name: time-naming
+        - name: empty-block
+        - name: use-any
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        # Named results are used deliberately for deferred cleanup on error.
+        - unnamedResult
+        # Flags readable single-case selects and short if/else chains.
+        - singleCaseSwitch
+    misspell:
+      locale: US
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    godot:
+      scope: declarations
+    unparam:
+      check-exported: false
+
+  exclusions:
+    # Generated code (sqlc, protobuf) arrives in later stages.
+    generated: strict
+    rules:
+      # Tests use throwaway credentials in connection URLs and read
+      # fixture files from temporary paths.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101|G304"
+
+issues:
+  # Report every finding, not just the first few of each kind.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/the-asmit/nook

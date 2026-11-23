@@ -1,0 +1,20 @@
+# Build output and installed tools
+/bin/
+
+# Local secrets: never commit. .env.example is the template.
+.env
+.env.*
+!.env.example
+
+# Test and profiling artifacts
+*.test
+*.out
+coverage.*
+*.prof
+
+# Editors and OS files
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
