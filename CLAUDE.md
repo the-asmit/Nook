@@ -57,13 +57,17 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 
 | Task | Command |
 |------|---------|
-| Start Postgres/Redis/MinIO | `make dev-up` (creates `.env` with random secrets on first run) |
+| Create/update `.env` | `make env` (adds new variables, never changes existing values) |
+| Start Postgres/Redis/MinIO/Dex | `make dev-up` (runs `make env` first) |
 | Run the control plane | `make run-server` |
 | Unit tests (race) | `make test` |
 | Unit + integration tests | `make test-integration` (needs Docker) |
 | Lint / format | `make lint` / `make fmt` |
 | Vulnerability scan | `make vuln` |
 | New migration | `make migrate-new name=add_users` |
+| Regenerate store / check it | `make sqlc` / `make sqlc-check` |
+| Validate the OpenAPI spec | `make openapi-lint` |
+| CLI release archives | `make release-snapshot` (into `dist/`) |
 | Multi-arch image | `make docker-build`, then `make docker-run` |
 
 ## Conventions
@@ -91,8 +95,28 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 - **Images** are pinned as `tag@sha256:digest`. Integration tests use the same
   Postgres/Redis images as the compose file (`internal/testinfra`; a test
   enforces this).
+- **SQL** lives in `internal/store/queries/*.sql`; run `make sqlc` after
+  changing it or a migration and commit the generated `*.gen.go` (CI runs
+  `make sqlc-check`). Remove queries nothing calls.
+- **Tenant isolation**: resolve every workspace-scoped resource *through the
+  caller's membership in the query* (`GetWorkspaceForMember`). A
+  non-member gets 404 (`apperr.NotFound`), never 403; 403 is only for
+  members lacking a role. Add a cross-tenant test for every new endpoint.
+- **Domain errors** are `apperr` kinds (Invalid, Unauthenticated,
+  Forbidden, NotFound, Conflict, RateLimited) with stable codes; handlers
+  map them to HTTP. Anything else becomes a logged 500 with no details.
+- **Audit**: every security-relevant change calls `audit.Record` inside the
+  same `store.InTx` transaction. Action names are a contract: never rename.
+  Metadata never holds secrets.
+- **Secrets we issue** (sessions, API tokens, device codes) are 256-bit
+  random values, shown once, stored only as SHA-256 hashes, never logged.
+- **New API routes** must be added to `api/openapi.yaml`; a test fails
+  otherwise. JSON bodies require `Content-Type: application/json`;
+  cookie-authenticated state changes need Origin + `X-CSRF-Token`.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
-  channels.
+  channels. Integration tests in `internal/server` share one Postgres,
+  Redis and Dex (`harness_integration_test.go`) and get a fresh database per
+  test; the OIDC flow is always exercised against the real Dex.
 
 ## Repository layout
 
@@ -107,39 +131,53 @@ nook/
 ├── go.mod / go.sum            # single module github.com/the-asmit/nook
 ├── .golangci.yml              # linter configuration (golangci-lint v2)
 ├── .editorconfig .gitignore .dockerignore .env.example
+├── .goreleaser.yaml           # builds the nook CLI for linux/darwin/windows × amd64/arm64
 ├── .github/
-│   ├── workflows/ci.yml       # lint, race tests, integration tests, govulncheck, multi-arch docker build
+│   ├── workflows/ci.yml       # lint, sqlc/OpenAPI checks, race tests, integration tests, govulncheck, CLI + image builds
 │   └── dependabot.yml         # keeps pinned Go modules, actions and images current
+├── api/
+│   ├── openapi.yaml           # OpenAPI 3.1 contract for every HTTP endpoint (tested against the router)
+│   └── redocly.yaml           # lint rules for the spec (make openapi-lint)
 ├── cmd/                       # one folder per binary; main.go only wires dependencies
 │   ├── nook-server/           # control plane entry point
-│   ├── nook/                  # (planned) CLI
+│   ├── nook/                  # CLI entry point
 │   ├── nook-agent/            # (planned) worker agent
 │   └── nook-gateway/          # (planned) gateway
 ├── internal/
 │   ├── platform/              # shared infrastructure used by every binary
-│   │   ├── config/            # env loading, *_FILE secrets, Secret type, Environment, validators
+│   │   ├── config/            # env loading, *_FILE secrets, Secret type, Environment, validators, internal-host checks
 │   │   ├── logging/           # slog JSON logger, request ID in context
 │   │   ├── postgres/          # pgx pool, advisory-locked goose migrations, pool metrics
 │   │   ├── redis/             # go-redis client setup
 │   │   ├── metrics/           # Prometheus registry + build info + /metrics handler
 │   │   ├── health/            # dependency probes for /readyz and startup waits
 │   │   └── httpserver/        # server lifecycle, graceful shutdown, common Gin middleware
-│   ├── server/                # control plane: config + startup/shutdown wiring
-│   │   └── api/               # Gin router, middleware order, handlers
+│   ├── server/                # control plane: config (incl. TLS rules) + startup/shutdown wiring
+│   │   ├── api/               # Gin router, ops endpoints, /api/v1 JSON handlers
+│   │   └── web/               # server-rendered pages: sign-in, sign-out, not-invited, device approval
+│   ├── store/                 # sqlc: queries/*.sql, generated *.gen.go, sqlc.yaml, transactions
+│   ├── apperr/                # classified domain errors (kind + stable code) mapped to HTTP by handlers
+│   ├── audit/                 # append-only audit log entries, written in the change's transaction
+│   ├── auth/                  # sessions, API tokens, CSRF, cookies, authentication middleware
+│   ├── identity/              # OIDC provider, sign-in flow state, admission policy, first-login provisioning
+│   ├── workspace/             # workspaces, memberships, invitations, role rules (tenant-scoped)
+│   ├── device/                # OAuth 2.0 Device Authorization Grant for `nook login`
+│   ├── ratelimit/             # fixed-window rate limits in Redis
+│   ├── cli/                   # Cobra commands, API client, config file (0600) for the nook CLI
 │   ├── version/               # build info set via ldflags
-│   ├── testinfra/             # testcontainers helpers (integration build tag only)
-│   ├── store/                 # (planned) sqlc queries + generated code
-│   ├── auth/                  # (planned) OIDC, sessions, API tokens
+│   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex (integration build tag only)
 │   ├── queue/                 # (planned) Redis-backed job queue
 │   ├── scheduler/             # (planned) placement + failover
 │   ├── agent/                 # (planned) worker agent logic
-│   ├── gateway/               # (planned) gateway logic
-│   └── cli/                   # (planned) CLI commands
+│   └── gateway/               # (planned) gateway logic
 ├── migrations/                # goose SQL migrations, embedded into the binary by migrations.go
+├── tools/
+│   └── devenv/                # `make env`: creates/updates .env with generated secrets and bcrypt hashes (dev only)
 ├── proto/                     # (planned) gRPC definitions
 ├── web/                       # (planned) React dashboard
 ├── deploy/
-│   ├── compose/docker-compose.dev.yml   # Postgres, Redis, MinIO for development
+│   ├── compose/docker-compose.dev.yml   # Postgres, Redis, MinIO, Dex for development
+│   ├── compose/dex/config.yaml          # Dex dev/test IdP config (static users; shared with integration tests)
 │   └── docker/nook-server.Dockerfile    # multi-stage, distroless, non-root
 ├── test/e2e/                  # (planned) end-to-end tests
 └── docs/
