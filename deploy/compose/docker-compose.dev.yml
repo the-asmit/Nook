@@ -1,9 +1,10 @@
-# Local development dependencies for Nook. Start with `make dev-up`.
+# Local development dependencies for Nook: Postgres, Redis, MinIO and the
+# Dex development identity provider. Start with `make dev-up`.
 #
 # Every image is pinned to an exact tag plus its multi-arch index digest, so
 # all developers (and CI) run byte-identical images on amd64 and arm64.
-# Credentials come from the repository's .env file (`make .env` creates one
-# with random passwords); compose refuses to start if any is missing.
+# Credentials come from the repository's .env file (`make env` creates or
+# updates it with random passwords); compose refuses to start if any is missing.
 # Ports are published on 127.0.0.1 only, never on the LAN.
 
 name: nook-dev
@@ -71,6 +72,36 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    restart: unless-stopped
+
+  dex:
+    # DEVELOPMENT ONLY: a real OpenID Connect provider with static test
+    # users, so sign-in works without a Google account. See dex/config.yaml.
+    image: ghcr.io/dexidp/dex:v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
+    # The image's entrypoint renders *.yaml arguments with gomplate first.
+    command: ["dex", "serve", "/etc/dex/nook-dev.yaml"]
+    environment:
+      DEX_ISSUER: ${NOOK_OIDC_ISSUER_URL:?set NOOK_OIDC_ISSUER_URL in .env}
+      DEX_NOOK_CLIENT_ID: ${NOOK_OIDC_CLIENT_ID:?set NOOK_OIDC_CLIENT_ID in .env}
+      DEX_NOOK_CLIENT_SECRET: ${DEX_NOOK_CLIENT_SECRET:?set DEX_NOOK_CLIENT_SECRET in .env}
+      DEX_NOOK_REDIRECT_URI: ${NOOK_PUBLIC_URL:?set NOOK_PUBLIC_URL in .env}/auth/callback
+      DEX_ALICE_PASSWORD_HASH: ${DEX_ALICE_PASSWORD_HASH:?run make env}
+      DEX_BOB_PASSWORD_HASH: ${DEX_BOB_PASSWORD_HASH:?run make env}
+      DEX_MALLORY_PASSWORD_HASH: ${DEX_MALLORY_PASSWORD_HASH:?run make env}
+    volumes:
+      - ./dex/config.yaml:/etc/dex/nook-dev.yaml:ro
+    ports:
+      - "127.0.0.1:${DEX_PORT:-5556}:5556"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5556/dex/.well-known/openid-configuration"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped
 
 networks:

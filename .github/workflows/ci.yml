@@ -30,6 +30,36 @@ jobs:
       - name: go.mod and go.sum are tidy
         run: go mod tidy -diff
 
+  generated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: sqlc output matches the queries and migrations
+        run: make sqlc-check
+      - name: OpenAPI spec is valid
+        run: make openapi-lint
+
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # GoReleaser derives the snapshot version from git history.
+          fetch-depth: 0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Build the CLI for every OS/arch (no publish)
+        run: make release-snapshot
+
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

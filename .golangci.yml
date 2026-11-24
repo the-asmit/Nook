@@ -115,12 +115,13 @@ linters:
     # Generated code (sqlc, protobuf) arrives in later stages.
     generated: strict
     rules:
-      # Tests use throwaway credentials in connection URLs and read
-      # fixture files from temporary paths.
+      # Tests deliberately construct what production code must not: throwaway
+      # credentials in URLs (G101), loose file modes (G302) and attacker
+      # cookies (G124); they also read fixtures from temporary paths (G304).
       - path: _test\.go
         linters:
           - gosec
-        text: "G101|G304"
+        text: "G101|G124|G302|G304"
 
 issues:
   # Report every finding, not just the first few of each kind.

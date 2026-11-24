@@ -28,12 +28,18 @@ LDFLAGS := -s -w \
 # the file name, so bumping a version here reinstalls it automatically.
 GOLANGCI_LINT_VERSION := v2.15.0
 GOVULNCHECK_VERSION := v1.10.0
+SQLC_VERSION := v1.31.1
+GORELEASER_VERSION := v2.20.2
 # The goose CLI always matches the goose library version in go.mod.
 GOOSE_VERSION := $(shell go list -m -f '{{.Version}}' github.com/pressly/goose/v3)
 
 GOLANGCI_LINT := $(BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(BIN_DIR)/govulncheck-$(GOVULNCHECK_VERSION)
 GOOSE := $(BIN_DIR)/goose-$(GOOSE_VERSION)
+SQLC := $(BIN_DIR)/sqlc-$(SQLC_VERSION)
+GORELEASER := $(BIN_DIR)/goreleaser-$(GORELEASER_VERSION)
+
+REDOCLY_IMAGE := redocly/cli:2.76.0@sha256:bd2a1637e39de2d7fc403b3a114b6f8ecbb7edcb6f814516c79b38be409747e9
 
 COMPOSE := docker compose --env-file .env -f deploy/compose/docker-compose.dev.yml
 
@@ -55,20 +61,17 @@ help: ## List available targets
 
 ##@ Development stack
 
-.env: ## Create .env from .env.example with freshly generated secrets
-	@umask 077; awk ' \
-		function secret(   cmd, s) { cmd = "od -An -N16 -tx1 /dev/urandom"; cmd | getline s; close(cmd); gsub(/[ \t]/, "", s); return s } \
-		{ while (index($$0, "__GENERATED_SECRET__")) sub(/__GENERATED_SECRET__/, secret()); print }' \
-		.env.example > $@
-	@echo "Created .env with random development passwords."
+.PHONY: env
+env: ## Create .env from .env.example, or add variables it gained (keeps existing values)
+	@go run ./tools/devenv
 
 .PHONY: dev-up
-dev-up: .env ## Start Postgres, Redis and MinIO and wait until healthy
+dev-up: env ## Start Postgres, Redis, MinIO and Dex and wait until healthy
 	$(COMPOSE) up --detach --wait --wait-timeout 180
 	@# Docker Desktop can silently skip publishing a port that another program
 	@# (say a native Windows PostgreSQL) already holds; 127.0.0.1:<port> would
 	@# then reach that program instead of the container. Fail loudly instead.
-	@for sp in postgres:5432 redis:6379 minio:9000 minio:9001; do \
+	@for sp in postgres:5432 redis:6379 minio:9000 minio:9001 dex:5556; do \
 		bound=$$($(COMPOSE) port "$${sp%%:*}" "$${sp##*:}" 2>/dev/null || true); \
 		if [[ ! "$$bound" =~ ^127\.0\.0\.1:[1-9][0-9]*$$ ]]; then \
 			echo "error: $$sp is not published on the host (another program holds the port?)." >&2; \
@@ -79,27 +82,34 @@ dev-up: .env ## Start Postgres, Redis and MinIO and wait until healthy
 	done
 
 .PHONY: dev-down
-dev-down: .env ## Stop the development stack (data volumes are kept)
+dev-down: env ## Stop the development stack (data volumes are kept)
 	$(COMPOSE) down
 
 .PHONY: dev-logs
-dev-logs: .env ## Follow the development stack's logs
+dev-logs: env ## Follow the development stack's logs
 	$(COMPOSE) logs --follow --tail=100
 
 .PHONY: run-server
-run-server: build .env ## Build and run nook-server against the dev stack
+run-server: build env ## Build and run nook-server against the dev stack
 	set -a; source ./.env; set +a; exec $(BIN_DIR)/nook-server
 
 .PHONY: docker-run
-docker-run: .env ## Run the nook-server image against the dev stack on 127.0.0.1:$(DOCKER_RUN_PORT)
+docker-run: env ## Run the nook-server image against the dev stack on 127.0.0.1:$(DOCKER_RUN_PORT)
+	@# Inside the container "localhost" is the container itself, so Dex at
+	@# localhost:$${DEX_PORT} is unreachable: the API, health and metrics work,
+	@# while browser sign-in needs `make run-server`.
 	set -a; source ./.env; set +a; \
 	export NOOK_HTTP_ADDR=":8080" \
+		NOOK_PUBLIC_URL="http://localhost:$(DOCKER_RUN_PORT)" \
 		NOOK_POSTGRES_URL="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}?sslmode=disable" \
 		NOOK_REDIS_URL="redis://:$${REDIS_PASSWORD}@redis:6379/0"; \
 	exec docker run --rm --name nook-server --network nook-dev \
 		--publish 127.0.0.1:$(DOCKER_RUN_PORT):8080 \
 		--read-only --cap-drop=ALL --security-opt=no-new-privileges \
-		--env NOOK_ENV --env NOOK_LOG_LEVEL --env NOOK_HTTP_ADDR --env NOOK_POSTGRES_URL --env NOOK_REDIS_URL \
+		--env NOOK_ENV --env NOOK_LOG_LEVEL --env NOOK_HTTP_ADDR --env NOOK_PUBLIC_URL \
+		--env NOOK_POSTGRES_URL --env NOOK_REDIS_URL \
+		--env NOOK_OIDC_ISSUER_URL --env NOOK_OIDC_CLIENT_ID --env NOOK_OIDC_CLIENT_SECRET \
+		--env NOOK_ALLOWED_EMAIL_DOMAINS --env NOOK_BOOTSTRAP_ADMIN_EMAILS \
 		$(IMAGE):$(VERSION)
 
 .PHONY: migrate-new
@@ -110,8 +120,25 @@ migrate-new: $(GOOSE) ## Create a new SQL migration: make migrate-new name=add_u
 ##@ Build and test
 
 .PHONY: build
-build: ## Build bin/nook-server for this machine
+build: ## Build bin/nook-server and bin/nook (the CLI) for this machine
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook-server ./cmd/nook-server
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook ./cmd/nook
+
+.PHONY: sqlc
+sqlc: $(SQLC) ## Regenerate internal/store from migrations/ and internal/store/queries/
+	cd internal/store && $(SQLC) generate
+
+.PHONY: sqlc-check
+sqlc-check: $(SQLC) ## Fail if the generated sqlc code is stale (used by CI)
+	cd internal/store && $(SQLC) diff
+
+.PHONY: openapi-lint
+openapi-lint: ## Validate api/openapi.yaml against OpenAPI 3.1 (Redocly CLI in Docker)
+	docker run --rm -v "$(CURDIR)/api:/spec:ro" -w /spec $(REDOCLY_IMAGE) lint --config=/spec/redocly.yaml openapi.yaml
+
+.PHONY: release-snapshot
+release-snapshot: $(GORELEASER) ## Build CLI archives for every OS/arch into dist/ without publishing
+	$(GORELEASER) release --snapshot --clean --skip=publish
 
 .PHONY: test
 test: ## Run unit tests with the race detector
@@ -147,11 +174,11 @@ docker-build: ## Build the nook-server image for linux/amd64 and linux/arm64
 		$(DOCKER_OUTPUT) .
 
 .PHONY: tools
-tools: $(GOLANGCI_LINT) $(GOVULNCHECK) $(GOOSE) ## Install the pinned developer tools into bin/
+tools: $(GOLANGCI_LINT) $(GOVULNCHECK) $(GOOSE) $(SQLC) $(GORELEASER) ## Install the pinned developer tools into bin/
 
 .PHONY: clean
-clean: ## Remove build output and installed tools
-	rm -rf $(BIN_DIR)
+clean: ## Remove build output, release archives and installed tools
+	rm -rf $(BIN_DIR) dist
 
 # Tool installation. go install builds each tool with the local Go
 # toolchain, which guarantees it understands this module's Go version.
@@ -172,3 +199,14 @@ $(GOOSE):
 		-tags='no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb' \
 		github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
 	mv $(BIN_DIR)/.install/goose $@
+
+# sqlc embeds the PostgreSQL parser, which needs cgo (gcc) to build.
+$(SQLC):
+	@mkdir -p $(BIN_DIR)/.install
+	GOBIN=$(BIN_DIR)/.install go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
+	mv $(BIN_DIR)/.install/sqlc $@
+
+$(GORELEASER):
+	@mkdir -p $(BIN_DIR)/.install
+	GOBIN=$(BIN_DIR)/.install go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
+	mv $(BIN_DIR)/.install/goreleaser $@

@@ -1,0 +1,61 @@
+{{- /*
+  Dex: a real OpenID Connect provider for DEVELOPMENT AND TESTS ONLY.
+
+  It signs in three static users whose passwords come from .env (as
+  bcrypt hashes, via hashFromEnv). Never use this configuration, or these
+  users, outside a developer machine or CI. Production uses a real
+  provider such as Google (see docs/learn/01-identity.md).
+
+  The Dex image renders this file with gomplate before starting, so the
+  issuer and Nook's redirect URI come from the environment. The same file
+  is used by deploy/compose/docker-compose.dev.yml and by the integration
+  tests (internal/testinfra).
+
+  Users:
+    alice@nook.test      allowed domain (and bootstrap admin in .env.example)
+    bob@partner.test     other domain: can sign in only once invited
+    mallory@outside.test other domain: never invited, always refused
+*/ -}}
+issuer: {{ getenv "DEX_ISSUER" | required "DEX_ISSUER must be set" }}
+
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+logger:
+  level: info
+  format: json
+
+oauth2:
+  responseTypes: [code]
+  # Development convenience: no "grant access" screen after the password.
+  skipApprovalScreen: true
+
+expiry:
+  authRequests: 10m
+  idTokens: 10m
+
+staticClients:
+  - id: {{ getenv "DEX_NOOK_CLIENT_ID" | required "DEX_NOOK_CLIENT_ID must be set" }}
+    name: Nook (development)
+    secretEnv: DEX_NOOK_CLIENT_SECRET
+    redirectURIs:
+      - {{ getenv "DEX_NOOK_REDIRECT_URI" | required "DEX_NOOK_REDIRECT_URI must be set" }}
+
+enablePasswordDB: true
+
+staticPasswords:
+  - email: alice@nook.test
+    username: alice
+    userID: 0193a3c0-0000-7000-8000-00000000a11c
+    hashFromEnv: DEX_ALICE_PASSWORD_HASH
+  - email: bob@partner.test
+    username: bob
+    userID: 0193a3c0-0000-7000-8000-000000000b0b
+    hashFromEnv: DEX_BOB_PASSWORD_HASH
+  - email: mallory@outside.test
+    username: mallory
+    userID: 0193a3c0-0000-7000-8000-0000000ba11e
+    hashFromEnv: DEX_MALLORY_PASSWORD_HASH
