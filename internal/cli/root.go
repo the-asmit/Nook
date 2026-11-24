@@ -89,6 +89,7 @@ func (r *runner) rootCommand() *cobra.Command {
 	root.AddCommand(
 		r.loginCommand(), r.logoutCommand(), r.whoamiCommand(),
 		r.workspaceCommand(), r.tokenCommand(), r.versionCommand(),
+		r.nodeCommand(), r.adminCommand(),
 	)
 	return root
 }
