@@ -1,0 +1,194 @@
+syntax = "proto3";
+
+// Package nook.agent.v1 is the protocol between a worker node's nook-agent
+// and the Nook control plane. It runs only over TLS 1.3; every RPC except
+// Join requires a client certificate issued by the control plane's
+// internal certificate authority.
+package nook.agent.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// NodeService is served by every control-plane instance on its gRPC port.
+service NodeService {
+  // Join exchanges a one-time join token and a certificate signing request
+  // for a node identity and a short-lived client certificate. It is the
+  // only RPC callable without a client certificate. The agent pins the
+  // control plane's CA (by fingerprint) before sending the token.
+  rpc Join(JoinRequest) returns (JoinResponse);
+
+  // Connect is the long-lived session between an agent and the control
+  // plane. The agent first sends a Hello, then heartbeats and command
+  // results; the control plane answers with a ConnectAccepted, then sends
+  // commands. Either side may end the stream; the agent reconnects.
+  rpc Connect(stream ConnectRequest) returns (stream ConnectResponse);
+
+  // RenewCertificate issues a fresh certificate for a new key, authenticated
+  // by the node's current certificate, which is revoked once the new one is
+  // issued.
+  rpc RenewCertificate(RenewCertificateRequest) returns (RenewCertificateResponse);
+}
+
+// NodeInfo describes a node's fixed properties, reported at join and on
+// every connection.
+message NodeInfo {
+  string hostname = 1;
+  // Addresses the node can be reached at (no loopback addresses).
+  repeated string addresses = 2;
+  int32 cpu_count = 3;
+  int64 memory_total_bytes = 4;
+  int64 disk_total_bytes = 5;
+  // Empty when the Docker engine is unreachable.
+  string docker_version = 6;
+  string agent_version = 7;
+  // GOOS and GOARCH of the agent, e.g. "linux" and "arm64".
+  string os = 8;
+  string arch = 9;
+}
+
+message JoinRequest {
+  // The nook_join_... token printed by `nook node join-token create`.
+  string join_token = 1;
+  // PKCS #10 certificate signing request (DER) for a key generated on the
+  // node. The private key itself never leaves the node.
+  bytes csr_der = 2;
+  // Requested node name; defaults to the hostname. Lower-case letters,
+  // digits and inner hyphens, at most 63 characters.
+  string name = 3;
+  map<string, string> labels = 4;
+  NodeInfo info = 5;
+}
+
+message JoinResponse {
+  string node_id = 1;
+  string name = 2;
+  // The node's client certificate (DER), signed by the Nook CA.
+  bytes certificate_der = 3;
+  // The Nook CA certificate (DER) the agent must trust from now on.
+  bytes ca_certificate_der = 4;
+}
+
+message RenewCertificateRequest {
+  // CSR (DER) for a freshly generated key.
+  bytes csr_der = 1;
+}
+
+message RenewCertificateResponse {
+  bytes certificate_der = 1;
+  bytes ca_certificate_der = 2;
+}
+
+// ConnectRequest is one message from the agent on the Connect stream.
+message ConnectRequest {
+  oneof message {
+    // First message of every stream.
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    CommandResult command_result = 3;
+  }
+}
+
+// ConnectResponse is one message from the control plane on the Connect stream.
+message ConnectResponse {
+  oneof message {
+    // Answer to Hello.
+    ConnectAccepted accepted = 1;
+    Command command = 2;
+  }
+}
+
+message Hello {
+  NodeInfo info = 1;
+}
+
+message ConnectAccepted {
+  string node_id = 1;
+  // How often the agent must send heartbeats.
+  google.protobuf.Duration heartbeat_interval = 2;
+}
+
+// Heartbeat reports live resource usage. The control plane timestamps it
+// on receipt with its own clock; the agent's clock is never trusted.
+message Heartbeat {
+  int64 memory_available_bytes = 1;
+  // One-minute load average.
+  double cpu_load_1m = 2;
+  int64 disk_free_bytes = 3;
+  int32 running_containers = 4;
+  string agent_version = 5;
+  google.protobuf.Duration uptime = 6;
+  // False when the agent cannot reach its Docker engine.
+  bool docker_reachable = 7;
+}
+
+// Command asks the agent to do something and answer with exactly one
+// CommandResult carrying the same command_id.
+message Command {
+  string command_id = 1;
+  // How long the agent may take before the control plane gives up.
+  google.protobuf.Duration timeout = 2;
+  oneof kind {
+    InspectNodeCommand inspect_node = 3;
+  }
+}
+
+// InspectNodeCommand asks for live Docker engine information and the
+// containers Nook manages on the node.
+message InspectNodeCommand {}
+
+message CommandResult {
+  string command_id = 1;
+  oneof result {
+    CommandError error = 2;
+    InspectNodeResult inspect_node = 3;
+  }
+}
+
+message CommandError {
+  CommandErrorCode code = 1;
+  // Human-readable explanation, safe to show to an administrator.
+  string message = 2;
+}
+
+enum CommandErrorCode {
+  COMMAND_ERROR_CODE_UNSPECIFIED = 0;
+  // The agent does not know the command (it is older than the control plane).
+  COMMAND_ERROR_CODE_UNSUPPORTED = 1;
+  // The Docker engine could not be reached.
+  COMMAND_ERROR_CODE_DOCKER_UNAVAILABLE = 2;
+  // The command ran out of time on the agent.
+  COMMAND_ERROR_CODE_TIMEOUT = 3;
+  COMMAND_ERROR_CODE_FAILED = 4;
+}
+
+message InspectNodeResult {
+  DockerInfo docker = 1;
+  // Containers carrying the label nook.managed=true.
+  repeated ManagedContainer containers = 2;
+}
+
+message DockerInfo {
+  string server_version = 1;
+  string api_version = 2;
+  string operating_system = 3;
+  string kernel_version = 4;
+  string architecture = 5;
+  int32 cpus = 6;
+  int64 memory_total_bytes = 7;
+  string storage_driver = 8;
+  int32 containers_running = 9;
+  int32 containers_total = 10;
+  int32 images = 11;
+}
+
+message ManagedContainer {
+  string id = 1;
+  string name = 2;
+  string image = 3;
+  // Docker state, e.g. "running" or "exited".
+  string state = 4;
+  // Human-readable status, e.g. "Up 5 minutes".
+  string status = 5;
+  map<string, string> labels = 6;
+  google.protobuf.Timestamp created_at = 7;
+}

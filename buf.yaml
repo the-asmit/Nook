@@ -1,0 +1,17 @@
+# buf configuration for Nook's protobuf definitions (proto/).
+#   make proto          regenerate the Go code (committed)
+#   make proto-lint     buf lint
+#   make proto-breaking buf breaking against the main branch
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  # FILE is the strictest category: it also catches changes that would
+  # break generated code (renamed fields, moved messages), not just wire
+  # incompatibilities, which matters while agents and control planes of
+  # different versions talk to each other.
+  use:
+    - FILE
