@@ -19,4 +19,6 @@ coverage.*
 .DS_Store
 Thumbs.db
 /dist/
+# Local-only documentation; never committed.
+/docs
 /.nook-dev/

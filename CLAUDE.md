@@ -50,6 +50,11 @@ Read, in order: this file, `docs/architecture.md`, and the latest file in
     fails, fix it. Never skip, weaken or disable a check to make it pass.
 12. **Git:** conventional commit messages, one or a few logical commits per
     stage. Never commit secrets. Do not push.
+    - Never add AI attribution (Co-Authored-By trailers or 'Generated with'
+      lines) to commits or pull requests.
+    - docs/ is local-only and is never committed.
+    - Every stage is built on a branch feat/stage-N-<name> created from main
+      and is not merged until the owner approves.
 
 ## Commands
 
