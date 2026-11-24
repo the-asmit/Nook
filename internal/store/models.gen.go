@@ -80,6 +80,76 @@ func AllDeviceStatusValues() []DeviceStatus {
 	}
 }
 
+type NodeStatus string
+
+const (
+	NodeStatusJoining  NodeStatus = "joining"
+	NodeStatusReady    NodeStatus = "ready"
+	NodeStatusSuspect  NodeStatus = "suspect"
+	NodeStatusDead     NodeStatus = "dead"
+	NodeStatusDraining NodeStatus = "draining"
+	NodeStatusRemoved  NodeStatus = "removed"
+)
+
+func (e *NodeStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = NodeStatus(s)
+	case string:
+		*e = NodeStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for NodeStatus: %T", src)
+	}
+	return nil
+}
+
+type NullNodeStatus struct {
+	NodeStatus NodeStatus
+	Valid      bool // Valid is true if NodeStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullNodeStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.NodeStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.NodeStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullNodeStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.NodeStatus), nil
+}
+
+func (e NodeStatus) Valid() bool {
+	switch e {
+	case NodeStatusJoining,
+		NodeStatusReady,
+		NodeStatusSuspect,
+		NodeStatusDead,
+		NodeStatusDraining,
+		NodeStatusRemoved:
+		return true
+	}
+	return false
+}
+
+func AllNodeStatusValues() []NodeStatus {
+	return []NodeStatus{
+		NodeStatusJoining,
+		NodeStatusReady,
+		NodeStatusSuspect,
+		NodeStatusDead,
+		NodeStatusDraining,
+		NodeStatusRemoved,
+	}
+}
+
 type WorkspaceRole string
 
 const (
@@ -190,11 +260,68 @@ type Invitation struct {
 	AcceptedAt  *time.Time
 }
 
+type JoinToken struct {
+	ID         uuid.UUID
+	TokenHash  []byte
+	Prefix     string
+	CreatedBy  *uuid.UUID
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	MaxUses    int32
+	Uses       int32
+	LastUsedAt *time.Time
+	RevokedAt  *time.Time
+}
+
 type Membership struct {
 	WorkspaceID uuid.UUID
 	UserID      uuid.UUID
 	Role        WorkspaceRole
 	CreatedAt   time.Time
+}
+
+type Node struct {
+	ID                   uuid.UUID
+	Name                 string
+	Status               NodeStatus
+	Draining             bool
+	Labels               []byte
+	Hostname             string
+	Addresses            []string
+	CpuCount             int32
+	MemoryTotalBytes     int64
+	DiskTotalBytes       int64
+	DockerVersion        string
+	AgentVersion         string
+	Os                   string
+	Arch                 string
+	JoinedWithTokenID    *uuid.UUID
+	JoinedAt             time.Time
+	LastHeartbeatAt      *time.Time
+	MemoryAvailableBytes *int64
+	CpuLoad1m            *float64
+	DiskFreeBytes        *int64
+	RunningContainers    *int32
+	DockerReachable      *bool
+	RemovedAt            *time.Time
+}
+
+type NodeCertificate struct {
+	Serial    string
+	NodeID    uuid.UUID
+	NotBefore time.Time
+	NotAfter  time.Time
+	CreatedAt time.Time
+	RevokedAt *time.Time
+}
+
+type NodeEvent struct {
+	ID         uuid.UUID
+	NodeID     uuid.UUID
+	FromStatus *NodeStatus
+	ToStatus   NodeStatus
+	Reason     string
+	CreatedAt  time.Time
 }
 
 type Session struct {

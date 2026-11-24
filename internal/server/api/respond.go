@@ -32,6 +32,10 @@ func statusFor(k apperr.Kind) int {
 		return http.StatusConflict
 	case apperr.KindRateLimited:
 		return http.StatusTooManyRequests
+	case apperr.KindUnavailable:
+		return http.StatusServiceUnavailable
+	case apperr.KindTimeout:
+		return http.StatusGatewayTimeout
 	default:
 		return http.StatusInternalServerError
 	}

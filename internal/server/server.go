@@ -6,25 +6,25 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sync"
+	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	goredis "github.com/redis/go-redis/v9"
 
-	"github.com/the-asmit/nook/internal/auth"
-	"github.com/the-asmit/nook/internal/device"
+	"github.com/the-asmit/nook/internal/agentlink"
 	"github.com/the-asmit/nook/internal/identity"
+	"github.com/the-asmit/nook/internal/leader"
+	"github.com/the-asmit/nook/internal/nodes"
+	"github.com/the-asmit/nook/internal/pki"
 	"github.com/the-asmit/nook/internal/platform/health"
 	"github.com/the-asmit/nook/internal/platform/httpserver"
 	"github.com/the-asmit/nook/internal/platform/metrics"
 	"github.com/the-asmit/nook/internal/platform/postgres"
 	"github.com/the-asmit/nook/internal/platform/redis"
-	"github.com/the-asmit/nook/internal/ratelimit"
 	"github.com/the-asmit/nook/internal/server/api"
-	"github.com/the-asmit/nook/internal/server/web"
-	"github.com/the-asmit/nook/internal/store"
 	"github.com/the-asmit/nook/internal/version"
-	"github.com/the-asmit/nook/internal/workspace"
 	"github.com/the-asmit/nook/migrations"
 )
 
@@ -40,6 +40,14 @@ type Server struct {
 	redis    *goredis.Client
 	provider *identity.Provider
 	http     *httpserver.Server
+
+	// Worker-node link (stage 3).
+	instance string
+	ca       *pki.CA
+	hub      *agentlink.Hub
+	grpc     *agentlink.Server
+	elector  *leader.Elector
+	detector *nodes.Detector
 }
 
 // New connects to every dependency, applies migrations and binds the HTTP
@@ -127,7 +135,7 @@ func (s *Server) listen(ctx context.Context, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	err = s.mountApplication(router, cfg)
+	err = s.mountApplication(ctx, router, cfg, reg)
 	if err != nil {
 		return err
 	}
@@ -139,54 +147,82 @@ func (s *Server) listen(ctx context.Context, cfg *Config) error {
 	return nil
 }
 
-// mountApplication wires the identity, workspace and device services into
-// the JSON API and the HTML pages.
-func (s *Server) mountApplication(router gin.IRouter, cfg *Config) error {
-	st := store.NewStore(s.pool)
-	site := auth.NewSite(cfg.PublicURLParsed())
-	sessions := auth.NewSessions(st, cfg.Auth)
-	tokens := auth.NewAPITokens(st)
-	authenticator := auth.NewAuthenticator(sessions, tokens, site, s.logger)
-	workspaces := workspace.NewService(st, cfg.InvitationTTL)
-	devices := device.NewService(st, tokens, cfg.Device)
-	limiter := ratelimit.New(s.redis)
-
-	api.RegisterV1(router, &api.V1Deps{
-		Logger: s.logger, Store: st, Auth: authenticator, Tokens: tokens,
-		Workspaces: workspaces, Devices: devices, Limiter: limiter,
-		VerificationURL: site.Origin + "/device",
-	})
-	pages, err := web.New(&web.Deps{
-		Logger: s.logger, Store: st, Auth: authenticator,
-		Flows: identity.NewFlows(s.redis), Provider: s.provider,
-		SignIn:  identity.NewService(st, sessions, identity.NewPolicy(&cfg.Identity), s.logger),
-		Devices: devices, Workspaces: workspaces, Limiter: limiter,
-		ProviderName: cfg.Identity.ProviderName, PublicURL: site.Origin,
-	})
-	if err != nil {
-		return err
-	}
-	pages.Register(router)
-	return nil
-}
-
 // Addr returns the address the HTTP server is bound to.
 func (s *Server) Addr() net.Addr {
 	return s.http.Addr()
 }
 
-// Serve handles requests until ctx is canceled, then drains in-flight
-// requests. Call Close afterwards to release the connection pools.
+// GRPCAddr returns the address the agent gRPC server is bound to.
+func (s *Server) GRPCAddr() net.Addr {
+	return s.grpc.Addr()
+}
+
+// Instance returns this control-plane instance's ID.
+func (s *Server) Instance() string {
+	return s.instance
+}
+
+// IsLeader reports whether this instance runs the failure detector.
+func (s *Server) IsLeader() bool {
+	return s.elector.IsLeader()
+}
+
+// hubReadyTimeout bounds waiting for the command hub's Redis subscription.
+const hubReadyTimeout = 10 * time.Second
+
+// Serve runs the HTTP API, the agent gRPC endpoint, the command hub and
+// the leader election (with the failure detector) until ctx is canceled,
+// then shuts them all down. If one of them fails, the others are stopped
+// too and the error is returned. Call Close afterwards.
 func (s *Server) Serve(ctx context.Context) error {
-	if err := s.http.Serve(ctx); err != nil {
-		return fmt.Errorf("serve http: %w", err)
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+	start := func(name string, fn func(context.Context) error) {
+		wg.Go(func() {
+			if err := fn(ctx); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("%s: %w", name, err)
+				}
+				mu.Unlock()
+				cancel(err)
+			}
+		})
 	}
-	return nil
+
+	// The hub must be subscribed before agents connect, or commands
+	// routed to this instance could be missed.
+	start("command hub", s.hub.Run)
+	select {
+	case <-s.hub.Ready():
+	case <-ctx.Done():
+	case <-time.After(hubReadyTimeout):
+		cancel(errors.New("command hub did not subscribe in time"))
+	}
+	start("agent gRPC", s.grpc.Serve)
+	start("leader election", func(ctx context.Context) error {
+		s.elector.Run(ctx, func(ctx context.Context, sess *leader.Session) {
+			// Every detector query runs on the lock connection (fencing).
+			s.detector.Run(ctx, func(ctx context.Context, fn func(nodes.DB) error) error {
+				return sess.Do(ctx, func(conn *pgx.Conn) error { return fn(conn) })
+			})
+		})
+		return nil
+	})
+	start("http", s.http.Serve)
+	wg.Wait()
+	return firstErr
 }
 
 // Close releases the database and Redis connections. It runs after the
 // HTTP server has drained, so no request is cut off mid-query.
 func (s *Server) Close() {
+	if s.grpc != nil {
+		s.grpc.Close()
+	}
 	if s.redis != nil {
 		if err := s.redis.Close(); err != nil && !errors.Is(err, goredis.ErrClosed) {
 			s.logger.Warn("closing redis client", "error", err.Error())

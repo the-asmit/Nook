@@ -13,6 +13,7 @@ import (
 	"net/http/cookiejar"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,6 +40,8 @@ var shared struct {
 	// serverPort is fixed because it is registered with Dex as the
 	// redirect URI before any server starts.
 	serverPort int
+	// caPath is the agent CA shared by every instance in this package.
+	caPath string
 }
 
 func TestMain(m *testing.M) {
@@ -78,7 +81,15 @@ func runIntegration(m *testing.M) int {
 	}
 	defer func() { _ = testcontainers.TerminateContainer(dexC) }()
 
+	caDir, err := os.MkdirTemp("", "nook-ca-")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer func() { _ = os.RemoveAll(caDir) }()
+
 	shared.pgAdminURL, shared.redisURL, shared.dex, shared.serverPort = pgURL, redisURL, dex, serverPort
+	shared.caPath = filepath.Join(caDir, "ca.pem")
 	return m.Run()
 }
 
@@ -102,10 +113,22 @@ func (b *syncBuffer) String() string {
 
 // env is one running nook-server with its own database.
 type env struct {
-	t    *testing.T
+	t     *testing.T
+	base  string
+	db    *pgxpool.Pool
+	dbURL string
+	logs  *syncBuffer
+	// primary is the first instance (the one at base).
+	primary *instance
+}
+
+// instance is one running control-plane process.
+type instance struct {
+	srv  *Server
 	base string
-	db   *pgxpool.Pool
+	grpc string
 	logs *syncBuffer
+	stop func()
 }
 
 // baseEnviron returns a development configuration for the shared stack.
@@ -123,6 +146,15 @@ func baseEnviron(pgURL string) map[string]string {
 		"NOOK_ALLOWED_EMAIL_DOMAINS":  "nook.test",
 		"NOOK_BOOTSTRAP_ADMIN_EMAILS": testinfra.DexAlice,
 		"NOOK_DEVICE_POLL_INTERVAL":   "1s",
+		// Worker nodes, with timings shortened so tests run quickly.
+		"NOOK_PKI_CA_PATH":                shared.caPath,
+		"NOOK_GRPC_ADDR":                  "127.0.0.1:0",
+		"NOOK_HEARTBEAT_INTERVAL":         "1s",
+		"NOOK_NODE_DEAD_AFTER":            "4s",
+		"NOOK_HEARTBEAT_PERSIST_INTERVAL": "1s",
+		"NOOK_FAILURE_DETECTOR_INTERVAL":  "200ms",
+		"NOOK_LEADER_RETRY_INTERVAL":      "300ms",
+		"NOOK_NODE_COMMAND_TIMEOUT":       "2s",
 	}
 }
 
@@ -131,8 +163,27 @@ func startEnv(t *testing.T) *env {
 	t.Helper()
 	dbURL := testinfra.CreateDatabase(t, shared.pgAdminURL)
 	flushRedis(t)
+	db, err := pgxpool.New(context.Background(), dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	e := &env{t: t, db: db, dbURL: dbURL}
+	e.primary = e.startInstance(nil)
+	e.base, e.logs = e.primary.base, e.primary.logs
+	return e
+}
 
-	cfg, err := config.Load[Config](baseEnviron(dbURL))
+// startInstance starts another control-plane instance on the env's
+// database; overrides adjust its configuration.
+func (e *env) startInstance(overrides map[string]string) *instance {
+	t := e.t
+	t.Helper()
+	environ := baseEnviron(e.dbURL)
+	for k, v := range overrides {
+		environ[k] = v
+	}
+	cfg, err := config.Load[Config](environ)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,20 +199,18 @@ func startEnv(t *testing.T) *env {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ctx) }()
-
-	db, err := pgxpool.New(context.Background(), dbURL)
-	if err != nil {
-		t.Fatal(err)
+	var once sync.Once
+	stop := func() {
+		once.Do(func() {
+			cancel()
+			if err := <-done; err != nil {
+				t.Errorf("Serve() = %v", err)
+			}
+			srv.Close()
+		})
 	}
-	t.Cleanup(func() {
-		cancel()
-		if err := <-done; err != nil {
-			t.Errorf("Serve() = %v", err)
-		}
-		srv.Close()
-		db.Close()
-	})
-	return &env{t: t, base: "http://" + srv.Addr().String(), db: db, logs: logs}
+	t.Cleanup(stop)
+	return &instance{srv: srv, base: "http://" + srv.Addr().String(), grpc: srv.GRPCAddr().String(), logs: logs, stop: stop}
 }
 
 func flushRedis(t *testing.T) {

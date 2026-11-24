@@ -8,18 +8,12 @@
 package workspace
 
 import (
-	"net/netip"
-	"uuid"
-
+	"github.com/the-asmit/nook/internal/audit"
 	"github.com/the-asmit/nook/internal/store"
 )
 
-// Actor is the authenticated user performing an operation, plus the
-// request metadata recorded in the audit log.
-type Actor struct {
-	UserID uuid.UUID
-	IP     *netip.Addr
-}
+// Actor is the authenticated user performing an operation (see audit.Actor).
+type Actor = audit.Actor
 
 // rank orders roles: owner > admin > member.
 func rank(r store.WorkspaceRole) int {

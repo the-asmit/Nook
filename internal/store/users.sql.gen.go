@@ -11,6 +11,17 @@ import (
 	"uuid"
 )
 
+const countEnabledInstanceAdmins = `-- name: CountEnabledInstanceAdmins :one
+SELECT count(*) FROM users WHERE is_instance_admin AND disabled_at IS NULL
+`
+
+func (q *Queries) CountEnabledInstanceAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countEnabledInstanceAdmins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (email, name, avatar_url, oidc_issuer, oidc_subject, is_instance_admin, last_login_at)
 VALUES ($1, $2, $3, $4, $5, $6, now())
@@ -79,6 +90,84 @@ func (q *Queries) GetUserByIdentity(ctx context.Context, arg GetUserByIdentityPa
 	return i, err
 }
 
+const listUsers = `-- name: ListUsers :many
+SELECT id, email, name, avatar_url, oidc_issuer, oidc_subject, is_instance_admin, created_at, last_login_at, disabled_at FROM users
+WHERE email > $1::citext
+  AND ($2::citext = '' OR email = $2::citext)
+ORDER BY email
+LIMIT $3
+`
+
+type ListUsersParams struct {
+	AfterEmail  string
+	EmailFilter string
+	RowLimit    int32
+}
+
+func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, error) {
+	rows, err := q.db.Query(ctx, listUsers, arg.AfterEmail, arg.EmailFilter, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.AvatarUrl,
+			&i.OidcIssuer,
+			&i.OidcSubject,
+			&i.IsInstanceAdmin,
+			&i.CreatedAt,
+			&i.LastLoginAt,
+			&i.DisabledAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockUser = `-- name: LockUser :one
+SELECT id, email, name, avatar_url, oidc_issuer, oidc_subject, is_instance_admin, created_at, last_login_at, disabled_at FROM users WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockUser(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, lockUser, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.IsInstanceAdmin,
+		&i.CreatedAt,
+		&i.LastLoginAt,
+		&i.DisabledAt,
+	)
+	return i, err
+}
+
+const lockUserAdministration = `-- name: LockUserAdministration :exec
+SELECT pg_advisory_xact_lock(7957695015192413556)
+`
+
+// Serializes enable/disable decisions so two admins disabling each other
+// at the same moment cannot leave the installation without an admin.
+func (q *Queries) LockUserAdministration(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockUserAdministration)
+	return err
+}
+
 const recordUserSignIn = `-- name: RecordUserSignIn :one
 UPDATE users
 SET email = $1,
@@ -108,6 +197,36 @@ func (q *Queries) RecordUserSignIn(ctx context.Context, arg RecordUserSignInPara
 		arg.GrantInstanceAdmin,
 		arg.ID,
 	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.OidcIssuer,
+		&i.OidcSubject,
+		&i.IsInstanceAdmin,
+		&i.CreatedAt,
+		&i.LastLoginAt,
+		&i.DisabledAt,
+	)
+	return i, err
+}
+
+const setUserDisabled = `-- name: SetUserDisabled :one
+UPDATE users
+SET disabled_at = CASE WHEN $1::boolean THEN coalesce(disabled_at, now()) ELSE NULL END
+WHERE id = $2
+RETURNING id, email, name, avatar_url, oidc_issuer, oidc_subject, is_instance_admin, created_at, last_login_at, disabled_at
+`
+
+type SetUserDisabledParams struct {
+	Disabled bool
+	ID       uuid.UUID
+}
+
+func (q *Queries) SetUserDisabled(ctx context.Context, arg SetUserDisabledParams) (User, error) {
+	row := q.db.QueryRow(ctx, setUserDisabled, arg.Disabled, arg.ID)
 	var i User
 	err := row.Scan(
 		&i.ID,

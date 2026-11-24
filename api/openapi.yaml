@@ -43,6 +43,10 @@ tags:
     description: Invitations that admit people to a workspace at sign-in.
   - name: tokens
     description: Personal API tokens for the CLI, scripts and CI.
+  - name: admin
+    description: Installation-wide user management (instance administrators only).
+  - name: nodes
+    description: Worker nodes and join tokens (instance administrators only).
   - name: operations
     description: Health probes and metrics for orchestrators and Prometheus.
 
@@ -496,6 +500,257 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/admin/users:
+    get:
+      tags: [admin]
+      operationId: listUsers
+      summary: Every user of the installation, ordered by email
+      description: Instance administrators only.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: email
+          in: query
+          description: Only the user with exactly this email address.
+          schema: { type: string, maxLength: 254 }
+      responses:
+        "200":
+          description: A page of users.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/AdminUser" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/users/{user_id}:
+    parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [admin]
+      operationId: updateUser
+      summary: Disable or re-enable a user
+      description: |
+        Disabling revokes all of the user's sessions and API tokens at once.
+        Re-enabling does not restore them; the user signs in again.
+        Administrators cannot disable themselves (`409 cannot_disable_self`)
+        or the last instance administrator (`409 last_instance_admin`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [disabled]
+              properties:
+                disabled: { type: boolean }
+      responses:
+        "200":
+          description: The user's new state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminUser" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/nodes:
+    get:
+      tags: [nodes]
+      operationId: listNodes
+      summary: Worker nodes, ordered by name (removed nodes are not listed)
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of nodes.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Node" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/nodes/{node}:
+    parameters:
+      - $ref: "#/components/parameters/NodeRef"
+    get:
+      tags: [nodes]
+      operationId: getNode
+      summary: A node with its latest heartbeat and its 20 most recent state changes
+      responses:
+        "200":
+          description: The node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [nodes]
+      operationId: removeNode
+      summary: Remove a node
+      description: |
+        Revokes all of the node's certificates and ends its agent's stream;
+        the agent's next connection is rejected. The name becomes free for a
+        new node. A node that is already removed returns `404`.
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/nodes/{node}/inspect:
+    parameters:
+      - $ref: "#/components/parameters/NodeRef"
+    post:
+      tags: [nodes]
+      operationId: inspectNode
+      summary: Ask the node's agent for live Docker information
+      description: |
+        Sends a command to the agent over its stream (through whichever
+        control-plane instance it is connected to) and waits for exactly one
+        answer. `503 node_not_connected`: no agent stream; `503
+        agent_disconnected`: the stream ended before the answer; `503
+        docker_unavailable`: the agent cannot reach Docker; `504
+        command_timeout`: no answer in time.
+      responses:
+        "200":
+          description: The agent's answer.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NodeInspection" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+        "504": { $ref: "#/components/responses/Timeout" }
+
+  /api/v1/nodes/{node}/drain:
+    parameters:
+      - $ref: "#/components/parameters/NodeRef"
+    post:
+      tags: [nodes]
+      operationId: drainNode
+      summary: Mark a node as draining (no new work is placed on it)
+      responses:
+        "200":
+          description: The node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/nodes/{node}/undrain:
+    parameters:
+      - $ref: "#/components/parameters/NodeRef"
+    post:
+      tags: [nodes]
+      operationId: undrainNode
+      summary: Return a draining node to service
+      responses:
+        "200":
+          description: The node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/join-tokens:
+    get:
+      tags: [nodes]
+      operationId: listJoinTokens
+      summary: Join tokens, newest first (metadata only)
+      description: Usable tokens, plus those that expired or were revoked in the last day.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of join tokens.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/JoinToken" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [nodes]
+      operationId: createJoinToken
+      summary: Create a join token for adding worker nodes
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                max_uses: { type: integer, minimum: 1, maximum: 1000, default: 1 }
+                expires_in_seconds: { type: integer, minimum: 60, maximum: 604800, default: 3600 }
+      responses:
+        "201":
+          description: Created. `token` is shown only in this response.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, server, ca_hash, join_command, metadata]
+                properties:
+                  token: { type: string, pattern: "^nook_join_[a-z2-7]{52}$" }
+                  server: { type: string, description: "gRPC address agents connect to (host:port)." }
+                  ca_hash:
+                    type: string
+                    pattern: "^sha256:[0-9a-f]{64}$"
+                    description: Fingerprint of the agent CA certificate, for pinning.
+                  join_command: { type: string, description: Ready to run on the new node. }
+                  metadata: { $ref: "#/components/schemas/JoinToken" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/join-tokens/{token_id}:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [nodes]
+      operationId: revokeJoinToken
+      summary: Revoke a join token
+      responses:
+        "204": { description: "Revoked, or already gone." }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
 components:
   securitySchemes:
     bearerToken:
@@ -520,6 +775,12 @@ components:
       name: limit
       in: query
       schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    NodeRef:
+      name: node
+      in: path
+      required: true
+      description: The node's name or ID.
+      schema: { type: string, maxLength: 63 }
     Cursor:
       name: cursor
       in: query
@@ -539,8 +800,8 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
     Forbidden:
       description: |
-        Not allowed: insufficient role (`forbidden`) or failed CSRF check
-        (`csrf_failed`).
+        Not allowed: insufficient role (`forbidden`,
+        `instance_admin_required`) or failed CSRF check (`csrf_failed`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -559,6 +820,19 @@ components:
       headers:
         Retry-After:
           schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: |
+        A dependency of the request is not available right now (for node
+        commands: `node_not_connected`, `agent_disconnected`,
+        `docker_unavailable`, `agent_error`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Timeout:
+      description: The work did not finish in time (`command_timeout`).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -677,3 +951,116 @@ components:
         verification_uri_complete: { type: string, format: uri }
         expires_in: { type: integer, description: Seconds until the codes expire. }
         interval: { type: integer, description: Minimum seconds between polls. }
+    AdminUser:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [disabled_at]
+          properties:
+            disabled_at: { type: [string, "null"], format: date-time }
+    NodeStatus:
+      type: string
+      enum: [joining, ready, suspect, dead, draining, removed]
+    Heartbeat:
+      type: object
+      required: [received_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, agent_version, uptime_seconds]
+      properties:
+        received_at: { type: string, format: date-time, description: Control-plane time of receipt. }
+        memory_available_bytes: { type: integer, format: int64 }
+        cpu_load_1m: { type: number }
+        disk_free_bytes: { type: integer, format: int64 }
+        running_containers: { type: integer }
+        docker_reachable: { type: boolean }
+        agent_version: { type: string }
+        uptime_seconds: { type: integer, format: int64 }
+    Node:
+      type: object
+      required: [id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_at, last_heartbeat_at, heartbeat]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$" }
+        status: { $ref: "#/components/schemas/NodeStatus" }
+        draining: { type: boolean }
+        labels: { type: object, additionalProperties: { type: string } }
+        hostname: { type: string }
+        addresses: { type: array, items: { type: string } }
+        cpu_count: { type: integer }
+        memory_total_bytes: { type: integer, format: int64 }
+        disk_total_bytes: { type: integer, format: int64 }
+        docker_version: { type: string }
+        agent_version: { type: string }
+        os: { type: string }
+        arch: { type: string }
+        joined_at: { type: string, format: date-time }
+        last_heartbeat_at: { type: [string, "null"], format: date-time }
+        heartbeat:
+          oneOf:
+            - $ref: "#/components/schemas/Heartbeat"
+            - type: "null"
+    NodeDetail:
+      allOf:
+        - $ref: "#/components/schemas/Node"
+        - type: object
+          required: [events]
+          properties:
+            events:
+              type: array
+              description: Most recent first.
+              items:
+                type: object
+                required: [from, to, reason, at]
+                properties:
+                  from:
+                    oneOf:
+                      - $ref: "#/components/schemas/NodeStatus"
+                      - type: "null"
+                  to: { $ref: "#/components/schemas/NodeStatus" }
+                  reason: { type: string }
+                  at: { type: string, format: date-time }
+    NodeInspection:
+      type: object
+      required: [node, docker, containers]
+      properties:
+        node: { type: string }
+        docker:
+          type: object
+          required: [server_version, api_version, operating_system, kernel_version, architecture, cpus, memory_total_bytes, storage_driver, containers_running, containers_total, images]
+          properties:
+            server_version: { type: string }
+            api_version: { type: string }
+            operating_system: { type: string }
+            kernel_version: { type: string }
+            architecture: { type: string }
+            cpus: { type: integer }
+            memory_total_bytes: { type: integer, format: int64 }
+            storage_driver: { type: string }
+            containers_running: { type: integer }
+            containers_total: { type: integer }
+            images: { type: integer }
+        containers:
+          type: array
+          description: Containers carrying the label `nook.managed=true`.
+          items:
+            type: object
+            required: [id, name, image, state, status, labels, created_at]
+            properties:
+              id: { type: string }
+              name: { type: string }
+              image: { type: string }
+              state: { type: string }
+              status: { type: string }
+              labels: { type: object, additionalProperties: { type: string } }
+              created_at: { type: string, format: date-time }
+    JoinToken:
+      type: object
+      required: [id, prefix, max_uses, uses, created_by, created_at, expires_at, last_used_at, revoked_at]
+      properties:
+        id: { type: string, format: uuid }
+        prefix: { type: string, description: "First characters, e.g. nook_join_ab3d" }
+        max_uses: { type: integer }
+        uses: { type: integer }
+        created_by: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        revoked_at: { type: [string, "null"], format: date-time }

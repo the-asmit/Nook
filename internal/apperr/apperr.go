@@ -25,6 +25,11 @@ const (
 	KindConflict
 	// KindRateLimited means the caller must slow down (429).
 	KindRateLimited
+	// KindUnavailable means a dependency of the request (such as a node's
+	// agent) cannot be reached right now (503).
+	KindUnavailable
+	// KindTimeout means a dependency did not answer in time (504).
+	KindTimeout
 )
 
 // Error is a classified error with a stable machine-readable code and a
@@ -73,6 +78,16 @@ func Conflict(code, format string, args ...any) *Error {
 // RateLimited reports that a rate limit was exceeded.
 func RateLimited(format string, args ...any) *Error {
 	return newError(KindRateLimited, "rate_limited", format, args...)
+}
+
+// Unavailable reports that something the request needs is not reachable.
+func Unavailable(code, format string, args ...any) *Error {
+	return newError(KindUnavailable, code, format, args...)
+}
+
+// Timeout reports that something the request needs did not answer in time.
+func Timeout(code, format string, args ...any) *Error {
+	return newError(KindTimeout, code, format, args...)
 }
 
 // As returns the classified error inside err, if any.

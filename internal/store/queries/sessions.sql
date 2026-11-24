@@ -31,3 +31,6 @@ UPDATE sessions SET revoked_at = now() WHERE id = @id AND revoked_at IS NULL;
 
 -- name: RevokeSessionByTokenHash :execrows
 UPDATE sessions SET revoked_at = now() WHERE token_hash = @token_hash AND revoked_at IS NULL;
+
+-- name: RevokeUserSessions :execrows
+UPDATE sessions SET revoked_at = now() WHERE user_id = @user_id AND revoked_at IS NULL;

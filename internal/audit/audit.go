@@ -32,6 +32,15 @@ const (
 	ActionInvitationRevoke   = "invitation.revoke"
 	ActionInvitationAccept   = "invitation.accept"
 	ActionInstanceAdminGrant = "user.instance_admin_grant"
+	ActionUserDisable        = "user.disable"
+	ActionUserEnable         = "user.enable"
+	ActionNodeJoin           = "node.join"
+	ActionNodeDrain          = "node.drain"
+	ActionNodeUndrain        = "node.undrain"
+	ActionNodeRemove         = "node.remove"
+	ActionNodeCertRenew      = "node.certificate_renew"
+	ActionJoinTokenCreate    = "join_token.create" //nolint:gosec // G101: an action name, not a credential.
+	ActionJoinTokenRevoke    = "join_token.revoke" //nolint:gosec // G101: an action name, not a credential.
 )
 
 // Target types.
@@ -43,7 +52,16 @@ const (
 	TargetWorkspace  = "workspace"
 	TargetMembership = "membership"
 	TargetInvitation = "invitation"
+	TargetNode       = "node"
+	TargetJoinToken  = "join_token"
 )
+
+// Actor is the authenticated user performing an action, plus the request
+// metadata recorded with it.
+type Actor struct {
+	UserID uuid.UUID
+	IP     *netip.Addr
+}
 
 // Entry describes one action. Metadata must never contain secrets (tokens,
 // codes, passwords); it is stored as JSON and readable by administrators.

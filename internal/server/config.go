@@ -9,9 +9,11 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/the-asmit/nook/internal/agentlink"
 	"github.com/the-asmit/nook/internal/auth"
 	"github.com/the-asmit/nook/internal/device"
 	"github.com/the-asmit/nook/internal/identity"
+	"github.com/the-asmit/nook/internal/nodes"
 	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/platform/httpserver"
 	"github.com/the-asmit/nook/internal/platform/logging"
@@ -34,6 +36,13 @@ type Config struct {
 	Auth      auth.Config
 	Identity  identity.Config
 	Device    device.Config
+	// GRPC is the agent-facing gRPC endpoint and its CA.
+	GRPC  agentlink.Config
+	Nodes nodes.Config
+	// LeaderInterval is how often a follower tries to become the leader
+	// that runs the failure detector, and how often the leader verifies
+	// its lock; it bounds how long a failover takes.
+	LeaderInterval time.Duration `env:"NOOK_LEADER_RETRY_INTERVAL" envDefault:"2s"`
 	// InvitationTTL is how long a workspace invitation stays open.
 	InvitationTTL time.Duration `env:"NOOK_INVITATION_TTL" envDefault:"168h"`
 	// AllowPlaintextInternal permits non-TLS Postgres and Redis connections
@@ -64,6 +73,9 @@ func (c *Config) Validate() error {
 		c.Auth.Validate(),
 		c.Identity.Validate(),
 		c.Device.Validate(),
+		c.GRPC.Validate(),
+		c.Nodes.Validate(),
+		config.CheckDuration("NOOK_LEADER_RETRY_INTERVAL", c.LeaderInterval, 100*time.Millisecond, time.Minute),
 		config.CheckDuration("NOOK_INVITATION_TTL", c.InvitationTTL, time.Hour, 90*24*time.Hour),
 		config.CheckDuration("NOOK_READINESS_TIMEOUT", c.ReadinessTimeout, 100*time.Millisecond, 30*time.Second),
 		config.CheckDuration("NOOK_STARTUP_TIMEOUT", c.StartupTimeout, time.Second, 10*time.Minute),

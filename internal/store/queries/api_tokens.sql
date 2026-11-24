@@ -29,3 +29,6 @@ LIMIT @row_limit;
 UPDATE api_tokens SET revoked_at = now()
 WHERE id = @id AND user_id = @user_id AND revoked_at IS NULL
 RETURNING *;
+
+-- name: RevokeUserAPITokens :execrows
+UPDATE api_tokens SET revoked_at = now() WHERE user_id = @user_id AND revoked_at IS NULL;

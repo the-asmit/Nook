@@ -10,9 +10,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/the-asmit/nook/internal/agentlink"
 	"github.com/the-asmit/nook/internal/apperr"
 	"github.com/the-asmit/nook/internal/auth"
 	"github.com/the-asmit/nook/internal/device"
+	"github.com/the-asmit/nook/internal/identity"
+	"github.com/the-asmit/nook/internal/nodes"
 	"github.com/the-asmit/nook/internal/ratelimit"
 	"github.com/the-asmit/nook/internal/store"
 	"github.com/the-asmit/nook/internal/workspace"
@@ -39,6 +42,12 @@ type V1Deps struct {
 	Limiter    *ratelimit.Limiter
 	// VerificationURL is where people approve device codes (public URL + /device).
 	VerificationURL string
+	Admin           *identity.Admin
+	Nodes           *nodes.Registry
+	Hub             *agentlink.Hub
+	// AgentServer and CAHash go into the join command shown to admins.
+	AgentServer string
+	CAHash      string
 }
 
 // V1 serves the JSON API.
@@ -74,6 +83,21 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	authed.GET("/tokens", h.listTokens)
 	authed.POST("/tokens", h.createToken)
 	authed.DELETE("/tokens/:token_id", h.revokeToken)
+
+	admin := authed.Group("", h.requireInstanceAdmin)
+	admin.GET("/admin/users", h.listUsers)
+	admin.PATCH("/admin/users/:user_id", h.updateUser)
+
+	admin.GET("/nodes", h.listNodes)
+	admin.GET("/nodes/:node", h.getNode)
+	admin.POST("/nodes/:node/inspect", h.inspectNode)
+	admin.POST("/nodes/:node/drain", h.setDraining(true))
+	admin.POST("/nodes/:node/undrain", h.setDraining(false))
+	admin.DELETE("/nodes/:node", h.removeNode)
+
+	admin.GET("/join-tokens", h.listJoinTokens)
+	admin.POST("/join-tokens", h.createJoinToken)
+	admin.DELETE("/join-tokens/:token_id", h.revokeJoinToken)
 }
 
 // principal returns the authenticated caller; RequireAPI guarantees it.
