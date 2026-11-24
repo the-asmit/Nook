@@ -66,9 +66,11 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Vulnerability scan | `make vuln` |
 | New migration | `make migrate-new name=add_users` |
 | Regenerate store / check it | `make sqlc` / `make sqlc-check` |
+| Regenerate protobuf / check it | `make proto` / `make proto-check` |
+| Lint protobuf / breaking changes | `make proto-lint` / `make proto-breaking` (against `main`) |
 | Validate the OpenAPI spec | `make openapi-lint` |
 | CLI release archives | `make release-snapshot` (into `dist/`) |
-| Multi-arch image | `make docker-build`, then `make docker-run` |
+| Multi-arch images (server + agent) | `make docker-build`, then `make docker-run` |
 
 ## Conventions
 
@@ -113,6 +115,22 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 - **New API routes** must be added to `api/openapi.yaml`; a test fails
   otherwise. JSON bodies require `Content-Type: application/json`;
   cookie-authenticated state changes need Origin + `X-CSRF-Token`.
+- **Protobuf** lives in `proto/nook/<area>/v<N>/`; run `make proto` after
+  changing a `.proto` and commit the generated code (CI runs `proto-check`,
+  `buf lint` and `buf breaking` against `main`). Never reuse or renumber a
+  field; add a new version package for incompatible changes.
+- **gRPC handlers** return deliberate status codes and never internal
+  details: map errors through `agentlink`'s `toStatus` (unclassified errors
+  are logged and become a bare `INTERNAL`). Every new stream or unary call
+  from an agent is authenticated by certificate serial against the
+  database, not by the TLS chain alone.
+- **Singleton work** (anything only one control-plane instance may do) runs
+  under `leader.Elector`, and its queries go through `leader.Session.Do` on
+  the lock connection (fencing).
+- **Node state** changes go through `nodes` (compare-and-set, a
+  `node_events` row, a `nook:events:nodes` message); never update
+  `nodes.status` directly. Times come from the control plane's clock
+  (Redis `TIME`), never from agents.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
   channels. Integration tests in `internal/server` share one Postgres,
   Redis and Dex (`harness_integration_test.go`) and get a fresh database per
@@ -131,9 +149,10 @@ nook/
 ├── go.mod / go.sum            # single module github.com/the-asmit/nook
 ├── .golangci.yml              # linter configuration (golangci-lint v2)
 ├── .editorconfig .gitignore .dockerignore .env.example
+├── buf.yaml / buf.gen.yaml    # buf module (proto/), lint + breaking rules, Go code generation (make proto)
 ├── .goreleaser.yaml           # builds the nook CLI for linux/darwin/windows × amd64/arm64
 ├── .github/
-│   ├── workflows/ci.yml       # lint, sqlc/OpenAPI checks, race tests, integration tests, govulncheck, CLI + image builds
+│   ├── workflows/ci.yml       # lint, sqlc/proto/OpenAPI checks, buf lint + breaking, race tests, integration tests, govulncheck, CLI + image builds
 │   └── dependabot.yml         # keeps pinned Go modules, actions and images current
 ├── api/
 │   ├── openapi.yaml           # OpenAPI 3.1 contract for every HTTP endpoint (tested against the router)
@@ -141,7 +160,7 @@ nook/
 ├── cmd/                       # one folder per binary; main.go only wires dependencies
 │   ├── nook-server/           # control plane entry point
 │   ├── nook/                  # CLI entry point
-│   ├── nook-agent/            # (planned) worker agent
+│   ├── nook-agent/            # worker agent entry point: `join`, `run`, `version`
 │   └── nook-gateway/          # (planned) gateway
 ├── internal/
 │   ├── platform/              # shared infrastructure used by every binary
@@ -159,26 +178,31 @@ nook/
 │   ├── apperr/                # classified domain errors (kind + stable code) mapped to HTTP by handlers
 │   ├── audit/                 # append-only audit log entries, written in the change's transaction
 │   ├── auth/                  # sessions, API tokens, CSRF, cookies, authentication middleware
-│   ├── identity/              # OIDC provider, sign-in flow state, admission policy, first-login provisioning
+│   ├── identity/              # OIDC provider, sign-in flow state, admission policy, first-login provisioning, user administration
 │   ├── workspace/             # workspaces, memberships, invitations, role rules (tenant-scoped)
 │   ├── device/                # OAuth 2.0 Device Authorization Grant for `nook login`
 │   ├── ratelimit/             # fixed-window rate limits in Redis
+│   ├── pki/                   # internal CA (shared PEM bundle), node + server certificates, CSR signing, CA pinning
+│   ├── nodes/                 # node registry: join tokens, joining, renewal, heartbeats (Redis), states, events, failure detector
+│   ├── leader/                # leader election with a Postgres session advisory lock, fenced sessions
+│   ├── agentlink/             # control-plane gRPC server for agents (TLS 1.3, mTLS auth) + cross-instance command hub
 │   ├── cli/                   # Cobra commands, API client, config file (0600) for the nook CLI
 │   ├── version/               # build info set via ldflags
 │   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex (integration build tag only)
 │   ├── queue/                 # (planned) Redis-backed job queue
 │   ├── scheduler/             # (planned) placement + failover
-│   ├── agent/                 # (planned) worker agent logic
+│   ├── agent/                 # worker agent: state dir, join, mTLS stream, heartbeats, Docker client, renewal, local health
 │   └── gateway/               # (planned) gateway logic
 ├── migrations/                # goose SQL migrations, embedded into the binary by migrations.go
 ├── tools/
 │   └── devenv/                # `make env`: creates/updates .env with generated secrets and bcrypt hashes (dev only)
-├── proto/                     # (planned) gRPC definitions
-├── web/                       # (planned) React dashboard
+├── proto/                     # protobuf/gRPC definitions (nook/agent/v1) + committed generated Go code
+├── frontend/                  # (planned) React dashboard
 ├── deploy/
 │   ├── compose/docker-compose.dev.yml   # Postgres, Redis, MinIO, Dex for development
 │   ├── compose/dex/config.yaml          # Dex dev/test IdP config (static users; shared with integration tests)
-│   └── docker/nook-server.Dockerfile    # multi-stage, distroless, non-root
+│   ├── docker/nook-server.Dockerfile    # multi-stage, distroless, non-root
+│   └── docker/nook-agent.Dockerfile     # multi-arch, distroless, non-root; Docker socket = root on the host (dedicated workers only)
 ├── test/e2e/                  # (planned) end-to-end tests
 └── docs/
     ├── architecture.md        # the full system map

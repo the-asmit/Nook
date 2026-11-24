@@ -17,8 +17,14 @@ Nook is built in stages. So far:
    owner/admin/member roles, API tokens, the `nook` CLI with device-flow
    login, an append-only audit log and the REST API v1
    ([api/openapi.yaml](api/openapi.yaml)).
+3. **Worker nodes**: `nook-agent` joins a machine with a single-use token
+   and a pinned CA hash, then keeps a mutually authenticated gRPC stream to
+   the control plane with heartbeats, short-lived auto-renewed certificates
+   and live node inspection; failure detection (ready → suspect → dead)
+   runs on one elected leader among control-plane instances; admins manage
+   nodes, join tokens and users from the CLI.
 
-The agent, gateway, deployments and dashboard come later; see
+The gateway, deployments and dashboard come later; see
 [docs/architecture.md](docs/architecture.md) for the full design.
 
 ## Prerequisites
@@ -34,7 +40,7 @@ example `~/nook`, not `/mnt/c/...`, which is much slower).
 | GNU make, git, curl | any recent | `sudo apt-get install -y make git curl` |
 | gcc | any recent | Required by Go's race detector and by sqlc: `sudo apt-get install -y build-essential` |
 
-Developer tools (golangci-lint, govulncheck, goose, sqlc, GoReleaser) are installed at pinned
+Developer tools (golangci-lint, govulncheck, goose, sqlc, GoReleaser, buf and the protoc plugins) are installed at pinned
 versions into `./bin` by the Makefile on first use; nothing is installed
 globally.
 
@@ -72,6 +78,18 @@ go run ./cmd/nook token create --name ci     # for scripts; shown once
 go run ./cmd/nook logout                     # revokes the CLI's token
 ```
 
+Add this machine as a worker node (alice is an instance admin):
+
+```sh
+make build
+bin/nook node join-token create          # prints the complete join command
+export NOOK_AGENT_STATE_DIR=$HOME/.nook-agent   # default: /var/lib/nook-agent
+bin/nook-agent join --server localhost:9443 --token nook_join_… --ca-hash sha256:…
+bin/nook-agent run
+bin/nook node list                       # ready, with CPU, memory, disk and containers
+bin/nook node inspect <name>             # live Docker information from the agent
+```
+
 Stop the server with Ctrl-C (it drains in-flight requests), and the stack with
 `make dev-down` (data volumes are kept). To use Google instead of Dex, see
 [docs/learn/01-identity.md](docs/learn/01-identity.md#switching-from-dex-to-google).
@@ -83,9 +101,10 @@ make test               # unit tests with the race detector
 make test-integration   # + integration tests against real Postgres/Redis (Docker)
 make lint               # golangci-lint
 make vuln               # govulncheck
-make docker-build       # nook-server image for linux/amd64 and linux/arm64
+make docker-build       # nook-server and nook-agent images for linux/amd64 and linux/arm64
 make docker-run         # run that image against the dev stack on 127.0.0.1:8081
 make sqlc               # regenerate internal/store after changing SQL
+make proto              # regenerate proto/ after changing a .proto file
 make openapi-lint       # validate api/openapi.yaml
 make release-snapshot   # build the CLI for every OS/arch into dist/
 ```
