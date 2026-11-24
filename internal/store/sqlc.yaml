@@ -1,0 +1,42 @@
+# sqlc turns the SQL in queries/ into type-safe Go. Regenerate with
+# `make sqlc`; CI fails if the generated code is stale.
+version: "2"
+sql:
+  - engine: postgresql
+    # sqlc reads the goose migrations (ignoring their Down sections) as the schema.
+    schema: ../../migrations
+    queries: queries
+    gen:
+      go:
+        package: store
+        out: .
+        sql_package: pgx/v5
+        output_db_file_name: db.gen.go
+        output_models_file_name: models.gen.go
+        output_files_suffix: .gen
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        emit_enum_valid_method: true
+        emit_all_enum_values: true
+        overrides:
+          # Go 1.27's standard-library uuid package; pgx encodes and scans it natively.
+          - db_type: uuid
+            go_type: { import: uuid, type: UUID }
+          - db_type: uuid
+            nullable: true
+            go_type: { import: uuid, type: UUID, pointer: true }
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: timestamptz
+            nullable: true
+            go_type: { type: time.Time, pointer: true }
+          - db_type: citext
+            go_type: string
+          - db_type: citext
+            nullable: true
+            go_type: { type: string, pointer: true }
+          - db_type: inet
+            go_type: net/netip.Addr
+          - db_type: inet
+            nullable: true
+            go_type: { import: net/netip, type: Addr, pointer: true }
