@@ -6,4 +6,5 @@
 !cmd/
 !internal/
 !migrations/
+!proto/
 **/*_test.go

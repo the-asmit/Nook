@@ -20,6 +20,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 COPY cmd ./cmd
 COPY internal ./internal
 COPY migrations ./migrations
+COPY proto ./proto
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -58,5 +59,9 @@ COPY --from=build /out/nook-server /nook-server
 # The image's "nonroot" user (UID/GID 65532), stated numerically so
 # Kubernetes' runAsNonRoot check can verify it without reading /etc/passwd.
 USER 65532:65532
-EXPOSE 8080
+# 8080: HTTP API and dashboard. 9443: gRPC endpoint for agents (mTLS).
+# The agent CA lives at NOOK_PKI_CA_PATH; mount a volume (shared by every
+# instance) there, since the root file system is read-only.
+EXPOSE 8080 9443
+VOLUME ["/var/lib/nook-server"]
 ENTRYPOINT ["/nook-server"]

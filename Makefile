@@ -30,20 +30,32 @@ GOLANGCI_LINT_VERSION := v2.15.0
 GOVULNCHECK_VERSION := v1.10.0
 SQLC_VERSION := v1.31.1
 GORELEASER_VERSION := v2.20.2
-# The goose CLI always matches the goose library version in go.mod.
+BUF_VERSION := v1.75.0
+PROTOC_GEN_GO_GRPC_VERSION := v1.6.2
+# The goose CLI and protoc-gen-go always match their library versions in
+# go.mod, so generated code and runtime never disagree.
 GOOSE_VERSION := $(shell go list -m -f '{{.Version}}' github.com/pressly/goose/v3)
+PROTOC_GEN_GO_VERSION := $(shell go list -m -f '{{.Version}}' google.golang.org/protobuf)
 
 GOLANGCI_LINT := $(BIN_DIR)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 GOVULNCHECK := $(BIN_DIR)/govulncheck-$(GOVULNCHECK_VERSION)
 GOOSE := $(BIN_DIR)/goose-$(GOOSE_VERSION)
 SQLC := $(BIN_DIR)/sqlc-$(SQLC_VERSION)
 GORELEASER := $(BIN_DIR)/goreleaser-$(GORELEASER_VERSION)
+BUF := $(BIN_DIR)/buf-$(BUF_VERSION)
+# buf runs the code generators from PATH; this directory holds exactly the
+# pinned versions.
+PROTOC_PLUGINS := $(BIN_DIR)/protoc-plugins-$(PROTOC_GEN_GO_VERSION)-$(PROTOC_GEN_GO_GRPC_VERSION)
+
+# buf breaking compares proto/ against this git ref (CI uses origin/main).
+BREAKING_REF ?= main
 
 REDOCLY_IMAGE := redocly/cli:2.76.0@sha256:bd2a1637e39de2d7fc403b3a114b6f8ecbb7edcb6f814516c79b38be409747e9
 
 COMPOSE := docker compose --env-file .env -f deploy/compose/docker-compose.dev.yml
 
 IMAGE ?= nook-server
+AGENT_IMAGE ?= nook-agent
 PLATFORMS ?= linux/amd64,linux/arm64
 # --load imports the multi-platform image into the local image store (needs
 # Docker's containerd image store, the default in Docker Desktop). CI sets
@@ -120,9 +132,35 @@ migrate-new: $(GOOSE) ## Create a new SQL migration: make migrate-new name=add_u
 ##@ Build and test
 
 .PHONY: build
-build: ## Build bin/nook-server and bin/nook (the CLI) for this machine
+build: ## Build bin/nook-server, bin/nook (the CLI) and bin/nook-agent for this machine
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook-server ./cmd/nook-server
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook ./cmd/nook
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook-agent ./cmd/nook-agent
+
+.PHONY: proto
+proto: $(BUF) $(PROTOC_PLUGINS) ## Regenerate the gRPC/protobuf Go code in proto/ (committed)
+	PATH="$(PROTOC_PLUGINS):$$PATH" $(BUF) generate
+
+.PHONY: proto-check
+proto-check: $(BUF) $(PROTOC_PLUGINS) ## Fail if the generated protobuf code is stale (used by CI)
+	@tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT; \
+	PATH="$(PROTOC_PLUGINS):$$PATH" $(BUF) generate --output "$$tmp"; \
+	diff -r --exclude='*.proto' "$$tmp/proto" proto || { echo "error: proto/ is stale; run 'make proto' and commit the result." >&2; exit 1; }; \
+	echo "generated protobuf code is up to date"
+
+.PHONY: proto-lint
+proto-lint: $(BUF) ## Lint the protobuf definitions (buf lint)
+	$(BUF) lint
+
+.PHONY: proto-breaking
+proto-breaking: $(BUF) ## Fail on breaking protobuf changes against BREAKING_REF (default main)
+	@# Until the base has a buf module there is nothing to compare against.
+	@if git cat-file -e "$(BREAKING_REF):buf.yaml" 2>/dev/null; then \
+		$(BUF) breaking --against ".git#ref=$(BREAKING_REF)"; \
+		echo "no breaking changes against $(BREAKING_REF)"; \
+	else \
+		echo "$(BREAKING_REF) has no protobuf module yet; nothing to compare against."; \
+	fi
 
 .PHONY: sqlc
 sqlc: $(SQLC) ## Regenerate internal/store from migrations/ and internal/store/queries/
@@ -163,7 +201,7 @@ vuln: $(GOVULNCHECK) ## Scan production code, then test code, for known vulnerab
 	$(GOVULNCHECK) -test -tags=integration ./...
 
 .PHONY: docker-build
-docker-build: ## Build the nook-server image for linux/amd64 and linux/arm64
+docker-build: ## Build the nook-server and nook-agent images for linux/amd64 and linux/arm64
 	docker buildx build \
 		--platform $(PLATFORMS) \
 		--file deploy/docker/nook-server.Dockerfile \
@@ -172,9 +210,17 @@ docker-build: ## Build the nook-server image for linux/amd64 and linux/arm64
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		--tag $(IMAGE):$(VERSION) \
 		$(DOCKER_OUTPUT) .
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--file deploy/docker/nook-agent.Dockerfile \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--tag $(AGENT_IMAGE):$(VERSION) \
+		$(DOCKER_OUTPUT) .
 
 .PHONY: tools
-tools: $(GOLANGCI_LINT) $(GOVULNCHECK) $(GOOSE) $(SQLC) $(GORELEASER) ## Install the pinned developer tools into bin/
+tools: $(GOLANGCI_LINT) $(GOVULNCHECK) $(GOOSE) $(SQLC) $(GORELEASER) $(BUF) $(PROTOC_PLUGINS) ## Install the pinned developer tools into bin/
 
 .PHONY: clean
 clean: ## Remove build output, release archives and installed tools
@@ -210,3 +256,14 @@ $(GORELEASER):
 	@mkdir -p $(BIN_DIR)/.install
 	GOBIN=$(BIN_DIR)/.install go install github.com/goreleaser/goreleaser/v2@$(GORELEASER_VERSION)
 	mv $(BIN_DIR)/.install/goreleaser $@
+
+$(BUF):
+	@mkdir -p $(BIN_DIR)/.install
+	GOBIN=$(BIN_DIR)/.install go install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION)
+	mv $(BIN_DIR)/.install/buf $@
+
+$(PROTOC_PLUGINS):
+	@mkdir -p $(BIN_DIR)/.install-plugins
+	GOBIN=$(BIN_DIR)/.install-plugins go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION)
+	GOBIN=$(BIN_DIR)/.install-plugins go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION)
+	mv $(BIN_DIR)/.install-plugins $@
