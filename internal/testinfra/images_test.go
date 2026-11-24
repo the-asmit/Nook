@@ -15,7 +15,7 @@ func TestImagesMatchComposeFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, img := range []string{PostgresImage, RedisImage} {
+	for _, img := range []string{PostgresImage, RedisImage, DexImage} {
 		if !strings.Contains(string(data), "image: "+img+"\n") {
 			t.Errorf("compose file does not use %s", img)
 		}

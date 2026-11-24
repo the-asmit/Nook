@@ -5,6 +5,7 @@ package redis
 import (
 	"errors"
 	"fmt"
+	"net"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
@@ -62,4 +63,21 @@ func NewClient(cfg *Config) (*goredis.Client, error) {
 	// fixed read/write timeouts, which breaks per-request time budgets.
 	opts.ContextTimeoutEnabled = true
 	return goredis.NewClient(opts), nil
+}
+
+// Host returns the host the URL connects to, or the socket path for
+// unix:// URLs.
+func (c *Config) Host() string {
+	opts, err := goredis.ParseURL(c.URL.Reveal())
+	if err != nil {
+		return ""
+	}
+	if opts.Network == "unix" {
+		return opts.Addr
+	}
+	host, _, err := net.SplitHostPort(opts.Addr)
+	if err != nil {
+		return opts.Addr
+	}
+	return host
 }

@@ -66,6 +66,26 @@ func PostgresT(tb testing.TB) (*tcpostgres.PostgresContainer, string) {
 	return c, connURL
 }
 
+// StartRedis runs a Redis container and returns it with its URL. Callers
+// must terminate it.
+func StartRedis(ctx context.Context) (*tcredis.RedisContainer, string, error) {
+	ctx, cancel := context.WithTimeout(ctx, startTimeout)
+	defer cancel()
+	c, err := tcredis.Run(ctx, RedisImage)
+	if err != nil {
+		if c != nil {
+			_ = testcontainers.TerminateContainer(c)
+		}
+		return nil, "", fmt.Errorf("start redis container: %w", err)
+	}
+	connURL, err := c.ConnectionString(ctx)
+	if err != nil {
+		_ = testcontainers.TerminateContainer(c)
+		return nil, "", fmt.Errorf("redis connection string: %w", err)
+	}
+	return c, connURL, nil
+}
+
 // RedisT starts a Redis container owned by test t and returns its URL.
 func RedisT(tb testing.TB) (*tcredis.RedisContainer, string) {
 	tb.Helper()

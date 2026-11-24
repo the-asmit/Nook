@@ -92,3 +92,17 @@ func (c *Config) poolConfig(applicationName string) (*pgxpool.Config, error) {
 	}
 	return pc, nil
 }
+
+// Hosts returns every host the URL may connect to (including libpq
+// fallback hosts); Unix socket directories start with "/".
+func (c *Config) Hosts() []string {
+	pc, err := pgxpool.ParseConfig(c.URL.Reveal())
+	if err != nil {
+		return nil
+	}
+	hosts := []string{pc.ConnConfig.Host}
+	for _, fb := range pc.ConnConfig.Fallbacks {
+		hosts = append(hosts, fb.Host)
+	}
+	return hosts
+}
