@@ -1,0 +1,18 @@
+{{define "content"}}
+<h1>Signed in</h1>
+<p>You are signed in as <strong>{{.User.Name}}</strong> ({{.User.Email}}){{if .User.IsInstanceAdmin}}, an instance administrator{{end}}.</p>
+<h2>Your workspaces</h2>
+{{if .Workspaces}}
+<table>
+<thead><tr><th>Name</th><th>Slug</th><th>Your role</th></tr></thead>
+<tbody>
+{{range .Workspaces}}<tr><td>{{.Workspace.Name}}{{if .Personal}} <span class="tag">personal</span>{{end}}</td><td><code>{{.Workspace.Slug}}</code></td><td>{{.Role}}</td></tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>You are not a member of any workspace.</p>
+{{end}}
+<h2>Command-line access</h2>
+<p>Run <code>nook login {{.PublicURL}}</code> in a terminal, then approve the code it shows at <a href="/device">{{.PublicURL}}/device</a>.</p>
+{{end}}

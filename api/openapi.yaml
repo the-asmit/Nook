@@ -1,0 +1,679 @@
+openapi: 3.1.0
+info:
+  title: Nook control-plane API
+  version: "1"
+  summary: REST API used by the nook CLI and the dashboard.
+  description: |
+    All endpoints under `/api/v1` speak JSON. Request bodies must be sent with
+    `Content-Type: application/json`; unknown fields are rejected.
+
+    **Authentication.** Send either an API token
+    (`Authorization: Bearer nook_pat_...`) or the browser session cookie.
+    State-changing requests authenticated by the session cookie must also send
+    the `X-CSRF-Token` header (value from `GET /api/v1/me`) and come from the
+    Nook origin (`Origin`/`Referer`).
+
+    **Errors** always use the envelope
+    `{"error": {"code": "...", "message": "...", "request_id": "..."}}`.
+    `code` is stable and machine-readable; `message` is for humans.
+
+    **Tenant isolation.** A workspace you are not a member of is reported as
+    `404 not_found`, exactly like one that does not exist.
+
+    **Pagination.** List endpoints return `{"items": [...], "next_cursor": ...}`.
+    Pass `next_cursor` back as `?cursor=` to get the next page; it is `null`
+    on the last page.
+
+    **Idempotent deletes.** Deleting a member, invitation or token that is
+    already gone returns `204`. Malformed IDs return `404`.
+servers:
+  - url: http://localhost:8080
+    description: Local development (make run-server)
+security:
+  - bearerToken: []
+  - sessionCookie: []
+tags:
+  - name: auth
+    description: The caller, sign-out and CLI login (device flow).
+  - name: workspaces
+    description: Workspaces (tenants) you belong to.
+  - name: members
+    description: Workspace members and their roles.
+  - name: invitations
+    description: Invitations that admit people to a workspace at sign-in.
+  - name: tokens
+    description: Personal API tokens for the CLI, scripts and CI.
+  - name: operations
+    description: Health probes and metrics for orchestrators and Prometheus.
+
+paths:
+  /healthz:
+    get:
+      tags: [operations]
+      operationId: liveness
+      summary: Liveness probe (process is up)
+      security: []
+      responses:
+        "200":
+          description: The process is serving HTTP.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, const: ok }
+  /readyz:
+    get:
+      tags: [operations]
+      operationId: readiness
+      summary: Readiness probe (Postgres and Redis reachable)
+      security: []
+      responses:
+        "200":
+          description: Ready to serve traffic.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+        "503":
+          description: A dependency is unavailable; `failing` names it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Readiness" }
+  /metrics:
+    get:
+      tags: [operations]
+      operationId: metrics
+      summary: Prometheus metrics
+      security: []
+      responses:
+        "200":
+          description: Metrics in the Prometheus text exposition format.
+          content:
+            text/plain:
+              schema: { type: string }
+
+  /api/v1/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: The authenticated user
+      responses:
+        "200":
+          description: The caller.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Revoke the credential used for this request
+      description: |
+        With a session cookie, ends the browser session and clears the cookie.
+        With an API token, revokes that token (`nook logout` uses this).
+      responses:
+        "204": { description: Signed out. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/auth/device:
+    post:
+      tags: [auth]
+      operationId: startDeviceAuthorization
+      summary: Start a CLI login (OAuth 2.0 Device Authorization Grant, RFC 8628)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                client_name:
+                  type: string
+                  maxLength: 100
+                  description: Shown on the approval page. Default "nook CLI".
+      responses:
+        "200":
+          description: Device and user codes.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeviceAuthorization" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/auth/device/token:
+    post:
+      tags: [auth]
+      operationId: pollDeviceToken
+      summary: Poll for the API token of an approved CLI login
+      description: |
+        Returns the token exactly once, after the user approved the request.
+        Until then, `400` with one of the RFC 8628 codes:
+        `authorization_pending` (keep polling), `slow_down` (add 5 s to the
+        interval), `access_denied`, `expired_token`; `invalid_grant` for
+        unknown or already redeemed codes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device_code]
+              properties:
+                device_code: { type: string }
+      responses:
+        "200":
+          description: The issued API token.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type, token]
+                properties:
+                  access_token: { type: string, pattern: "^nook_pat_[a-z2-7]{52}$" }
+                  token_type: { type: string, const: Bearer }
+                  token: { $ref: "#/components/schemas/Token" }
+        "400":
+          description: Not (yet) approved; see `error.code`.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/v1/workspaces:
+    get:
+      tags: [workspaces]
+      operationId: listWorkspaces
+      summary: Workspaces you belong to, ordered by slug
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of workspaces.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Workspace" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+    post:
+      tags: [workspaces]
+      operationId: createWorkspace
+      summary: Create a workspace (you become its owner)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, slug]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                slug: { $ref: "#/components/schemas/Slug" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+    get:
+      tags: [workspaces]
+      operationId: getWorkspace
+      summary: One workspace (members only)
+      responses:
+        "200":
+          description: The workspace and your role in it.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [workspaces]
+      operationId: updateWorkspace
+      summary: Rename a workspace (admins and owners)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Workspace" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [workspaces]
+      operationId: deleteWorkspace
+      summary: Delete a workspace (owners only)
+      description: |
+        A personal workspace cannot be deleted while it is its owner's only
+        workspace (`409 last_workspace`).
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/members:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+    get:
+      tags: [members]
+      operationId: listMembers
+      summary: Members of a workspace, ordered by email
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of members.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Member" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/members/{user_id}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [members]
+      operationId: updateMember
+      summary: Change a member's role
+      description: |
+        Admins and owners manage members and admins; only owners grant or
+        remove the owner role; the last owner cannot be demoted
+        (`409 last_owner`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [role]
+              properties:
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "204": { description: Role changed. }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [members]
+      operationId: removeMember
+      summary: Remove a member (or leave, with your own ID)
+      responses:
+        "204": { description: "Removed, or was not a member." }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/invitations:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+    get:
+      tags: [invitations]
+      operationId: listInvitations
+      summary: Open invitations (admins and owners)
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of open, unexpired invitations.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Invitation" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [invitations]
+      operationId: createInvitation
+      summary: Invite an email address (admins and owners; owner role needs an owner)
+      description: |
+        Nook sends no email: the person is admitted to the workspace the next
+        time they sign in with this address.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+                role: { $ref: "#/components/schemas/Role" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Invitation" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/invitations/{invitation_id}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - name: invitation_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [invitations]
+      operationId: revokeInvitation
+      summary: Revoke an open invitation
+      responses:
+        "204": { description: "Revoked, or no longer open." }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/tokens:
+    get:
+      tags: [tokens]
+      operationId: listTokens
+      summary: Your API tokens, newest first (metadata only)
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of tokens; revoked tokens are not listed.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Token" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+    post:
+      tags: [tokens]
+      operationId: createToken
+      summary: Create an API token for scripts and CI
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 100 }
+                expires_in_days:
+                  type: [integer, "null"]
+                  minimum: 1
+                  maximum: 366
+                  description: Omit for a token that never expires.
+      responses:
+        "201":
+          description: Created. `token` is shown only in this response.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, metadata]
+                properties:
+                  token: { type: string, pattern: "^nook_pat_[a-z2-7]{52}$" }
+                  metadata: { $ref: "#/components/schemas/Token" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/tokens/{token_id}:
+    parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [tokens]
+      operationId: revokeToken
+      summary: Revoke one of your tokens
+      responses:
+        "204": { description: "Revoked, or already gone." }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    bearerToken:
+      type: http
+      scheme: bearer
+      description: A personal access token (`nook_pat_...`).
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-nook_session
+      description: |
+        Browser session (named `nook_session` on plain-HTTP localhost in
+        development). Unsafe methods also need the `X-CSRF-Token` header.
+
+  parameters:
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/Slug" }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      description: The `next_cursor` of the previous page.
+      schema: { type: string, maxLength: 512 }
+
+  responses:
+    Invalid:
+      description: Invalid input.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthenticated:
+      description: Missing, invalid, expired or revoked credentials.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: |
+        Not allowed: insufficient role (`forbidden`) or failed CSRF check
+        (`csrf_failed`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Does not exist, or belongs to a workspace you are not in.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Conflicts with current state (e.g. `slug_taken`, `last_owner`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RateLimited:
+      description: Too many requests; see the `Retry-After` header.
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UnsupportedMediaType:
+      description: The body was not sent as application/json.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+    Page:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items: { type: array }
+        next_cursor: { type: [string, "null"] }
+    Slug:
+      type: string
+      pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
+    Role:
+      type: string
+      enum: [owner, admin, member]
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        checks:
+          type: object
+          additionalProperties: { type: string, enum: [ok, unavailable] }
+        failing:
+          type: array
+          items: { type: string }
+    User:
+      type: object
+      required: [id, email, name, avatar_url, is_instance_admin, created_at, last_login_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+        avatar_url: { type: string }
+        is_instance_admin: { type: boolean }
+        created_at: { type: string, format: date-time }
+        last_login_at: { type: [string, "null"], format: date-time }
+    Me:
+      type: object
+      required: [user, auth_method]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        auth_method: { type: string, enum: [session, token] }
+        csrf_token:
+          type: string
+          description: Present for session authentication; send as X-CSRF-Token.
+    Workspace:
+      type: object
+      required: [id, name, slug, personal, role, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        slug: { $ref: "#/components/schemas/Slug" }
+        personal: { type: boolean }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: string, format: date-time }
+    Member:
+      type: object
+      required: [user, role, joined_at]
+      properties:
+        user:
+          type: object
+          required: [id, email, name, avatar_url]
+          properties:
+            id: { type: string, format: uuid }
+            email: { type: string, format: email }
+            name: { type: string }
+            avatar_url: { type: string }
+        role: { $ref: "#/components/schemas/Role" }
+        joined_at: { type: string, format: date-time }
+    Invitation:
+      type: object
+      required: [id, email, role, invited_by, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { $ref: "#/components/schemas/Role" }
+        invited_by: { type: [string, "null"], format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    Token:
+      type: object
+      required: [id, name, prefix, created_at, last_used_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string, description: "First characters, e.g. nook_pat_ab3d" }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, "null"], format: date-time }
+        expires_at: { type: [string, "null"], format: date-time }
+    DeviceAuthorization:
+      type: object
+      required: [device_code, user_code, verification_uri, verification_uri_complete, expires_in, interval]
+      properties:
+        device_code: { type: string, description: Secret; only the CLI keeps it. }
+        user_code: { type: string, pattern: "^[BCDFGHJKLMNPQRSTVWXZ]{4}-[BCDFGHJKLMNPQRSTVWXZ]{4}$" }
+        verification_uri: { type: string, format: uri }
+        verification_uri_complete: { type: string, format: uri }
+        expires_in: { type: integer, description: Seconds until the codes expire. }
+        interval: { type: integer, description: Minimum seconds between polls. }

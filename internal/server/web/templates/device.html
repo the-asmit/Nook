@@ -1,0 +1,11 @@
+{{define "content"}}
+<h1>Connect a device</h1>
+<p>Enter the code shown by <code>nook login</code> on your device.</p>
+{{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+<form method="post" action="/device">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <label for="user_code">Code</label>
+  <input id="user_code" name="user_code" value="{{.UserCode}}" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="16" required autofocus>
+  <button type="submit" class="button">Continue</button>
+</form>
+{{end}}

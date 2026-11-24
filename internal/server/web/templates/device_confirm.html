@@ -1,0 +1,15 @@
+{{define "content"}}
+<h1>Approve this device?</h1>
+<dl>
+  <dt>Device</dt><dd>{{.ClientName}}</dd>
+  <dt>Code</dt><dd><code class="code">{{.UserCode}}</code></dd>
+  <dt>Requested</dt><dd>{{.RequestedAt}}</dd>
+</dl>
+<p class="warning">Only approve if you started <code>nook login</code> yourself just now and the code matches. Approving gives that device full access to your account until you revoke its token.</p>
+<form method="post" action="/device/decision" class="actions">
+  <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+  <input type="hidden" name="user_code" value="{{.UserCode}}">
+  <button type="submit" name="decision" value="approve" class="button">Approve</button>
+  <button type="submit" name="decision" value="deny" class="button secondary">Deny</button>
+</form>
+{{end}}

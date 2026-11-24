@@ -6,8 +6,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -100,6 +103,26 @@ func appliedVersions(t *testing.T, pool *pgxpool.Pool) []int64 {
 	return out
 }
 
+// embeddedVersions lists the versions of the embedded migration files
+// (NNNNN_name.sql), in order.
+func embeddedVersions(t *testing.T) []int64 {
+	t.Helper()
+	names, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []int64
+	for _, n := range names {
+		v, err := strconv.ParseInt(strings.SplitN(n, "_", 2)[0], 10, 64)
+		if err != nil {
+			t.Fatalf("migration %q has no numeric version", n)
+		}
+		out = append(out, v)
+	}
+	slices.Sort(out)
+	return out
+}
+
 func TestMigrateAppliesExtensionsAndIsIdempotent(t *testing.T) {
 	pool := newTestPool(t, testinfra.CreateDatabase(t, adminURL))
 	ctx := testCtx(t, time.Minute)
@@ -113,8 +136,8 @@ func TestMigrateAppliesExtensionsAndIsIdempotent(t *testing.T) {
 	if err := Migrate(ctx, pool, migrations.FS, quiet); err != nil {
 		t.Fatalf("second Migrate() = %v", err)
 	}
-	if got := appliedVersions(t, pool); len(got) != 1 || got[0] != 1 {
-		t.Fatalf("applied versions = %v, want [1] exactly once", got)
+	if got, want := appliedVersions(t, pool), embeddedVersions(t); !slices.Equal(got, want) {
+		t.Fatalf("applied versions = %v, want each of %v exactly once", got, want)
 	}
 }
 
@@ -171,8 +194,8 @@ func TestConcurrentMigratorsDoNotConflict(t *testing.T) {
 			t.Errorf("concurrent Migrate() = %v", err)
 		}
 	}
-	if got := appliedVersions(t, pools[0]); len(got) != 1 || got[0] != 1 {
-		t.Fatalf("applied versions = %v, want [1] exactly once", got)
+	if got, want := appliedVersions(t, pools[0]), embeddedVersions(t); !slices.Equal(got, want) {
+		t.Fatalf("applied versions = %v, want each of %v exactly once", got, want)
 	}
 	if got := installedExtensions(t, pools[0]); got != "citext,pgcrypto" {
 		t.Fatalf("extensions = %q", got)
@@ -256,8 +279,8 @@ func TestMigrateWaitsForLockHolder(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("Migrate() after release = %v", err)
 	}
-	if got := appliedVersions(t, pool); len(got) != 1 {
-		t.Fatalf("applied versions = %v", got)
+	if got, want := appliedVersions(t, pool), embeddedVersions(t); !slices.Equal(got, want) {
+		t.Fatalf("applied versions = %v, want %v", got, want)
 	}
 }
 

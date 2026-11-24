@@ -1,0 +1,11 @@
+# Redocly CLI lint settings for api/openapi.yaml (run `make openapi-lint`).
+# Start from the recommended rules and turn off only what is deliberate:
+extends:
+  - recommended
+rules:
+  # The project has not chosen a license yet.
+  info-license: off
+  # The only server entry is the local development server, on purpose.
+  no-server-example.com: off
+  # /healthz, /readyz and /metrics take no input and cannot fail with a 4xx.
+  operation-4xx-response: off

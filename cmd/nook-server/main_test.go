@@ -46,6 +46,13 @@ func TestInvalidConfigFailsFastWithStructuredProblems(t *testing.T) {
 		"NOOK_POSTGRES_URL": "postgres://nook:pw@127.0.0.1:5432/nook",
 		"NOOK_REDIS_URL":    "redis://127.0.0.1:6379/0",
 		"NOOK_HTTP_ADDR":    "not-an-address",
+		// Valid values for the other required settings, so that exactly the
+		// two problems above are reported.
+		"NOOK_PUBLIC_URL":            "http://localhost:8080",
+		"NOOK_OIDC_ISSUER_URL":       "http://localhost:5556/dex",
+		"NOOK_OIDC_CLIENT_ID":        "nook-dev",
+		"NOOK_OIDC_CLIENT_SECRET":    "secret",
+		"NOOK_ALLOWED_EMAIL_DOMAINS": "nook.test",
 	}
 	if code := run(nil, environ, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)

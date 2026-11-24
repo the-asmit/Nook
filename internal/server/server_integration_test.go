@@ -3,48 +3,20 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
-
-	"github.com/gin-gonic/gin"
 
 	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/platform/logging"
 	"github.com/the-asmit/nook/internal/server/api"
 	"github.com/the-asmit/nook/internal/testinfra"
 )
-
-func TestMain(m *testing.M) {
-	gin.SetMode(gin.TestMode)
-	os.Exit(m.Run())
-}
-
-// syncBuffer is a goroutine-safe log sink.
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
 
 func readyz(t *testing.T, base string) (int, api.ReadinessResponse) {
 	t.Helper()
@@ -105,13 +77,11 @@ func TestServerLifecycleAndReadiness(t *testing.T) {
 	pg, pgURL := testinfra.PostgresT(t)
 	rd, redisURL := testinfra.RedisT(t)
 
-	cfg, err := config.Load[Config](map[string]string{
-		"NOOK_ENV":               "development",
-		"NOOK_HTTP_ADDR":         "127.0.0.1:0",
-		"NOOK_POSTGRES_URL":      pgURL,
-		"NOOK_REDIS_URL":         redisURL,
-		"NOOK_READINESS_TIMEOUT": "500ms",
-	})
+	environ := baseEnviron(pgURL)
+	environ["NOOK_HTTP_ADDR"] = "127.0.0.1:0"
+	environ["NOOK_REDIS_URL"] = redisURL
+	environ["NOOK_READINESS_TIMEOUT"] = "500ms"
+	cfg, err := config.Load[Config](environ)
 	if err != nil {
 		t.Fatal(err)
 	}

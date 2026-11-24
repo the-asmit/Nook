@@ -1,0 +1,6 @@
+{{define "content"}}
+<h1>{{.Heading}}</h1>
+<p>{{.Message}}</p>
+{{if .ShowSignIn}}<p><a class="button" href="/signin">Sign in</a></p>{{end}}
+{{if .ShowHome}}<p><a href="/">Back to Nook</a></p>{{end}}
+{{end}}

@@ -1,0 +1,26 @@
+:root { color-scheme: light dark; --fg: #1d1d1f; --bg: #f5f5f7; --card: #fff; --muted: #6e6e73; --accent: #2f5bd3; --border: #d2d2d7; --danger: #b42318; }
+@media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --bg: #111214; --card: #1c1d20; --muted: #a1a1a6; --accent: #7aa2ff; --border: #3a3b3f; --danger: #ff8a80; } }
+* { box-sizing: border-box; }
+body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+.bar { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--border); background: var(--card); }
+.brand { font-weight: 700; color: var(--fg); text-decoration: none; }
+.who { color: var(--muted); margin-right: 0.5rem; }
+.card { max-width: 42rem; margin: 2rem auto; padding: 1.5rem 2rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+h1 { font-size: 1.5rem; margin-top: 0; }
+h2 { font-size: 1.1rem; margin-top: 1.75rem; }
+a { color: var(--accent); }
+.button { display: inline-block; padding: 0.55rem 1.1rem; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: #fff; font: inherit; text-decoration: none; cursor: pointer; }
+.button.secondary { background: transparent; color: var(--accent); }
+.link { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
+.inline { display: inline; margin: 0; }
+.actions { display: flex; gap: 0.75rem; }
+label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+input[name=user_code] { font: 1.25rem ui-monospace, monospace; letter-spacing: 0.15em; text-transform: uppercase; padding: 0.4rem 0.6rem; width: 12rem; margin-right: 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.code { font-size: 1.25rem; letter-spacing: 0.15em; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); }
+dt { font-weight: 600; } dd { margin: 0 0 0.5rem 0; }
+.tag { font-size: 0.75rem; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 0.3rem; }
+.error { color: var(--danger); font-weight: 600; }
+.warning { border-left: 3px solid var(--danger); padding-left: 0.75rem; }
+code { font-family: ui-monospace, monospace; }
