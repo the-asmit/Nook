@@ -1,0 +1,51 @@
+# GoReleaser builds the `nook` CLI for every supported platform.
+#   make release-snapshot   builds everything into dist/ without publishing
+# The server ships as a container image instead (make docker-build).
+version: 2
+
+project_name: nook
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: nook
+    main: ./cmd/nook
+    binary: nook
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/the-asmit/nook/internal/version.Version={{ .Version }}
+      - -X github.com/the-asmit/nook/internal/version.Commit={{ .FullCommit }}
+      - -X github.com/the-asmit/nook/internal/version.BuildDate={{ .Date }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: nook
+    ids: [nook]
+    name_template: "nook_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+
+checksum:
+  name_template: "nook_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot+{{ .ShortCommit }}"
+
+changelog:
+  disable: true
+
+release:
+  disable: true
