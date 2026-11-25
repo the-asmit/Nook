@@ -118,3 +118,27 @@ func (d *docker) rootDir(ctx context.Context) string {
 func clamp32(n int) int32 {
 	return int32(max(min(n, 1<<31-1), 0))
 }
+
+// imagePullTimeout bounds pulling the BuildKit image on first use.
+const imagePullTimeout = 10 * time.Minute
+
+// ensureImage pulls ref unless the engine already has it.
+func (d *docker) ensureImage(ctx context.Context, ref string) error {
+	inspectCtx, cancel := context.WithTimeout(ctx, dockerTimeout)
+	_, err := d.client.ImageInspect(inspectCtx, ref)
+	cancel()
+	if err == nil {
+		return nil
+	}
+	ctx, cancel = context.WithTimeout(ctx, imagePullTimeout)
+	defer cancel()
+	resp, err := d.client.ImagePull(ctx, ref, client.ImagePullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull %s: %w", ref, err)
+	}
+	defer func() { _ = resp.Close() }()
+	if err := resp.Wait(ctx); err != nil {
+		return fmt.Errorf("pull %s: %w", ref, err)
+	}
+	return nil
+}

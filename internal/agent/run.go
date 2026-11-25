@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math/big"
 	"net"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -35,6 +37,15 @@ type Config struct {
 	ReconnectMax time.Duration `env:"NOOK_AGENT_RECONNECT_MAX" envDefault:"60s"`
 	// RenewCheckInterval is how often certificate expiry is checked.
 	RenewCheckInterval time.Duration `env:"NOOK_AGENT_RENEW_CHECK_INTERVAL" envDefault:"10m"`
+	// BuildSlots is how many builds run at once (0: the node does not build).
+	BuildSlots int `env:"NOOK_AGENT_BUILD_SLOTS" envDefault:"2"`
+	// BuildImage is the rootless BuildKit image builds run in, pinned by digest.
+	BuildImage string `env:"NOOK_AGENT_BUILDKIT_IMAGE" envDefault:"moby/buildkit:v0.34.2-rootless@sha256:c8252268760e1baba80780d63d738ef9f260fb7c7c0973c78494cb9ddd99eda1"`
+	// BuildNetwork is the Docker network of build containers; it must
+	// reach the registry.
+	BuildNetwork string `env:"NOOK_AGENT_BUILD_NETWORK" envDefault:"bridge"`
+	// BuildMaxContextBytes limits the extracted size of a build context.
+	BuildMaxContextBytes int64 `env:"NOOK_AGENT_BUILD_MAX_CONTEXT_BYTES" envDefault:"2147483648"`
 }
 
 // Validate checks the configuration.
@@ -48,6 +59,15 @@ func (c *Config) Validate() error {
 	}
 	if c.StateDir == "" {
 		errs = append(errs, errors.New("NOOK_AGENT_STATE_DIR must not be empty"))
+	}
+	errs = append(errs,
+		config.CheckRange("NOOK_AGENT_BUILD_SLOTS", c.BuildSlots, 0, 64),
+		config.CheckRange("NOOK_AGENT_BUILD_MAX_CONTEXT_BYTES", c.BuildMaxContextBytes, 1<<20, 1<<40))
+	if !strings.Contains(c.BuildImage, "@sha256:") {
+		errs = append(errs, errors.New("NOOK_AGENT_BUILDKIT_IMAGE must be pinned by digest (name:tag@sha256:...)"))
+	}
+	if c.BuildNetwork == "" {
+		errs = append(errs, errors.New("NOOK_AGENT_BUILD_NETWORK must not be empty"))
 	}
 	return errors.Join(errs...)
 }
@@ -71,6 +91,8 @@ type Agent struct {
 	// reconnect asks the current session to end so the next one presents
 	// the renewed certificate.
 	reconnect chan struct{}
+	outbox    *outbox
+	builder   *builder
 }
 
 // New loads the node identity and prepares the agent.
@@ -89,8 +111,11 @@ func New(cfg *Config, logger *slog.Logger) (*Agent, error) {
 		_ = d.close()
 		return nil, err
 	}
-	a := &Agent{cfg: *cfg, dir: dir, docker: d, collector: newCollector(d), metrics: m, logger: logger, reconnect: make(chan struct{}, 1)}
+	a := &Agent{cfg: *cfg, dir: dir, docker: d, collector: newCollector(d), metrics: m, logger: logger, reconnect: make(chan struct{}, 1), outbox: newOutbox()}
 	a.id.Store(id)
+	a.builder = newBuilder(&a.cfg, d, a.outbox, logger, a.NodeID, func() []byte {
+		return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: a.id.Load().ca.Raw})
+	})
 	m.certExpiry.Set(float64(id.cert.NotAfter.Unix()))
 	return a, nil
 }
@@ -111,6 +136,13 @@ func (a *Agent) Run(ctx context.Context) error {
 	if _, err := a.docker.version(ctx); err != nil {
 		a.logger.WarnContext(ctx, "docker engine not reachable; heartbeats will report it", "error", err.Error())
 	}
+	if a.cfg.BuildSlots > 0 {
+		a.builder.removeOrphans(ctx)
+	}
+	// Builds still running when the agent stops report an infrastructure
+	// error (delivered by the last session if it is still open), so the
+	// control plane retries them on another node.
+	defer a.builder.stop()
 	renewErr := make(chan error, 1)
 	go func() { renewErr <- a.renewLoop(ctx) }()
 
@@ -206,14 +238,20 @@ func (a *Agent) connectOnce(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	ctx, cancel := context.WithCancel(ctx)
+	// The stream outlives ctx briefly at shutdown, to report the results of
+	// builds that the shutdown stops.
+	shutdown := ctx
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
 
 	stream, err := agentv1.NewNodeServiceClient(conn).Connect(ctx)
 	if err != nil {
 		return err
 	}
-	if err = stream.Send(&agentv1.ConnectRequest{Message: &agentv1.ConnectRequest_Hello{Hello: &agentv1.Hello{Info: a.collector.nodeInfo(ctx)}}}); err != nil {
+	info := a.collector.nodeInfo(ctx)
+	info.BuildSlots = int32(a.cfg.BuildSlots) //nolint:gosec // G115: validated to be at most 64.
+	hello := &agentv1.Hello{Info: info, ActiveBuildIds: a.builder.activeIDs()}
+	if err = stream.Send(&agentv1.ConnectRequest{Message: &agentv1.ConnectRequest_Hello{Hello: hello}}); err != nil {
 		return streamStatus(stream, err)
 	}
 
@@ -249,8 +287,14 @@ func (a *Agent) connectOnce(ctx context.Context) error {
 	}
 	for {
 		select {
-		case <-ctx.Done():
+		case <-shutdown.Done():
+			a.builder.stop()
+			a.flushOutbox(stream)
 			return nil
+		case <-a.outbox.ready:
+			if err := a.sendOutbox(stream); err != nil {
+				return endStatus(ctx, incoming, recvErr, err)
+			}
 		case <-a.reconnect:
 			a.logger.InfoContext(ctx, "reconnecting to present the renewed certificate")
 			return nil
@@ -328,6 +372,30 @@ func awaitAccepted(ctx context.Context, incoming <-chan *agentv1.ConnectResponse
 	}
 }
 
+// sendOutbox sends queued build output and results in order; what could
+// not be sent stays queued for the next stream.
+func (a *Agent) sendOutbox(stream agentv1.NodeService_ConnectClient) error {
+	items := a.outbox.take()
+	for i, m := range items {
+		if err := stream.Send(m); err != nil {
+			a.outbox.requeue(items[i:])
+			return err
+		}
+	}
+	return nil
+}
+
+// flushOutbox makes a bounded last attempt to deliver the outbox at shutdown.
+func (a *Agent) flushOutbox(stream agentv1.NodeService_ConnectClient) {
+	deadline := time.Now().Add(5 * time.Second)
+	for !a.outbox.empty() && time.Now().Before(deadline) {
+		if a.sendOutbox(stream) != nil {
+			return
+		}
+	}
+	_ = stream.CloseSend()
+}
+
 func (a *Agent) sendHeartbeat(ctx context.Context, stream agentv1.NodeService_ConnectClient) error {
 	hb, dockerErr := a.collector.heartbeat(ctx)
 	if dockerErr != nil {
@@ -338,42 +406,4 @@ func (a *Agent) sendHeartbeat(ctx context.Context, stream agentv1.NodeService_Co
 	}
 	a.metrics.heartbeats.Inc()
 	return nil
-}
-
-// maxCommandTimeout caps what the control plane may ask for.
-const maxCommandTimeout = 5 * time.Minute
-
-// execute runs one command within its timeout and returns its result.
-func (a *Agent) execute(ctx context.Context, cmd *agentv1.Command) *agentv1.CommandResult {
-	timeout := min(max(cmd.GetTimeout().AsDuration(), time.Second), maxCommandTimeout)
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	res := &agentv1.CommandResult{CommandId: cmd.GetCommandId()}
-	fail := func(code agentv1.CommandErrorCode, msg string) *agentv1.CommandResult {
-		res.Result = &agentv1.CommandResult_Error{Error: &agentv1.CommandError{Code: code, Message: msg}}
-		a.metrics.commands.WithLabelValues(kindOf(cmd), "error").Inc()
-		return res
-	}
-	switch cmd.GetKind().(type) {
-	case *agentv1.Command_InspectNode:
-		out, err := a.docker.inspect(ctx)
-		switch {
-		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_TIMEOUT, "inspection did not finish in "+timeout.String())
-		case err != nil:
-			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_DOCKER_UNAVAILABLE, err.Error())
-		}
-		res.Result = &agentv1.CommandResult_InspectNode{InspectNode: out}
-	default:
-		return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_UNSUPPORTED, "this agent does not support the command; upgrade nook-agent")
-	}
-	a.metrics.commands.WithLabelValues(kindOf(cmd), "ok").Inc()
-	return res
-}
-
-func kindOf(cmd *agentv1.Command) string {
-	if cmd.GetInspectNode() != nil {
-		return "inspect_node"
-	}
-	return "unknown"
 }

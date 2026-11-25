@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/the-asmit/nook/internal/pki"
+	"github.com/the-asmit/nook/internal/platform/config"
 	agentv1 "github.com/the-asmit/nook/proto/nook/agent/v1"
 )
 
@@ -112,14 +113,26 @@ func TestPermanentErrors(t *testing.T) {
 }
 
 func TestConfigValidate(t *testing.T) {
-	c := Config{StateDir: "/var/lib/nook-agent", HealthAddr: "127.0.0.1:9101", ReconnectMin: time.Second, ReconnectMax: time.Minute, RenewCheckInterval: time.Minute}
-	c.Log.Level = "info"
-	if err := c.Validate(); err != nil {
-		t.Fatal(err)
+	c, err := config.Load[Config](map[string]string{})
+	if err != nil {
+		t.Fatalf("defaults: %v", err)
 	}
-	c.ReconnectMax = time.Millisecond
-	if err := c.Validate(); err == nil {
-		t.Fatal("max below min accepted")
+	if c.BuildSlots != 2 || !strings.Contains(c.BuildImage, "@sha256:") {
+		t.Fatalf("defaults %+v", c)
+	}
+	for name, mutate := range map[string]func(*Config){
+		"max below min":   func(c *Config) { c.ReconnectMax = time.Millisecond },
+		"unpinned image":  func(c *Config) { c.BuildImage = "moby/buildkit:rootless" },
+		"too many slots":  func(c *Config) { c.BuildSlots = 65 },
+		"no network":      func(c *Config) { c.BuildNetwork = "" },
+		"tiny context":    func(c *Config) { c.BuildMaxContextBytes = 10 },
+		"empty state dir": func(c *Config) { c.StateDir = "" },
+	} {
+		bad := c
+		mutate(&bad)
+		if bad.Validate() == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }
 
