@@ -120,6 +120,8 @@ type Info struct {
 	AgentVersion     string
 	OS               string
 	Arch             string
+	// BuildSlots is how many builds the agent runs at once (0..64).
+	BuildSlots int32
 }
 
 // sanitized bounds everything an agent reports, since it is stored and
@@ -134,6 +136,7 @@ func (i *Info) sanitized() Info {
 		AgentVersion:     clean(i.AgentVersion, 64),
 		OS:               clean(i.OS, 32),
 		Arch:             clean(i.Arch, 32),
+		BuildSlots:       min(max(i.BuildSlots, 0), 64),
 		Addresses:        []string{},
 	}
 	for _, a := range i.Addresses {

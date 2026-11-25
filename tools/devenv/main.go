@@ -8,6 +8,8 @@
 //	__GENERATED_SECRET__   128 random bits, hex-encoded
 //	__BCRYPT:NAME__        bcrypt hash of the value of variable NAME
 //	                       (for Dex's static development users)
+//	__UID__, __GID__       the current user's numeric user and group ID
+//	                       (containers that read files the user owns run as them)
 package main
 
 import (
@@ -22,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,6 +72,9 @@ func run(args []string) int {
 type Generator struct {
 	Secret func() string
 	Bcrypt func(password string) (string, error)
+	// UID and GID return the current user's IDs.
+	UID func() string
+	GID func() string
 }
 
 var defaultGenerator = Generator{
@@ -81,6 +87,8 @@ var defaultGenerator = Generator{
 		h, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		return string(h), err
 	},
+	UID: func() string { return strconv.Itoa(os.Getuid()) },
+	GID: func() string { return strconv.Itoa(os.Getgid()) },
 }
 
 var (
@@ -167,6 +175,10 @@ func fill(raw string, values map[string]string, gen Generator) (string, error) {
 	}
 	for strings.Contains(raw, secretToken) {
 		raw = strings.Replace(raw, secretToken, gen.Secret(), 1)
+	}
+	if gen.UID != nil && gen.GID != nil {
+		raw = strings.ReplaceAll(raw, "__UID__", gen.UID())
+		raw = strings.ReplaceAll(raw, "__GID__", gen.GID())
 	}
 	return raw, nil
 }

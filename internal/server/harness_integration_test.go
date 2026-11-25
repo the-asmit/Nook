@@ -26,6 +26,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 
+	"github.com/the-asmit/nook/internal/pki"
 	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/platform/logging"
 	"github.com/the-asmit/nook/internal/testinfra"
@@ -42,6 +43,8 @@ var shared struct {
 	serverPort int
 	// caPath is the agent CA shared by every instance in this package.
 	caPath string
+	// storage is MinIO and the image registry (TLS from the shared CA).
+	storage *testinfra.StorageT
 }
 
 func TestMain(m *testing.M) {
@@ -90,6 +93,29 @@ func runIntegration(m *testing.M) int {
 
 	shared.pgAdminURL, shared.redisURL, shared.dex, shared.serverPort = pgURL, redisURL, dex, serverPort
 	shared.caPath = filepath.Join(caDir, "ca.pem")
+
+	// The registry's certificate comes from the same CA the control plane
+	// uses, as in a real installation.
+	ca, _, err := pki.LoadOrCreateCA(shared.caPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	cert, err := ca.IssueServerCertificate([]string{testinfra.RegistryAlias, "localhost", "127.0.0.1"}, 24*time.Hour)
+	if err == nil {
+		err = ca.WriteServerFiles(filepath.Join(caDir, "registry"), cert)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	storage, stopStorage, err := testinfra.StartStorage(ctx, filepath.Join(caDir, "registry"), "nook")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	defer stopStorage()
+	shared.storage = storage
 	return m.Run()
 }
 
@@ -155,11 +181,35 @@ func baseEnviron(pgURL string) map[string]string {
 		"NOOK_FAILURE_DETECTOR_INTERVAL":  "200ms",
 		"NOOK_LEADER_RETRY_INTERVAL":      "300ms",
 		"NOOK_NODE_COMMAND_TIMEOUT":       "2s",
+		// Apps and builds, with short timings.
+		"NOOK_S3_ENDPOINT":            shared.storage.MinIO.URL,
+		"NOOK_S3_BUCKET":              "nook",
+		"NOOK_S3_ACCESS_KEY_ID":       shared.storage.MinIO.AccessKey,
+		"NOOK_S3_SECRET_ACCESS_KEY":   shared.storage.MinIO.SecretKey,
+		"NOOK_REGISTRY_ADDR":          shared.storage.Registry.NetworkAddr,
+		"NOOK_REGISTRY_URL":           "https://" + shared.storage.Registry.Addr,
+		"NOOK_REGISTRY_GC_SECRET":     testGCSecret,
+		"NOOK_BUILD_TICK_INTERVAL":    "200ms",
+		"NOOK_BUILD_CLAIM_TIMEOUT":    "3s",
+		"NOOK_BUILD_ACCEPT_TIMEOUT":   "10s",
+		"NOOK_BUILD_TIMEOUT":          "5m",
+		"NOOK_BUILD_JANITOR_INTERVAL": "24h",
+		"NOOK_BUILD_QUEUE_TIMEOUT":    "10m",
 	}
 }
 
+// testGCSecret authenticates the registry GC job in tests.
+const testGCSecret = "test-gc-secret-0123456789"
+
 // startEnv runs a server on a fresh database.
 func startEnv(t *testing.T) *env {
+	t.Helper()
+	return startEnvWith(t, nil)
+}
+
+// startEnvWith is startEnv with configuration overrides for the primary
+// instance.
+func startEnvWith(t *testing.T, overrides map[string]string) *env {
 	t.Helper()
 	dbURL := testinfra.CreateDatabase(t, shared.pgAdminURL)
 	flushRedis(t)
@@ -169,7 +219,7 @@ func startEnv(t *testing.T) *env {
 	}
 	t.Cleanup(db.Close)
 	e := &env{t: t, db: db, dbURL: dbURL}
-	e.primary = e.startInstance(nil)
+	e.primary = e.startInstance(overrides)
 	e.base, e.logs = e.primary.base, e.primary.logs
 	return e
 }
@@ -213,14 +263,21 @@ func (e *env) startInstance(overrides map[string]string) *instance {
 	return &instance{srv: srv, base: "http://" + srv.Addr().String(), grpc: srv.GRPCAddr().String(), logs: logs, stop: stop}
 }
 
-func flushRedis(t *testing.T) {
+// redisClient returns a client for the shared Redis, closed after the test.
+func redisClient(t *testing.T) *goredis.Client {
 	t.Helper()
 	opts, err := goredis.ParseURL(shared.redisURL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	c := goredis.NewClient(opts)
-	defer func() { _ = c.Close() }()
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+func flushRedis(t *testing.T) {
+	t.Helper()
+	c := redisClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := c.FlushDB(ctx).Err(); err != nil {

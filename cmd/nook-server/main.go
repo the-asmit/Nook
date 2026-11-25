@@ -26,6 +26,9 @@ func main() {
 // run returns the process exit code: 0 on clean shutdown, 1 on runtime
 // failure, 2 on invalid usage or configuration.
 func run(args []string, environ map[string]string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "registry-cert" {
+		return runRegistryCert(args[1:], environ, stdout, stderr)
+	}
 	flags := flag.NewFlagSet(server.ServiceName, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	showVersion := flags.Bool("version", false, "print version information and exit")

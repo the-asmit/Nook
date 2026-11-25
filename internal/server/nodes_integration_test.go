@@ -274,8 +274,7 @@ func TestCertificateRenewal(t *testing.T) {
 	state := joinAgent(t, e.primary.grpc, token, caHash, "renew-node")
 	old := agentIdentity(t, state)
 
-	cfg := agent.Config{StateDir: state, HealthAddr: "127.0.0.1:0", ReconnectMin: 50 * time.Millisecond, ReconnectMax: time.Second, RenewCheckInterval: time.Hour}
-	cfg.Log.Level = "info"
+	cfg := agentConfig(t, state)
 	a, err := agent.New(&cfg, quietLogger)
 	if err != nil {
 		t.Fatal(err)

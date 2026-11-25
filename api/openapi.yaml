@@ -47,6 +47,12 @@ tags:
     description: Installation-wide user management (instance administrators only).
   - name: nodes
     description: Worker nodes and join tokens (instance administrators only).
+  - name: apps
+    description: Apps in a workspace (members create; admins and owners delete).
+  - name: deployments
+    description: Deploys of an app, their uploads, builds and build logs.
+  - name: registry
+    description: Endpoints used by Nook's private image registry.
   - name: operations
     description: Health probes and metrics for orchestrators and Prometheus.
 
@@ -751,6 +757,350 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/workspaces/{slug}/apps:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+    get:
+      tags: [apps]
+      operationId: listApps
+      summary: The workspace's apps, ordered by slug
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of apps.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/App" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [apps]
+      operationId: createApp
+      summary: Create an app (any member)
+      description: |
+        Omitted settings take the defaults (port 8080, health check `/`,
+        256 MB, 500 millicores). Memory and CPU are bounded by the
+        installation's maxima. The workspace's app quota applies
+        (`409 quota_exceeded`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [slug]
+              properties:
+                slug: { $ref: "#/components/schemas/AppSlug" }
+                name: { type: string, maxLength: 100 }
+                port: { type: integer, minimum: 1, maximum: 65535 }
+                health_check_path: { type: string, pattern: "^/", maxLength: 200 }
+                memory_mb: { type: integer, minimum: 16 }
+                cpu_millicores: { type: integer, minimum: 10 }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/App" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/workspaces/{slug}/apps/{app}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    get:
+      tags: [apps]
+      operationId: getApp
+      summary: An app
+      responses:
+        "200":
+          description: The app.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/App" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [apps]
+      operationId: deleteApp
+      summary: Delete an app (workspace admins and owners)
+      description: |
+        Waiting deployments are cancelled and a running build is stopped.
+        The app's images, source archives and build logs are purged in the
+        background; its slug is free at once.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/deployments:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    get:
+      tags: [deployments]
+      operationId: listDeployments
+      summary: An app's deployments, newest first
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of deployments (without their build attempts).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Page"
+                  - properties:
+                      items: { type: array, items: { $ref: "#/components/schemas/Deployment" } }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [deployments]
+      operationId: createDeployment
+      summary: Start a deploy and get the upload URL for its source archive
+      description: |
+        Announce the size and SHA-256 of the gzip-compressed tar archive of
+        the project. The response's presigned URL accepts exactly that
+        content (the storage service verifies length and checksum) for a
+        short time; upload it there directly with the given method and
+        headers, then call `upload-complete`. The URL is a credential.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [source_size, source_sha256]
+              properties:
+                source_size: { type: integer, minimum: 1 }
+                source_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "201":
+          description: Created; upload the archive next.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deployment, upload, max_source_bytes]
+                properties:
+                  deployment: { $ref: "#/components/schemas/Deployment" }
+                  upload:
+                    type: object
+                    required: [url, method, headers, expires_at]
+                    properties:
+                      url: { type: string, format: uri }
+                      method: { type: string, enum: [PUT] }
+                      headers: { type: object, additionalProperties: { type: string } }
+                      expires_at: { type: string, format: date-time }
+                  max_source_bytes: { type: integer }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/deployments/{number}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+      - $ref: "#/components/parameters/DeploymentNumber"
+    get:
+      tags: [deployments]
+      operationId: getDeployment
+      summary: A deployment with its build attempts
+      responses:
+        "200":
+          description: The deployment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/deployments/{number}/upload-complete:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+      - $ref: "#/components/parameters/DeploymentNumber"
+    post:
+      tags: [deployments]
+      operationId: confirmUpload
+      summary: Confirm the upload and queue the build
+      description: |
+        The control plane checks that the archive is in storage with exactly
+        the announced size and SHA-256 before queueing (`409 upload_missing`,
+        `409 upload_mismatch`). Queueing cancels older queued deployments of
+        the same app; if a newer one is already queued, this one is
+        cancelled instead.
+      responses:
+        "200":
+          description: Queued (or cancelled as superseded).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/deployments/{number}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+      - $ref: "#/components/parameters/DeploymentNumber"
+    post:
+      tags: [deployments]
+      operationId: cancelDeployment
+      summary: Cancel a waiting or building deployment
+      description: |
+        A deployment that has not started building is cancelled at once. A
+        running build is stopped on its node; the deployment reports
+        `cancel_requested` until it ends as `cancelled`. Finished
+        deployments answer `409 already_finished`.
+      responses:
+        "200":
+          description: The deployment after the request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/deployments/{number}/build-log:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+      - $ref: "#/components/parameters/DeploymentNumber"
+    get:
+      tags: [deployments]
+      operationId: getBuildLog
+      summary: A deployment's build log, complete or live
+      description: |
+        Without `follow`, the whole log as text. With `follow=1`, a stream
+        of Server-Sent Events: `line` (`{"text": ...}`) for each line of
+        output, `status` (`{"status": ...}`) when the deployment's status
+        changes, and a final `end` carrying the Deployment. Followers on any
+        control-plane instance receive the output of builds whose agent is
+        connected to any other instance. Comment lines keep idle
+        connections open.
+      parameters:
+        - name: follow
+          in: query
+          schema: { type: string, enum: ["1"] }
+      responses:
+        "200":
+          description: The log.
+          content:
+            text/plain:
+              schema: { type: string }
+            text/event-stream:
+              schema: { type: string }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/workspaces/{slug}/quota:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+    get:
+      tags: [admin]
+      operationId: getQuota
+      summary: A workspace's quota (instance administrators)
+      responses:
+        "200":
+          description: The effective quota.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quota" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [admin]
+      operationId: setQuota
+      summary: Override a workspace's quota (instance administrators)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [max_apps, max_concurrent_builds]
+              properties:
+                max_apps: { type: integer, minimum: 0, maximum: 10000 }
+                max_concurrent_builds: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        "200":
+          description: The new quota.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quota" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/registry/gc-window/open:
+    post:
+      tags: [registry]
+      operationId: openGCWindow
+      summary: Open a registry maintenance window (registry GC job only)
+      description: |
+        Authenticated with `Authorization: Bearer <NOOK_REGISTRY_GC_SECRET>`.
+        Granted once no build is running (waits up to a minute); while it is
+        open no build starts, so garbage collection cannot race a push.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [ttl_seconds]
+              properties:
+                ttl_seconds: { type: integer, minimum: 60, maximum: 1800 }
+      responses:
+        "200":
+          description: The window is open.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ttl_seconds: { type: integer }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/registry/gc-window/close:
+    post:
+      tags: [registry]
+      operationId: closeGCWindow
+      summary: Close the registry maintenance window (registry GC job only)
+      security: []
+      responses:
+        "204": { description: Closed; builds resume. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+
 components:
   securitySchemes:
     bearerToken:
@@ -781,6 +1131,16 @@ components:
       required: true
       description: The node's name or ID.
       schema: { type: string, maxLength: 63 }
+    AppSlug:
+      name: app
+      in: path
+      required: true
+      schema: { $ref: "#/components/schemas/AppSlug" }
+    DeploymentNumber:
+      name: number
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
     Cursor:
       name: cursor
       in: query
@@ -1064,3 +1424,65 @@ components:
         expires_at: { type: string, format: date-time }
         last_used_at: { type: [string, "null"], format: date-time }
         revoked_at: { type: [string, "null"], format: date-time }
+    AppSlug:
+      type: string
+      pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
+    App:
+      type: object
+      required: [id, slug, name, port, health_check_path, memory_mb, cpu_millicores, deployments, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { $ref: "#/components/schemas/AppSlug" }
+        name: { type: string }
+        port: { type: integer }
+        health_check_path: { type: string }
+        memory_mb: { type: integer }
+        cpu_millicores: { type: integer }
+        deployments: { type: integer, description: Number of deployments so far. }
+        created_at: { type: string, format: date-time }
+    DeploymentStatus:
+      type: string
+      enum: [pending, uploading, queued, building, built, failed, cancelled]
+    Build:
+      type: object
+      required: [attempt, node, dispatched_at, started_at, finished_at, result, message]
+      properties:
+        attempt: { type: integer }
+        node: { type: string }
+        dispatched_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        result:
+          type: [string, "null"]
+          enum: [succeeded, failed, timed_out, cancelled, infra_error, lost, null]
+        message: { type: string }
+    Deployment:
+      type: object
+      required: [number, status, source_size, source_sha256, image_digest, image, failure_reason, cancel_requested, created_at,
+        queued_at, building_at, built_at, failed_at, canceled_at, image_deleted]
+      properties:
+        number: { type: integer, minimum: 1 }
+        status: { $ref: "#/components/schemas/DeploymentStatus" }
+        source_size: { type: integer }
+        source_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        image_digest: { type: [string, "null"], pattern: "^sha256:[0-9a-f]{64}$" }
+        image:
+          type: [string, "null"]
+          description: The image by digest, e.g. registry:5000/<workspace-id>/<app-id>@sha256:...
+        failure_reason: { type: string }
+        cancel_requested: { type: boolean }
+        created_at: { type: string, format: date-time }
+        queued_at: { type: [string, "null"], format: date-time }
+        building_at: { type: [string, "null"], format: date-time }
+        built_at: { type: [string, "null"], format: date-time }
+        failed_at: { type: [string, "null"], format: date-time }
+        canceled_at: { type: [string, "null"], format: date-time }
+        image_deleted: { type: boolean, description: The image was removed by retention. }
+        builds: { type: array, items: { $ref: "#/components/schemas/Build" } }
+    Quota:
+      type: object
+      required: [max_apps, max_concurrent_builds, default]
+      properties:
+        max_apps: { type: integer }
+        max_concurrent_builds: { type: integer }
+        default: { type: boolean, description: True when the instance defaults apply. }

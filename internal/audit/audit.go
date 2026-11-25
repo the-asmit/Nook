@@ -41,6 +41,11 @@ const (
 	ActionNodeCertRenew      = "node.certificate_renew"
 	ActionJoinTokenCreate    = "join_token.create" //nolint:gosec // G101: an action name, not a credential.
 	ActionJoinTokenRevoke    = "join_token.revoke" //nolint:gosec // G101: an action name, not a credential.
+	ActionAppCreate          = "app.create"
+	ActionAppDelete          = "app.delete"
+	ActionDeploymentCreate   = "deployment.create"
+	ActionDeploymentCancel   = "deployment.cancel"
+	ActionQuotaUpdate        = "quota.update"
 )
 
 // Target types.
@@ -54,6 +59,8 @@ const (
 	TargetInvitation = "invitation"
 	TargetNode       = "node"
 	TargetJoinToken  = "join_token"
+	TargetApp        = "app"
+	TargetDeployment = "deployment"
 )
 
 // Actor is the authenticated user performing an action, plus the request

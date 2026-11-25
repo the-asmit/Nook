@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -53,6 +55,11 @@ func TestInvalidConfigFailsFastWithStructuredProblems(t *testing.T) {
 		"NOOK_OIDC_CLIENT_ID":        "nook-dev",
 		"NOOK_OIDC_CLIENT_SECRET":    "secret",
 		"NOOK_ALLOWED_EMAIL_DOMAINS": "nook.test",
+		"NOOK_S3_ENDPOINT":           "http://localhost:9000",
+		"NOOK_S3_ACCESS_KEY_ID":      "nook",
+		"NOOK_S3_SECRET_ACCESS_KEY":  "storage-secret",
+		"NOOK_REGISTRY_ADDR":         "registry:5000",
+		"NOOK_REGISTRY_GC_SECRET":    "0123456789abcdef",
 	}
 	if code := run(nil, environ, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)
@@ -68,5 +75,32 @@ func TestInvalidConfigFailsFastWithStructuredProblems(t *testing.T) {
 	if entry.Msg != "invalid configuration" || len(entry.Problems) != 2 ||
 		!strings.Contains(joined, "NOOK_HTTP_ADDR") || !strings.Contains(joined, "NOOK_LOG_LEVEL") {
 		t.Fatalf("unexpected entry %+v", entry)
+	}
+}
+
+func TestRegistryCert(t *testing.T) {
+	dir := t.TempDir()
+	environ := map[string]string{"NOOK_PKI_CA_PATH": filepath.Join(dir, "ca.pem")}
+	out := filepath.Join(dir, "registry")
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"registry-cert", "--out", out, "--names", "registry,127.0.0.1"}, environ, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	for name, mode := range map[string]os.FileMode{"tls.crt": 0o644, "tls.key": 0o600, "ca.crt": 0o644} {
+		info, err := os.Stat(filepath.Join(out, name))
+		if err != nil || info.Mode().Perm() != mode {
+			t.Fatalf("%s: %v %v", name, info, err)
+		}
+	}
+	first, _ := os.ReadFile(filepath.Join(out, "tls.crt"))
+	stdout.Reset()
+	if code := run([]string{"registry-cert", "--out", out, "--names", "registry"}, environ, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "keeping it") {
+		t.Fatalf("second run: %d %s", code, stdout.String())
+	}
+	if again, _ := os.ReadFile(filepath.Join(out, "tls.crt")); !bytes.Equal(first, again) {
+		t.Fatal("a valid certificate was replaced")
+	}
+	if code := run([]string{"registry-cert", "--out", out}, environ, &stdout, &stderr); code != 2 {
+		t.Fatalf("missing --names: exit %d", code)
 	}
 }

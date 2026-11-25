@@ -26,6 +26,17 @@ func (v *View) Personal() bool {
 	return v.Workspace.PersonalOwnerID != nil
 }
 
+// Allows reports whether the caller's role includes the permissions of minRole.
+func (v *View) Allows(minRole store.WorkspaceRole) bool {
+	return atLeast(v.Role, minRole)
+}
+
+// Resolve looks a workspace up through the actor's membership inside a
+// transaction (or with any Queries). Non-members get not found.
+func Resolve(ctx context.Context, q *store.Queries, actor Actor, slug string) (View, error) {
+	return lookup(ctx, q, actor, slug)
+}
+
 // Service implements workspace operations.
 type Service struct {
 	store         *store.Store
@@ -190,14 +201,22 @@ func (s *Service) Delete(ctx context.Context, actor Actor, slug string) error {
 			return apperr.Forbidden("only owners can delete a workspace")
 		}
 		if owner := v.Workspace.PersonalOwnerID; owner != nil {
-			n, err := q.CountUserMemberships(ctx, *owner)
-			if err != nil {
-				return fmt.Errorf("count memberships: %w", err)
+			n, countErr := q.CountUserMemberships(ctx, *owner)
+			if countErr != nil {
+				return fmt.Errorf("count memberships: %w", countErr)
 			}
 			if n <= 1 {
 				return apperr.Conflict("last_workspace",
 					"a personal workspace cannot be deleted while it is its owner's only workspace")
 			}
+		}
+		apps, err := q.CountApps(ctx, v.Workspace.ID)
+		if err != nil {
+			return fmt.Errorf("count apps: %w", err)
+		}
+		if apps > 0 {
+			return apperr.Conflict("workspace_has_apps",
+				"delete the workspace's apps first (deleted apps are cleaned up within a few minutes)")
 		}
 		if err := q.DeleteWorkspace(ctx, v.Workspace.ID); err != nil {
 			return fmt.Errorf("delete workspace: %w", err)

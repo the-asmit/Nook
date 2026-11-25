@@ -31,6 +31,12 @@ func (c *Config) validateTLS() error {
 		errs = append(errs, fmt.Errorf("NOOK_ENV=%s requires NOOK_REDIS_URL to use the rediss:// scheme%s",
 			c.Environment, c.exceptionHint(c.Redis.Host())))
 	}
+	// Source code and logs travel to and from object storage, and CLIs and
+	// agents get presigned URLs for it: always TLS. (The registry is always
+	// reached over TLS; NOOK_REGISTRY_URL only accepts https.)
+	if !c.Storage.TLS() {
+		errs = append(errs, fmt.Errorf("NOOK_ENV=%s requires https:// NOOK_S3_ENDPOINT and NOOK_S3_PRESIGN_ENDPOINT", c.Environment))
+	}
 	return errors.Join(errs...)
 }
 

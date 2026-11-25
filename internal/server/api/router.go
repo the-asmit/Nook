@@ -35,6 +35,8 @@ type Deps struct {
 	ReadinessChecks []health.Check
 	// ReadinessTimeout bounds each readiness probe.
 	ReadinessTimeout time.Duration
+	// StreamingRoutes are exempt from the request timeout.
+	StreamingRoutes []string
 }
 
 // ConfigureGin sets Gin's process-wide mode. Debug mode (route dumps,
@@ -83,7 +85,7 @@ func NewRouter(d *Deps) (*gin.Engine, error) {
 		httpserver.Recovery(d.Logger),
 		httpserver.SecurityHeaders(),
 		httpserver.BodyLimit(d.HTTP.MaxBodyBytes),
-		httpserver.RequestTimeout(d.HTTP.RequestTimeout),
+		httpserver.RequestTimeout(d.HTTP.RequestTimeout, d.StreamingRoutes...),
 	)
 
 	r.NoRoute(func(c *gin.Context) {

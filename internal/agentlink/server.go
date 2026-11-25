@@ -9,6 +9,7 @@ import (
 	"net"
 	"runtime/debug"
 	"time"
+	"uuid"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
@@ -49,9 +50,19 @@ const (
 	serverCertTTL = 30 * 24 * time.Hour
 )
 
+// BuildEvents receives what agents report about builds (builds.Dispatcher).
+type BuildEvents interface {
+	BuildLog(ctx context.Context, nodeID uuid.UUID, m *agentv1.BuildLog) error
+	BuildFinished(ctx context.Context, nodeID uuid.UUID, m *agentv1.BuildFinished) error
+	// AgentConnected reconciles the node's builds with the ones its agent
+	// still reports as running.
+	AgentConnected(ctx context.Context, nodeID uuid.UUID, activeIDs []string) error
+}
+
 // Deps are the collaborators of the gRPC server.
 type Deps struct {
 	Registry *nodes.Registry
+	Builds   BuildEvents
 	Hub      *Hub
 	CA       *pki.CA
 	Limiter  *ratelimit.Limiter
@@ -63,6 +74,7 @@ type Deps struct {
 type Server struct {
 	agentv1.UnimplementedNodeServiceServer
 	registry *nodes.Registry
+	builds   BuildEvents
 	hub      *Hub
 	ca       *pki.CA
 	limiter  *ratelimit.Limiter
@@ -92,7 +104,7 @@ func Listen(ctx context.Context, addr string, names []string, d *Deps) (*Server,
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{registry: d.Registry, hub: d.Hub, ca: d.CA, limiter: d.Limiter, logger: d.Logger, health: health.NewServer()}
+	s := &Server{registry: d.Registry, builds: d.Builds, hub: d.Hub, ca: d.CA, limiter: d.Limiter, logger: d.Logger, health: health.NewServer()}
 	s.grpc = grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
 		grpc.ConnectionTimeout(handshakeTimeout),

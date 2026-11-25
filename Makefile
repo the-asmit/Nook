@@ -78,12 +78,16 @@ env: ## Create .env from .env.example, or add variables it gained (keeps existin
 	@go run ./tools/devenv
 
 .PHONY: dev-up
-dev-up: env ## Start Postgres, Redis, MinIO and Dex and wait until healthy
+dev-up: env ## Start Postgres, Redis, MinIO, the registry and Dex and wait until healthy
+	@# The registry's TLS certificate comes from Nook's CA (created here if
+	@# the server has not run yet); kept while it stays valid.
+	set -a; source ./.env; set +a; \
+		go run ./cmd/nook-server registry-cert --out .nook-dev/registry --names registry,localhost,127.0.0.1
 	$(COMPOSE) up --detach --wait --wait-timeout 180
 	@# Docker Desktop can silently skip publishing a port that another program
 	@# (say a native Windows PostgreSQL) already holds; 127.0.0.1:<port> would
 	@# then reach that program instead of the container. Fail loudly instead.
-	@for sp in postgres:5432 redis:6379 minio:9000 minio:9001 dex:5556; do \
+	@for sp in postgres:5432 redis:6379 minio:9000 minio:9001 registry:5000 dex:5556; do \
 		bound=$$($(COMPOSE) port "$${sp%%:*}" "$${sp##*:}" 2>/dev/null || true); \
 		if [[ ! "$$bound" =~ ^127\.0\.0\.1:[1-9][0-9]*$$ ]]; then \
 			echo "error: $$sp is not published on the host (another program holds the port?)." >&2; \

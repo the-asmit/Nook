@@ -19,6 +19,7 @@ import (
 
 	"github.com/the-asmit/nook/internal/agent"
 	"github.com/the-asmit/nook/internal/pki"
+	"github.com/the-asmit/nook/internal/platform/config"
 	agentv1 "github.com/the-asmit/nook/proto/nook/agent/v1"
 )
 
@@ -84,12 +85,30 @@ func (ra *runningAgent) exited(within time.Duration) (bool, error) {
 	}
 }
 
+// agentConfig is the configuration of a test agent: fast reconnects, and
+// build containers on the test network, where the registry is.
+func agentConfig(t *testing.T, stateDir string) agent.Config {
+	t.Helper()
+	cfg, err := config.Load[agent.Config](map[string]string{
+		"NOOK_AGENT_STATE_DIR": stateDir, "NOOK_AGENT_HEALTH_ADDR": "127.0.0.1:0",
+		"NOOK_AGENT_RECONNECT_MIN": "50ms", "NOOK_AGENT_RECONNECT_MAX": "500ms",
+		"NOOK_AGENT_RENEW_CHECK_INTERVAL": "1h", "NOOK_AGENT_BUILD_NETWORK": shared.storage.Network.Name,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
 func runAgent(t *testing.T, stateDir string) *runningAgent {
 	t.Helper()
-	cfg := agent.Config{StateDir: stateDir, HealthAddr: "127.0.0.1:0", ReconnectMin: 50 * time.Millisecond,
-		ReconnectMax: 500 * time.Millisecond, RenewCheckInterval: time.Hour}
-	cfg.Log.Level = "info"
-	a, err := agent.New(&cfg, quietLogger)
+	return runAgentWith(t, stateDir, quietLogger)
+}
+
+func runAgentWith(t *testing.T, stateDir string, logger *slog.Logger) *runningAgent {
+	t.Helper()
+	cfg := agentConfig(t, stateDir)
+	a, err := agent.New(&cfg, logger)
 	if err != nil {
 		t.Fatal(err)
 	}

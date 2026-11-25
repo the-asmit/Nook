@@ -1,5 +1,6 @@
-# Local development dependencies for Nook: Postgres, Redis, MinIO and the
-# Dex development identity provider. Start with `make dev-up`.
+# Local development dependencies for Nook: Postgres, Redis, MinIO, the
+# private image registry (with its garbage-collection job) and the Dex
+# development identity provider. Start with `make dev-up`.
 #
 # Every image is pinned to an exact tag plus its multi-arch index digest, so
 # all developers (and CI) run byte-identical images on amd64 and arm64.
@@ -72,6 +73,81 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    restart: unless-stopped
+
+  minio-init:
+    # Creates the buckets once MinIO is up, then exits.
+    image: cgr.dev/chainguard/minio:latest@sha256:bd92a45b821c0d85772c607ed7b49693efe78b3ffffae301b5d1b0981660de22
+    entrypoint: ["mc"]
+    # mc keeps its config under /tmp: the root file system is read-only.
+    command: ["--config-dir", "/tmp/mc", "mb", "--ignore-existing", "local/nook", "local/nook-registry"]
+    environment:
+      MC_HOST_local: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
+    depends_on:
+      minio:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+
+  registry:
+    # Nook's private image registry: TLS from Nook's CA (make dev-up issues
+    # the certificate), token authentication, images stored in MinIO.
+    image: registry:3.1.2@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+    user: "${NOOK_DEV_UID:?run make env}:${NOOK_DEV_GID:?run make env}"
+    environment:
+      REGISTRY_STORAGE_S3_ACCESSKEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      REGISTRY_STORAGE_S3_SECRETKEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+    volumes:
+      - ./registry/config.yml:/etc/distribution/config.yml:ro
+      - ../../.nook-dev/registry:/certs:ro
+    ports:
+      - "127.0.0.1:${REGISTRY_PORT:-5000}:5000"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5001/debug/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  registry-gc:
+    # Deletes blobs no image references any more, inside a maintenance
+    # window the control plane grants while no build is pushing.
+    image: registry:3.1.2@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+    user: "${NOOK_DEV_UID:?run make env}:${NOOK_DEV_GID:?run make env}"
+    entrypoint: ["sh", "/etc/distribution/gc.sh"]
+    environment:
+      REGISTRY_STORAGE_S3_ACCESSKEY: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
+      REGISTRY_STORAGE_S3_SECRETKEY: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in .env}
+      NOOK_REGISTRY_GC_SECRET: ${NOOK_REGISTRY_GC_SECRET:?run make env}
+      # The control plane runs on the host during development (make run-server).
+      NOOK_CONTROL_PLANE_URL: http://host.docker.internal:8080
+      NOOK_REGISTRY_GC_INTERVAL: "3600"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./registry/config.yml:/etc/distribution/config.yml:ro
+      - ./registry/gc.sh:/etc/distribution/gc.sh:ro
+      - ../../.nook-dev/registry:/certs:ro
+    depends_on:
+      registry:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
   dex:

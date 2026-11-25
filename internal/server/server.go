@@ -14,9 +14,12 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/the-asmit/nook/internal/agentlink"
+	"github.com/the-asmit/nook/internal/apps"
+	"github.com/the-asmit/nook/internal/builds"
 	"github.com/the-asmit/nook/internal/identity"
 	"github.com/the-asmit/nook/internal/leader"
 	"github.com/the-asmit/nook/internal/nodes"
+	"github.com/the-asmit/nook/internal/objstore"
 	"github.com/the-asmit/nook/internal/pki"
 	"github.com/the-asmit/nook/internal/platform/health"
 	"github.com/the-asmit/nook/internal/platform/httpserver"
@@ -48,6 +51,14 @@ type Server struct {
 	grpc     *agentlink.Server
 	elector  *leader.Elector
 	detector *nodes.Detector
+
+	// Builds (stage 4).
+	objects    *objstore.Client
+	apps       *apps.Service
+	logs       *builds.Logs
+	dispatcher *builds.Dispatcher
+	janitor    *builds.Janitor
+	gcWindow   *builds.GCWindow
 }
 
 // New connects to every dependency, applies migrations and binds the HTTP
@@ -131,6 +142,7 @@ func (s *Server) listen(ctx context.Context, cfg *Config) error {
 		HTTP:             cfg.HTTP,
 		ReadinessChecks:  s.dependencyChecks(),
 		ReadinessTimeout: cfg.ReadinessTimeout,
+		StreamingRoutes:  []string{api.RouteBuildLog},
 	})
 	if err != nil {
 		return err
@@ -210,6 +222,11 @@ func (s *Server) Serve(ctx context.Context) error {
 				return sess.Do(ctx, func(conn *pgx.Conn) error { return fn(conn) })
 			})
 		})
+		return nil
+	})
+	start("build dispatcher", s.dispatcher.Run)
+	start("build janitor", func(ctx context.Context) error {
+		s.janitor.Run(ctx)
 		return nil
 	})
 	start("http", s.http.Serve)

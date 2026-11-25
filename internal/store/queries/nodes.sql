@@ -40,7 +40,8 @@ RETURNING *;
 UPDATE nodes
 SET hostname = @hostname, addresses = @addresses, cpu_count = @cpu_count,
     memory_total_bytes = @memory_total_bytes, disk_total_bytes = @disk_total_bytes,
-    docker_version = @docker_version, agent_version = @agent_version, os = @os, arch = @arch
+    docker_version = @docker_version, agent_version = @agent_version, os = @os, arch = @arch,
+    build_slots = @build_slots
 WHERE id = @id AND removed_at IS NULL;
 
 -- name: InsertNodeCertificate :exec

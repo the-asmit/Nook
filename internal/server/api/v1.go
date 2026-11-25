@@ -12,10 +12,13 @@ import (
 
 	"github.com/the-asmit/nook/internal/agentlink"
 	"github.com/the-asmit/nook/internal/apperr"
+	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/auth"
+	"github.com/the-asmit/nook/internal/builds"
 	"github.com/the-asmit/nook/internal/device"
 	"github.com/the-asmit/nook/internal/identity"
 	"github.com/the-asmit/nook/internal/nodes"
+	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/ratelimit"
 	"github.com/the-asmit/nook/internal/store"
 	"github.com/the-asmit/nook/internal/workspace"
@@ -48,7 +51,18 @@ type V1Deps struct {
 	// AgentServer and CAHash go into the join command shown to admins.
 	AgentServer string
 	CAHash      string
+	Apps        *apps.Service
+	Logs        *builds.Logs
+	GCWindow    *builds.GCWindow
+	// RegistryGCSecret authenticates the registry's garbage-collection job.
+	RegistryGCSecret config.Secret
+	// RegistryAddr is the registry host:port images are referenced by.
+	RegistryAddr   string
+	MaxSourceBytes int64
 }
+
+// RouteBuildLog streams build logs; it is exempt from the request timeout.
+const RouteBuildLog = "/api/v1/workspaces/:slug/apps/:app/deployments/:number/build-log"
 
 // V1 serves the JSON API.
 type V1 struct {
@@ -80,6 +94,23 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	authed.POST("/workspaces/:slug/invitations", h.createInvitation)
 	authed.DELETE("/workspaces/:slug/invitations/:invitation_id", h.revokeInvitation)
 
+	appRoutes := authed.Group("/workspaces/:slug/apps")
+	appRoutes.GET("", h.listApps)
+	appRoutes.POST("", h.createApp)
+	appRoutes.GET("/:app", h.getApp)
+	appRoutes.DELETE("/:app", h.deleteApp)
+	appRoutes.GET("/:app/deployments", h.listDeployments)
+	appRoutes.POST("/:app/deployments", h.createDeployment)
+	appRoutes.GET("/:app/deployments/:number", h.getDeployment)
+	appRoutes.POST("/:app/deployments/:number/upload-complete", h.confirmUpload)
+	appRoutes.POST("/:app/deployments/:number/cancel", h.cancelDeployment)
+	appRoutes.GET("/:app/deployments/:number/build-log", h.buildLog)
+
+	// The registry's GC job uses BusyBox wget, which only sends GET and POST.
+	gc := v1.Group("/registry/gc-window", h.requireGCSecret)
+	gc.POST("/open", h.openGCWindow)
+	gc.POST("/close", h.closeGCWindow)
+
 	authed.GET("/tokens", h.listTokens)
 	authed.POST("/tokens", h.createToken)
 	authed.DELETE("/tokens/:token_id", h.revokeToken)
@@ -94,6 +125,9 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	admin.POST("/nodes/:node/drain", h.setDraining(true))
 	admin.POST("/nodes/:node/undrain", h.setDraining(false))
 	admin.DELETE("/nodes/:node", h.removeNode)
+
+	admin.GET("/admin/workspaces/:slug/quota", h.getQuota)
+	admin.PUT("/admin/workspaces/:slug/quota", h.setQuota)
 
 	admin.GET("/join-tokens", h.listJoinTokens)
 	admin.POST("/join-tokens", h.createJoinToken)

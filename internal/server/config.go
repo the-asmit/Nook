@@ -10,15 +10,19 @@ import (
 	"time"
 
 	"github.com/the-asmit/nook/internal/agentlink"
+	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/auth"
+	"github.com/the-asmit/nook/internal/builds"
 	"github.com/the-asmit/nook/internal/device"
 	"github.com/the-asmit/nook/internal/identity"
 	"github.com/the-asmit/nook/internal/nodes"
+	"github.com/the-asmit/nook/internal/objstore"
 	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/platform/httpserver"
 	"github.com/the-asmit/nook/internal/platform/logging"
 	"github.com/the-asmit/nook/internal/platform/postgres"
 	"github.com/the-asmit/nook/internal/platform/redis"
+	"github.com/the-asmit/nook/internal/registry"
 )
 
 // Config is the complete nook-server configuration.
@@ -39,6 +43,12 @@ type Config struct {
 	// GRPC is the agent-facing gRPC endpoint and its CA.
 	GRPC  agentlink.Config
 	Nodes nodes.Config
+	// Storage is the S3-compatible object storage for sources and logs.
+	Storage objstore.Config
+	// Registry is Nook's private image registry.
+	Registry registry.Config
+	Apps     apps.Config
+	Builds   builds.Config
 	// LeaderInterval is how often a follower tries to become the leader
 	// that runs the failure detector, and how often the leader verifies
 	// its lock; it bounds how long a failover takes.
@@ -75,6 +85,10 @@ func (c *Config) Validate() error {
 		c.Device.Validate(),
 		c.GRPC.Validate(),
 		c.Nodes.Validate(),
+		c.Storage.Validate(),
+		c.Registry.Validate(),
+		c.Apps.Validate(),
+		c.Builds.Validate(),
 		config.CheckDuration("NOOK_LEADER_RETRY_INTERVAL", c.LeaderInterval, 100*time.Millisecond, time.Minute),
 		config.CheckDuration("NOOK_INVITATION_TTL", c.InvitationTTL, time.Hour, 90*24*time.Hour),
 		config.CheckDuration("NOOK_READINESS_TIMEOUT", c.ReadinessTimeout, 100*time.Millisecond, 30*time.Second),

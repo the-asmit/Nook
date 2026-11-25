@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -95,8 +96,15 @@ func BodyLimit(maxBytes int64) gin.HandlerFunc {
 // http.TimeoutHandler does: with Gin that races on the response writer.
 // Instead, if a handler returns without writing anything after the
 // deadline passed, a 503 is sent on its behalf.
-func RequestTimeout(timeout time.Duration) gin.HandlerFunc {
+//
+// Streaming routes (listed by their route template) are exempt: they stay
+// open for as long as the client listens and manage their own deadlines.
+func RequestTimeout(timeout time.Duration, streamingRoutes ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if slices.Contains(streamingRoutes, c.FullPath()) {
+			c.Next()
+			return
+		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)
 		defer cancel()
 		c.Request = c.Request.WithContext(ctx)

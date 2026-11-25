@@ -24,6 +24,8 @@ func counterGenerator() Generator {
 	return Generator{
 		Secret: func() string { n++; return fmt.Sprintf("secret%d", n) },
 		Bcrypt: func(p string) (string, error) { return "$2a$04$hash-of-" + p, nil },
+		UID:    func() string { return "1000" },
+		GID:    func() string { return "1001" },
 	}
 }
 
@@ -116,4 +118,14 @@ func mustRead(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestSyncFillsUserIDs(t *testing.T) {
+	out, _, err := Sync([]byte("RUN_AS=__UID__:__GID__\n"), nil, counterGenerator(), day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "RUN_AS=1000:1001\n" {
+		t.Fatalf("got %q", out)
+	}
 }

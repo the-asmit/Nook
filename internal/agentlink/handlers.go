@@ -154,6 +154,7 @@ func infoFromProto(i *agentv1.NodeInfo) nodes.Info {
 		Hostname: i.GetHostname(), Addresses: i.GetAddresses(), CPUCount: i.GetCpuCount(),
 		MemoryTotalBytes: i.GetMemoryTotalBytes(), DiskTotalBytes: i.GetDiskTotalBytes(),
 		DockerVersion: i.GetDockerVersion(), AgentVersion: i.GetAgentVersion(), OS: i.GetOs(), Arch: i.GetArch(),
+		BuildSlots: i.GetBuildSlots(),
 	}
 }
 
@@ -201,12 +202,16 @@ func (s *Server) Connect(stream agentv1.NodeService_ConnectServer) error {
 		s.logger.InfoContext(ctx, "agent disconnected", "node", id.Name)
 	}()
 
-	if err := stream.Send(&agentv1.ConnectResponse{Message: &agentv1.ConnectResponse_Accepted{Accepted: &agentv1.ConnectAccepted{
+	accepted := &agentv1.ConnectResponse{Message: &agentv1.ConnectResponse_Accepted{Accepted: &agentv1.ConnectAccepted{
 		NodeId: id.NodeID.String(), HeartbeatInterval: durationpb.New(s.registry.HeartbeatInterval()),
-	}}}); err != nil {
-		return err
+	}}}
+	if sendErr := stream.Send(accepted); sendErr != nil {
+		return sendErr
 	}
 	s.logger.InfoContext(ctx, "agent connected", "node", id.Name, "node_id", id.NodeID.String(), "instance", s.hub.Instance())
+	if err = s.builds.AgentConnected(ctx, id.NodeID, hello.GetActiveBuildIds()); err != nil {
+		s.logger.WarnContext(ctx, "could not reconcile the node's builds", "node", id.Name, "error", err.Error())
+	}
 
 	// A second goroutine owns Send.
 	sendErr := make(chan error, 1)
@@ -276,6 +281,16 @@ func (s *Server) handleMessage(ctx context.Context, id nodes.Identity, sess *ses
 		}
 	case *agentv1.ConnectRequest_CommandResult:
 		s.hub.complete(ctx, sess, msg.CommandResult)
+	case *agentv1.ConnectRequest_BuildLog:
+		// A failure ends the stream; the agent reconnects and the build
+		// is reconciled from its Hello.
+		if err := s.builds.BuildLog(ctx, id.NodeID, msg.BuildLog); err != nil {
+			return s.toStatus(ctx, err)
+		}
+	case *agentv1.ConnectRequest_BuildFinished:
+		if err := s.builds.BuildFinished(ctx, id.NodeID, msg.BuildFinished); err != nil {
+			return s.toStatus(ctx, err)
+		}
 	default:
 		return status.Error(codes.InvalidArgument, "unexpected message on the stream")
 	}

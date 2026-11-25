@@ -13,6 +13,149 @@ import (
 	"uuid"
 )
 
+type BuildResult string
+
+const (
+	BuildResultSucceeded  BuildResult = "succeeded"
+	BuildResultFailed     BuildResult = "failed"
+	BuildResultTimedOut   BuildResult = "timed_out"
+	BuildResultCancelled  BuildResult = "cancelled"
+	BuildResultInfraError BuildResult = "infra_error"
+	BuildResultLost       BuildResult = "lost"
+)
+
+func (e *BuildResult) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = BuildResult(s)
+	case string:
+		*e = BuildResult(s)
+	default:
+		return fmt.Errorf("unsupported scan type for BuildResult: %T", src)
+	}
+	return nil
+}
+
+type NullBuildResult struct {
+	BuildResult BuildResult
+	Valid       bool // Valid is true if BuildResult is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullBuildResult) Scan(value interface{}) error {
+	if value == nil {
+		ns.BuildResult, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.BuildResult.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullBuildResult) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.BuildResult), nil
+}
+
+func (e BuildResult) Valid() bool {
+	switch e {
+	case BuildResultSucceeded,
+		BuildResultFailed,
+		BuildResultTimedOut,
+		BuildResultCancelled,
+		BuildResultInfraError,
+		BuildResultLost:
+		return true
+	}
+	return false
+}
+
+func AllBuildResultValues() []BuildResult {
+	return []BuildResult{
+		BuildResultSucceeded,
+		BuildResultFailed,
+		BuildResultTimedOut,
+		BuildResultCancelled,
+		BuildResultInfraError,
+		BuildResultLost,
+	}
+}
+
+type DeploymentStatus string
+
+const (
+	DeploymentStatusPending   DeploymentStatus = "pending"
+	DeploymentStatusUploading DeploymentStatus = "uploading"
+	DeploymentStatusQueued    DeploymentStatus = "queued"
+	DeploymentStatusBuilding  DeploymentStatus = "building"
+	DeploymentStatusBuilt     DeploymentStatus = "built"
+	DeploymentStatusFailed    DeploymentStatus = "failed"
+	DeploymentStatusCancelled DeploymentStatus = "cancelled"
+)
+
+func (e *DeploymentStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = DeploymentStatus(s)
+	case string:
+		*e = DeploymentStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for DeploymentStatus: %T", src)
+	}
+	return nil
+}
+
+type NullDeploymentStatus struct {
+	DeploymentStatus DeploymentStatus
+	Valid            bool // Valid is true if DeploymentStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullDeploymentStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.DeploymentStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.DeploymentStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullDeploymentStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.DeploymentStatus), nil
+}
+
+func (e DeploymentStatus) Valid() bool {
+	switch e {
+	case DeploymentStatusPending,
+		DeploymentStatusUploading,
+		DeploymentStatusQueued,
+		DeploymentStatusBuilding,
+		DeploymentStatusBuilt,
+		DeploymentStatusFailed,
+		DeploymentStatusCancelled:
+		return true
+	}
+	return false
+}
+
+func AllDeploymentStatusValues() []DeploymentStatus {
+	return []DeploymentStatus{
+		DeploymentStatusPending,
+		DeploymentStatusUploading,
+		DeploymentStatusQueued,
+		DeploymentStatusBuilding,
+		DeploymentStatusBuilt,
+		DeploymentStatusFailed,
+		DeploymentStatusCancelled,
+	}
+}
+
 type DeviceStatus string
 
 const (
@@ -223,6 +366,21 @@ type ApiToken struct {
 	RevokedAt  *time.Time
 }
 
+type App struct {
+	ID                   uuid.UUID
+	WorkspaceID          uuid.UUID
+	Slug                 string
+	Name                 string
+	CreatedBy            *uuid.UUID
+	Port                 int32
+	HealthCheckPath      string
+	MemoryMb             int32
+	CpuMillicores        int32
+	NextDeploymentNumber int32
+	CreatedAt            time.Time
+	DeletedAt            *time.Time
+}
+
 type AuditLog struct {
 	ID          uuid.UUID
 	WorkspaceID *uuid.UUID
@@ -233,6 +391,51 @@ type AuditLog struct {
 	Metadata    []byte
 	Ip          *netip.Addr
 	CreatedAt   time.Time
+}
+
+type Build struct {
+	ID           uuid.UUID
+	DeploymentID uuid.UUID
+	AppID        uuid.UUID
+	WorkspaceID  uuid.UUID
+	NodeID       *uuid.UUID
+	NodeName     string
+	Attempt      int32
+	ImageTag     string
+	DispatchedAt time.Time
+	StartedAt    *time.Time
+	FinishedAt   *time.Time
+	Result       *BuildResult
+	Message      string
+	ImageDigest  *string
+	LogKey       *string
+	LogBytes     *int64
+	CancelSentAt *time.Time
+}
+
+type Deployment struct {
+	ID                uuid.UUID
+	AppID             uuid.UUID
+	Number            int32
+	Status            DeploymentStatus
+	SourceKey         string
+	SourceSha256      []byte
+	SourceSize        int64
+	UploadExpiresAt   time.Time
+	ImageDigest       *string
+	CreatedBy         *uuid.UUID
+	FailureReason     string
+	CancelRequestedAt *time.Time
+	EnqueuedAt        *time.Time
+	CreatedAt         time.Time
+	UploadingAt       *time.Time
+	QueuedAt          *time.Time
+	BuildingAt        *time.Time
+	BuiltAt           *time.Time
+	FailedAt          *time.Time
+	CancelledAt       *time.Time
+	SourceDeletedAt   *time.Time
+	ImageDeletedAt    *time.Time
 }
 
 type DeviceAuthorization struct {
@@ -304,6 +507,7 @@ type Node struct {
 	RunningContainers    *int32
 	DockerReachable      *bool
 	RemovedAt            *time.Time
+	BuildSlots           int32
 }
 
 type NodeCertificate struct {
@@ -356,4 +560,12 @@ type Workspace struct {
 	Slug            string
 	PersonalOwnerID *uuid.UUID
 	CreatedAt       time.Time
+}
+
+type WorkspaceQuota struct {
+	WorkspaceID         uuid.UUID
+	MaxApps             int32
+	MaxConcurrentBuilds int32
+	UpdatedBy           *uuid.UUID
+	UpdatedAt           time.Time
 }

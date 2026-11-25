@@ -22,6 +22,11 @@ func devEnviron() map[string]string {
 		"NOOK_OIDC_CLIENT_ID":        "nook-dev",
 		"NOOK_OIDC_CLIENT_SECRET":    "client-secret",
 		"NOOK_ALLOWED_EMAIL_DOMAINS": "nook.test",
+		"NOOK_S3_ENDPOINT":           "http://localhost:9000",
+		"NOOK_S3_ACCESS_KEY_ID":      "nook",
+		"NOOK_S3_SECRET_ACCESS_KEY":  "storage-secret",
+		"NOOK_REGISTRY_ADDR":         "registry:5000",
+		"NOOK_REGISTRY_GC_SECRET":    "0123456789abcdef",
 	}
 }
 
@@ -40,6 +45,12 @@ func prodEnviron(t *testing.T) map[string]string {
 		"NOOK_OIDC_CLIENT_ID":         "client.apps.googleusercontent.com",
 		"NOOK_OIDC_CLIENT_SECRET":     "client-secret",
 		"NOOK_BOOTSTRAP_ADMIN_EMAILS": "admin@example.com",
+		"NOOK_S3_ENDPOINT":            "https://account.r2.cloudflarestorage.com",
+		"NOOK_S3_REGION":              "auto",
+		"NOOK_S3_ACCESS_KEY_ID":       "nook",
+		"NOOK_S3_SECRET_ACCESS_KEY":   "storage-secret",
+		"NOOK_REGISTRY_ADDR":          "registry.internal:5000",
+		"NOOK_REGISTRY_GC_SECRET":     "0123456789abcdef",
 	}
 }
 
@@ -250,5 +261,14 @@ func TestExampleEnvFileIsValid(t *testing.T) {
 	}
 	if _, err := config.Load[Config](env); err != nil {
 		t.Fatalf(".env.example does not load: %v", err)
+	}
+}
+
+func TestProductionRequiresTLSStorage(t *testing.T) {
+	env := prodEnviron(t)
+	env["NOOK_S3_PRESIGN_ENDPOINT"] = "http://storage.internal:9000"
+	_, err := config.Load[Config](env)
+	if err == nil || !strings.Contains(err.Error(), "NOOK_S3_PRESIGN_ENDPOINT") {
+		t.Fatalf("plain-HTTP presign endpoint accepted in production: %v", err)
 	}
 }
