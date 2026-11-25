@@ -105,7 +105,7 @@ func (r *runner) deployCommand() *cobra.Command {
 					r.printf("Deployment #%d of %s is %s. Follow it with: nook build-logs %s %d --follow\n", d.Number, p.App, d.Status, p.App, d.Number)
 				})
 			}
-			return r.followDeployment(cmd.Context(), c, ws, p.App, d.Number)
+			return r.followDeployment(cmd.Context(), c, ws, p.App, d.Number, d.Status)
 		},
 	}
 	f := cmd.Flags()
@@ -254,7 +254,8 @@ func (r *runner) put(ctx context.Context, created *createDeploymentResult, body 
 
 // followDeployment streams the deployment's log (build, then rollout) and
 // returns errDeployFailed unless the deployment goes live.
-func (r *runner) followDeployment(ctx context.Context, c *client, ws, app string, n int32) error {
+// shown is the status already printed (it is not repeated).
+func (r *runner) followDeployment(ctx context.Context, c *client, ws, app string, n int32, shown string) error {
 	path := appPath(ws, app) + "/deployments/" + strconv.Itoa(int(n)) + "/build-log?follow=1"
 	var final deploymentInfo
 	err := c.stream(ctx, path, func(event string, data []byte) error {
@@ -270,7 +271,8 @@ func (r *runner) followDeployment(ctx context.Context, c *client, ws, app string
 			var st struct {
 				Status string `json:"status"`
 			}
-			if json.Unmarshal(data, &st) == nil {
+			if json.Unmarshal(data, &st) == nil && st.Status != shown {
+				shown = st.Status
 				r.status("Deployment #%d is %s.", n, st.Status)
 			}
 		case "end":
@@ -400,7 +402,7 @@ func (r *runner) buildLogsCommand() *cobra.Command {
 				n = int(app.Deployments)
 			}
 			if follow {
-				return r.followDeployment(cmd.Context(), c, ws, args[0], int32(n)) //nolint:gosec // G115: parsed as a small positive integer.
+				return r.followDeployment(cmd.Context(), c, ws, args[0], int32(n), "") //nolint:gosec // G115: parsed as a small positive integer.
 			}
 			text, err := c.text(cmd.Context(), appPath(ws, args[0])+"/deployments/"+strconv.Itoa(n)+"/build-log")
 			if err != nil {

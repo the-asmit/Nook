@@ -286,7 +286,7 @@ func (r *runner) afterEnvChange(cmd *cobra.Command, c *client, ws, app string, r
 		})
 	}
 	r.status("Releasing the change as deployment #%d (same image, no rebuild).", res.Deployment.Number)
-	return r.followDeployment(cmd.Context(), c, ws, app, res.Deployment.Number)
+	return r.followDeployment(cmd.Context(), c, ws, app, res.Deployment.Number, res.Deployment.Status)
 }
 
 func (r *runner) rollbackCommand() *cobra.Command {
@@ -314,7 +314,7 @@ func (r *runner) rollbackCommand() *cobra.Command {
 				return r.emit(d, func() { r.printf("Rolling back to #%d as deployment #%d.\n", deref(d.RollbackTo), d.Number) })
 			}
 			r.status("Rolling back to #%d as deployment #%d.", deref(d.RollbackTo), d.Number)
-			return r.followDeployment(cmd.Context(), c, ws, args[0], d.Number)
+			return r.followDeployment(cmd.Context(), c, ws, args[0], d.Number, d.Status)
 		},
 	}
 	cmd.Flags().Int32Var(&to, "to", 0, "deployment number to release again (default: the previous live one)")
