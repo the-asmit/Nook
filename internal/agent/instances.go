@@ -37,7 +37,10 @@ type instance struct {
 	startup     time.Duration
 	phase       phase
 	restarts    int32
-	sched       *restartScheduler
+	// adopted marks an instance taken over after an agent restart whose
+	// restart count has not been restored from the control plane yet.
+	adopted bool
+	sched   *restartScheduler
 	// cancel ends the current start or restart; done is closed when it
 	// returned (a stop waits for it before touching the container).
 	cancel context.CancelFunc
@@ -482,9 +485,22 @@ func (m *instances) adopt(ctx context.Context) {
 		}
 		m.m[c.instanceID] = &instance{
 			id: c.instanceID, appID: c.appID, containerID: c.id, port: int32(port), healthPath: c.labels[healthPathLabel], //nolint:gosec // G115: a TCP port.
-			startup: startup, phase: phaseRunning, sched: &restartScheduler{clock: m.clock, policy: m.policy},
+			startup: startup, phase: phaseRunning, sched: &restartScheduler{clock: m.clock, policy: m.policy}, adopted: true,
 		}
 		m.logger.Info("adopted a running app container", "instance", c.instanceID, "container", c.id)
+	}
+}
+
+// restore adds the restart counts the control plane recorded to adopted
+// instances (once), so counting continues across agent restarts.
+func (m *instances) restore(known []*agentv1.KnownInstance) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, k := range known {
+		if inst, ok := m.m[k.GetInstanceId()]; ok && inst.adopted {
+			inst.restarts += max(k.GetRestartCount(), 0)
+			inst.adopted = false
+		}
 	}
 }
 

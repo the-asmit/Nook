@@ -85,7 +85,15 @@ func (b *builder) runContainer(ctx context.Context, cmd *agentv1.BuildCommand, d
 	// Docker calls use their own context: cleanup must happen even after
 	// the build's context was canceled.
 	dockerCtx := context.WithoutCancel(ctx)
-	created, err := b.docker.client.ContainerCreate(dockerCtx, b.containerSpec(cmd, b.docker.proxy(dockerCtx)))
+	if err := b.docker.ensureBuildNetwork(dockerCtx, b.cfg.BuildNetwork); err != nil {
+		b.logger.Warn("could not create the build network", "build_id", id, "error", err.Error())
+		return withLog(infraError(id, "the node could not prepare the build network"), logs)
+	}
+	var proxy proxyConfig
+	if b.cfg.BuildProxy {
+		proxy = b.docker.proxy(dockerCtx)
+	}
+	created, err := b.docker.client.ContainerCreate(dockerCtx, b.containerSpec(cmd, proxy))
 	if err != nil {
 		b.logger.Warn("could not create the build container", "build_id", id, "error", err.Error())
 		return withLog(infraError(id, "the node could not start the build"), logs)
@@ -198,6 +206,9 @@ func withLog(r *agentv1.BuildFinished, logs *logStream) *agentv1.BuildFinished {
 // Its seccomp profile is Docker's default plus the system calls that
 // creating the user namespace needs (see the build-isolation ADR).
 func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) client.ContainerCreateOptions {
+	// Validated at startup.
+	pairs, _ := parseBuildHosts(b.cfg.BuildHosts)
+	hosts := buildHosts(pairs)
 	ref := cmd.GetRegistry() + "/" + cmd.GetRepository() + ":" + cmd.GetTag()
 	memory := min(max(cmd.GetMemoryBytes(), minBuildMemory), maxBuildMemory)
 	millicores := min(max(cmd.GetCpuMillicores(), 100), maxBuildMillicore)
@@ -215,7 +226,7 @@ func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) cl
 				"--output", "type=image,name=" + ref + ",push=true",
 				"--metadata-file", containerHome + "/" + metadataFile,
 				"--progress", "plain",
-			}, proxy.buildArgs()...),
+			}, append(proxy.buildArgs(), hosts.buildOpts()...)...),
 			Env: append([]string{
 				"BUILDKITD_FLAGS=--config=" + containerHome + "/.config/buildkit/buildkitd.toml",
 				"DOCKER_CONFIG=" + containerHome + "/.docker",
@@ -224,6 +235,7 @@ func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) cl
 		},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(b.cfg.BuildNetwork),
+			ExtraHosts:  hosts.extraHosts(),
 			CapDrop:     []string{"ALL"},
 			CapAdd:      []string{"SETUID", "SETGID"},
 			SecurityOpt: []string{"seccomp=" + buildSeccompProfile},
@@ -314,4 +326,29 @@ func extract(archivePath, dest string, maxBytes int64) error {
 	}
 	defer func() { _ = f.Close() }()
 	return archive.Extract(f, dest, archive.Limits{MaxBytes: maxBytes, MaxEntries: 200_000})
+}
+
+// buildHosts are extra host entries for the build container (BuildKit
+// pulling base images, pushing) and its RUN steps.
+type buildHosts [][2]string
+
+// extraHosts is the container's /etc/hosts additions.
+func (h buildHosts) extraHosts() []string {
+	out := make([]string, 0, len(h))
+	for _, p := range h {
+		out = append(out, p[0]+":"+p[1])
+	}
+	return out
+}
+
+// buildOpts adds the same entries to RUN steps.
+func (h buildHosts) buildOpts() []string {
+	if len(h) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(h))
+	for _, p := range h {
+		parts = append(parts, p[0]+"="+p[1])
+	}
+	return []string{"--opt", "add-hosts=" + strings.Join(parts, ",")}
 }

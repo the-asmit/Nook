@@ -283,10 +283,10 @@ func (c *Controller) converge(ctx context.Context, dep *store.Deployment, app *s
 		}
 	}
 	if app.DeletedAt != nil || app.DesiredState == store.AppDesiredStateStopped {
+		// Instances already stopping get the request again: the first one
+		// may have been lost (stopping is idempotent on the agent).
 		for i := range mine {
-			if mine[i].State != store.InstanceStateStopping {
-				c.stopInstance(ctx, &mine[i], 0)
-			}
+			c.stopInstance(ctx, &mine[i], 0)
 		}
 		return c.stopCrashed(ctx, dep.ID)
 	}

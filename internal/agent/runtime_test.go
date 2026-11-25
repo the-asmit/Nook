@@ -59,14 +59,17 @@ func TestFirewallRules(t *testing.T) {
 }
 
 func TestFirewallSpecFromConfig(t *testing.T) {
-	cfg := Config{FirewallChain: "NOOK", BuildSlots: 2, BuildNetwork: managedBuildNetwork, BuildEgressAllow: []string{"10.1.2.3", "10.9.0.0/16"}}
+	cfg := Config{FirewallChain: "NOOK", BuildSlots: 2, BuildNetwork: defaultBuildNetwork, BuildEgressAllow: []string{"10.1.2.3", "10.9.0.0/16"}}
 	spec, err := firewallSpecFor(&cfg)
-	if err != nil || spec.BuildBridge != managedBuildBridge || len(spec.BuildAllow) != 2 || spec.BuildAllow[0].Bits() != 32 {
+	if b := buildBridge("builds-test"); len(b) != 15 || !strings.HasPrefix(b, "nkb") || b == buildBridge("other") {
+		t.Fatalf("bridge %q", b)
+	}
+	if err != nil || spec.BuildBridge != "nkbuild0" || len(spec.BuildAllow) != 2 || spec.BuildAllow[0].Bits() != 32 {
 		t.Fatalf("spec %+v %v", spec, err)
 	}
-	cfg.BuildNetwork = "shared"
+	cfg.BuildSlots = 0
 	if spec, _ = firewallSpecFor(&cfg); spec.BuildBridge != "" {
-		t.Fatal("a foreign build network is filtered")
+		t.Fatal("a node without builds filters a build bridge")
 	}
 	cfg.EgressBlock = []string{"not-an-ip"}
 	if _, err := firewallSpecFor(&cfg); err == nil {
@@ -167,5 +170,40 @@ func TestProxyConfig(t *testing.T) {
 	}
 	if registryHost("registry:5000") != "registry" || registryHost("registry") != "registry" {
 		t.Fatal("registryHost")
+	}
+}
+
+func TestBuildHosts(t *testing.T) {
+	pairs, err := parseBuildHosts([]string{"registry=10.0.0.5", " mirror.internal=fd00::1 "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := buildHosts(pairs)
+	if got := strings.Join(h.extraHosts(), " "); got != "registry:10.0.0.5 mirror.internal:fd00::1" {
+		t.Fatalf("extra hosts %q", got)
+	}
+	if got := strings.Join(h.buildOpts(), " "); got != "--opt add-hosts=registry=10.0.0.5,mirror.internal=fd00::1" {
+		t.Fatalf("build opts %q", got)
+	}
+	if buildHosts(nil).buildOpts() != nil {
+		t.Fatal("no hosts must add no options")
+	}
+	for _, bad := range []string{"registry", "=10.0.0.5", "reg istry=10.0.0.5", "registry=10.0.0.300"} {
+		if _, err := parseBuildHosts([]string{bad}); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}
+
+func TestRestoreRestartCounts(t *testing.T) {
+	m := &instances{m: map[string]*instance{
+		"adopted": {id: "adopted", restarts: 1, adopted: true},
+		"fresh":   {id: "fresh", restarts: 2},
+	}}
+	known := []*agentv1.KnownInstance{{InstanceId: "adopted", RestartCount: 4}, {InstanceId: "fresh", RestartCount: 2}, {InstanceId: "gone", RestartCount: 9}}
+	m.restore(known)
+	m.restore(known) // a reconnect must not add it twice
+	if m.m["adopted"].restarts != 5 || m.m["fresh"].restarts != 2 {
+		t.Fatalf("restarts: adopted %d, fresh %d", m.m["adopted"].restarts, m.m["fresh"].restarts)
 	}
 }

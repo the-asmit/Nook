@@ -202,8 +202,12 @@ func (s *Server) Connect(stream agentv1.NodeService_ConnectServer) error {
 		s.logger.InfoContext(ctx, "agent disconnected", "node", id.Name)
 	}()
 
+	known, err := s.runtime.KnownInstances(ctx, id.NodeID)
+	if err != nil {
+		return s.toStatus(ctx, err)
+	}
 	accepted := &agentv1.ConnectResponse{Message: &agentv1.ConnectResponse_Accepted{Accepted: &agentv1.ConnectAccepted{
-		NodeId: id.NodeID.String(), HeartbeatInterval: durationpb.New(s.registry.HeartbeatInterval()),
+		NodeId: id.NodeID.String(), HeartbeatInterval: durationpb.New(s.registry.HeartbeatInterval()), Instances: known,
 	}}}
 	if sendErr := stream.Send(accepted); sendErr != nil {
 		return sendErr

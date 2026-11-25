@@ -22,9 +22,6 @@ import (
 //go:embed seccomp_build.json
 var buildSeccompProfile string
 
-// managedBuildBridge is the bridge interface of the managed build network.
-const managedBuildBridge = "nkbuild0"
-
 // notReadyError means the node cannot run containers yet or at all.
 type notReadyError struct{ reason string }
 
@@ -49,12 +46,8 @@ func (a *Agent) prepare(ctx context.Context) error {
 	}
 	if a.cfg.BuildSlots > 0 {
 		a.builder.removeOrphans(ctx)
-		if a.cfg.BuildNetwork == managedBuildNetwork {
-			if err := a.ensureBuildNetwork(ctx); err != nil {
-				a.logger.WarnContext(ctx, "could not create the build network", "error", err.Error())
-			}
-		} else {
-			a.logger.WarnContext(ctx, "builds use a network the agent does not own; their egress is not filtered", "network", a.cfg.BuildNetwork)
+		if err := a.docker.ensureBuildNetwork(ctx, a.cfg.BuildNetwork); err != nil {
+			a.logger.WarnContext(ctx, "could not create the build network", "error", err.Error())
 		}
 	}
 	spec, err := firewallSpecFor(&a.cfg)
@@ -92,7 +85,7 @@ func (a *Agent) prepare(ctx context.Context) error {
 }
 
 // firewallSpecFor derives the egress rules from the configuration: app
-// bridges always, the build bridge when builds use the managed network.
+// bridges always, the build bridge when the node builds.
 func firewallSpecFor(cfg *Config) (firewallSpec, error) {
 	allow, err := parsePrefixes("NOOK_AGENT_BUILD_EGRESS_ALLOW", cfg.BuildEgressAllow)
 	if err != nil {
@@ -103,8 +96,8 @@ func firewallSpecFor(cfg *Config) (firewallSpec, error) {
 		return firewallSpec{}, err
 	}
 	spec := firewallSpec{Chain: cfg.FirewallChain, AppBridge: appBridgePrefix, BuildAllow: allow, Block: block}
-	if cfg.BuildSlots > 0 && cfg.BuildNetwork == managedBuildNetwork {
-		spec.BuildBridge = managedBuildBridge
+	if cfg.BuildSlots > 0 {
+		spec.BuildBridge = buildBridge(cfg.BuildNetwork)
 	}
 	return spec, nil
 }
@@ -169,24 +162,24 @@ func (a *Agent) buildsReady() error {
 	return nil
 }
 
-// ensureBuildNetwork creates the managed build network unless it exists.
-func (a *Agent) ensureBuildNetwork(ctx context.Context) error {
+// ensureBuildNetwork creates the build network unless it exists.
+func (d *docker) ensureBuildNetwork(ctx context.Context, name string) error {
 	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
 	defer cancel()
-	if _, err := a.docker.client.NetworkInspect(ctx, managedBuildNetwork, client.NetworkInspectOptions{}); err == nil {
+	if _, err := d.client.NetworkInspect(ctx, name, client.NetworkInspectOptions{}); err == nil {
 		return nil
 	}
 	enableIPv6 := false
-	_, err := a.docker.client.NetworkCreate(ctx, managedBuildNetwork, client.NetworkCreateOptions{
+	_, err := d.client.NetworkCreate(ctx, name, client.NetworkCreateOptions{
 		Driver: "bridge", EnableIPv6: &enableIPv6,
 		Options: map[string]string{
-			"com.docker.network.bridge.name":       managedBuildBridge,
+			"com.docker.network.bridge.name":       buildBridge(name),
 			"com.docker.network.bridge.enable_icc": "false",
 		},
 		Labels: map[string]string{ManagedLabel: "true"},
 	})
 	if err != nil && !strings.Contains(err.Error(), "already exists") {
-		return fmt.Errorf("create %s: %w", managedBuildNetwork, err)
+		return fmt.Errorf("create %s: %w", name, err)
 	}
 	return nil
 }

@@ -65,6 +65,7 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Create/update `.env` | `make env` (adds new variables, never changes existing values) |
 | Start Postgres/Redis/MinIO/registry/Dex | `make dev-up` (runs `make env`, issues the registry certificate) |
 | Run the control plane | `make run-server` |
+| Run a dev worker agent (after `nook-agent join --state-dir .nook-dev/agent`) | `make run-agent` |
 | Unit tests (race) | `make test` |
 | Unit + integration tests | `make test-integration` (needs Docker) |
 | Lint / format | `make lint` / `make fmt` |

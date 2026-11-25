@@ -67,6 +67,8 @@ type RuntimeEvents interface {
 	// AgentConnected reconciles the node's app containers with the
 	// instances the control plane wants on it.
 	AgentConnected(ctx context.Context, nodeID uuid.UUID, reports []*agentv1.InstanceReport)
+	// KnownInstances lists the node's instances with their restart counts.
+	KnownInstances(ctx context.Context, nodeID uuid.UUID) ([]*agentv1.KnownInstance, error)
 }
 
 // Deps are the collaborators of the gRPC server.

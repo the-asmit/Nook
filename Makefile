@@ -107,6 +107,10 @@ dev-down: env ## Stop the development stack (data volumes are kept)
 dev-logs: env ## Follow the development stack's logs
 	$(COMPOSE) logs --follow --tail=100
 
+.PHONY: run-agent
+run-agent: build env ## Run nook-agent for this machine against the dev stack (join it first; see README)
+	set -a; source ./.env; set +a; exec $(BIN_DIR)/nook-agent run
+
 .PHONY: run-server
 run-server: build env ## Build and run nook-server against the dev stack
 	set -a; source ./.env; set +a; exec $(BIN_DIR)/nook-server

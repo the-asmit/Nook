@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"net"
 	"net/netip"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -43,11 +46,16 @@ type Config struct {
 	BuildSlots int `env:"NOOK_AGENT_BUILD_SLOTS" envDefault:"2"`
 	// BuildImage is the rootless BuildKit image builds run in, pinned by digest.
 	BuildImage string `env:"NOOK_AGENT_BUILDKIT_IMAGE" envDefault:"moby/buildkit:v0.34.2-rootless@sha256:c8252268760e1baba80780d63d738ef9f260fb7c7c0973c78494cb9ddd99eda1"`
-	// BuildNetwork is the Docker network of build containers; it must
-	// reach the registry. The default, nook-builds, is created by the agent
-	// and covered by the egress firewall; any other network is used as it
-	// is and its egress is not filtered (it may carry other services).
+	// BuildNetwork is the network build containers join. The agent creates
+	// it and the egress firewall always filters it (whatever its name).
 	BuildNetwork string `env:"NOOK_AGENT_BUILD_NETWORK" envDefault:"nook-builds"`
+	// BuildHosts maps host names to addresses for build containers
+	// ("registry=10.0.0.5"), for a registry that is not in the node's DNS.
+	BuildHosts []string `env:"NOOK_AGENT_BUILD_HOSTS" envSeparator:","`
+	// BuildProxy passes the Docker engine's HTTP proxy settings to builds,
+	// for nodes that reach the internet only through a proxy (which must
+	// then be in BuildEgressAllow, and must refuse internal destinations).
+	BuildProxy bool `env:"NOOK_AGENT_BUILD_PROXY" envDefault:"false"`
 	// BuildMaxContextBytes limits the extracted size of a build context.
 	BuildMaxContextBytes int64 `env:"NOOK_AGENT_BUILD_MAX_CONTEXT_BYTES" envDefault:"2147483648"`
 	// AdvertiseAddr is the node's private IP address that app ports are
@@ -81,8 +89,43 @@ type Config struct {
 	EgressBlock []string `env:"NOOK_AGENT_EGRESS_BLOCK" envSeparator:","`
 }
 
-// managedBuildNetwork is the build network the agent creates and filters.
-const managedBuildNetwork = "nook-builds"
+// defaultBuildNetwork is the default build network.
+const defaultBuildNetwork = "nook-builds"
+
+// networkNamePattern is a Docker network name the agent may create.
+var networkNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,62}$`)
+
+// buildBridge names the Linux bridge of the build network: nkbuild0 for
+// the default network, otherwise nkb + 12 hex digits of the name's hash
+// (bridge names are at most 15 characters).
+func buildBridge(network string) string {
+	if network == defaultBuildNetwork {
+		return "nkbuild0"
+	}
+	sum := sha256.Sum256([]byte(network))
+	return "nkb" + hex.EncodeToString(sum[:])[:12]
+}
+
+// buildHostPattern is a host name for BuildHosts.
+var buildHostPattern = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,252}[A-Za-z0-9])?$`)
+
+// parseBuildHosts reads "name=ip" pairs.
+func parseBuildHosts(list []string) ([][2]string, error) {
+	var out [][2]string
+	for _, s := range list {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		name, ip, ok := strings.Cut(s, "=")
+		addr, err := netip.ParseAddr(ip)
+		if !ok || err != nil || !buildHostPattern.MatchString(name) {
+			return nil, fmt.Errorf("NOOK_AGENT_BUILD_HOSTS: %q is not name=ip", s)
+		}
+		out = append(out, [2]string{name, addr.Unmap().String()})
+	}
+	return out, nil
+}
 
 // parsePrefixes reads IPs and CIDRs.
 func parsePrefixes(name string, list []string) ([]netip.Prefix, error) {
@@ -123,8 +166,11 @@ func (c *Config) Validate() error {
 	if !strings.Contains(c.BuildImage, "@sha256:") {
 		errs = append(errs, errors.New("NOOK_AGENT_BUILDKIT_IMAGE must be pinned by digest (name:tag@sha256:...)"))
 	}
-	if c.BuildNetwork == "" {
-		errs = append(errs, errors.New("NOOK_AGENT_BUILD_NETWORK must not be empty"))
+	if !networkNamePattern.MatchString(c.BuildNetwork) {
+		errs = append(errs, errors.New("NOOK_AGENT_BUILD_NETWORK must be a network name (lower-case letters, digits, '.', '_', '-')"))
+	}
+	if _, err := parseBuildHosts(c.BuildHosts); err != nil {
+		errs = append(errs, err)
 	}
 	if a, err := netip.ParseAddr(c.AdvertiseAddr); err != nil || a.IsUnspecified() || a.IsMulticast() {
 		errs = append(errs, errors.New("NOOK_AGENT_ADVERTISE_ADDR must be the node's private IP address (not 0.0.0.0 or ::)"))
@@ -376,10 +422,12 @@ func (a *Agent) connectOnce(ctx context.Context) error {
 		}
 	}()
 
-	interval, err := awaitAccepted(ctx, incoming, recvErr)
+	acc, err := awaitAccepted(ctx, incoming, recvErr)
 	if err != nil {
 		return err
 	}
+	interval := max(acc.GetHeartbeatInterval().AsDuration(), time.Second)
+	a.instances.restore(acc.GetInstances())
 	a.connected.Store(true)
 	a.logger.InfoContext(ctx, "connected to the control plane", "server", a.id.Load().Server, "heartbeat_interval", interval.String())
 
@@ -457,22 +505,22 @@ func endStatus(ctx context.Context, incoming <-chan *agentv1.ConnectResponse, re
 	}
 }
 
-func awaitAccepted(ctx context.Context, incoming <-chan *agentv1.ConnectResponse, recvErr <-chan error) (time.Duration, error) {
+func awaitAccepted(ctx context.Context, incoming <-chan *agentv1.ConnectResponse, recvErr <-chan error) (*agentv1.ConnectAccepted, error) {
 	timer := time.NewTimer(connectTimeout)
 	defer timer.Stop()
 	select {
 	case m := <-incoming:
 		acc := m.GetAccepted()
 		if acc == nil {
-			return 0, errors.New("control plane did not accept the connection")
+			return nil, errors.New("control plane did not accept the connection")
 		}
-		return max(acc.GetHeartbeatInterval().AsDuration(), time.Second), nil
+		return acc, nil
 	case err := <-recvErr:
-		return 0, err
+		return nil, err
 	case <-timer.C:
-		return 0, errors.New("timed out waiting for the control plane to accept the connection")
+		return nil, errors.New("timed out waiting for the control plane to accept the connection")
 	case <-ctx.Done():
-		return 0, ctx.Err()
+		return nil, ctx.Err()
 	}
 }
 

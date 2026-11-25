@@ -104,14 +104,15 @@ bin/nook node list                       # ready, with CPU, memory, disk and con
 bin/nook node inspect <name>             # live Docker information from the agent
 ```
 
-Then deploy an example app. Run the agent with the development settings:
-builds on `nook-dev` (where the registry is), apps published on
-127.0.0.1, images pulled from localhost:5000:
+Then deploy an example app. `make run-agent` runs the agent with the
+development settings from `.env` (state in `.nook-dev/agent`, apps
+published on 127.0.0.1, builds on the filtered `nook-builds` network with
+the dev registry allowed, exactly as in production):
 
 ```sh
-export NOOK_AGENT_BUILD_NETWORK=nook-dev NOOK_AGENT_ADVERTISE_ADDR=127.0.0.1 \
-  NOOK_AGENT_REGISTRY_PULL_ADDR=localhost:5000
-bin/nook-agent run
+bin/nook node join-token create          # prints the join command
+bin/nook-agent join --state-dir .nook-dev/agent --server 127.0.0.1:9443 --token nook_join_… --ca-hash sha256:…
+make run-agent
 ```
 
 ```sh

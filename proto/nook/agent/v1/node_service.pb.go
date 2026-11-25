@@ -932,8 +932,11 @@ type ConnectAccepted struct {
 	NodeId string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// How often the agent must send heartbeats.
 	HeartbeatInterval *durationpb.Duration `protobuf:"bytes,2,opt,name=heartbeat_interval,json=heartbeatInterval,proto3" json:"heartbeat_interval,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// The instances the control plane has on the node, with their restart
+	// counts, so a restarted agent continues counting where it left off.
+	Instances     []*KnownInstance `protobuf:"bytes,3,rep,name=instances,proto3" json:"instances,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ConnectAccepted) Reset() {
@@ -980,6 +983,65 @@ func (x *ConnectAccepted) GetHeartbeatInterval() *durationpb.Duration {
 	return nil
 }
 
+func (x *ConnectAccepted) GetInstances() []*KnownInstance {
+	if x != nil {
+		return x.Instances
+	}
+	return nil
+}
+
+type KnownInstance struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	RestartCount  int32                  `protobuf:"varint,2,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *KnownInstance) Reset() {
+	*x = KnownInstance{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KnownInstance) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KnownInstance) ProtoMessage() {}
+
+func (x *KnownInstance) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KnownInstance.ProtoReflect.Descriptor instead.
+func (*KnownInstance) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *KnownInstance) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *KnownInstance) GetRestartCount() int32 {
+	if x != nil {
+		return x.RestartCount
+	}
+	return 0
+}
+
 // Heartbeat reports live resource usage. The control plane timestamps it
 // on receipt with its own clock; the agent's clock is never trusted.
 type Heartbeat struct {
@@ -1001,7 +1063,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[9]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1013,7 +1075,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[9]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1026,7 +1088,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{9}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Heartbeat) GetMemoryAvailableBytes() int64 {
@@ -1108,7 +1170,7 @@ type Command struct {
 
 func (x *Command) Reset() {
 	*x = Command{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[10]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1120,7 +1182,7 @@ func (x *Command) String() string {
 func (*Command) ProtoMessage() {}
 
 func (x *Command) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[10]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1133,7 +1195,7 @@ func (x *Command) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Command.ProtoReflect.Descriptor instead.
 func (*Command) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{10}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Command) GetCommandId() string {
@@ -1276,7 +1338,7 @@ type InspectNodeCommand struct {
 
 func (x *InspectNodeCommand) Reset() {
 	*x = InspectNodeCommand{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[11]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1288,7 +1350,7 @@ func (x *InspectNodeCommand) String() string {
 func (*InspectNodeCommand) ProtoMessage() {}
 
 func (x *InspectNodeCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[11]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1301,7 +1363,7 @@ func (x *InspectNodeCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectNodeCommand.ProtoReflect.Descriptor instead.
 func (*InspectNodeCommand) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{11}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{12}
 }
 
 type CommandResult struct {
@@ -1319,7 +1381,7 @@ type CommandResult struct {
 
 func (x *CommandResult) Reset() {
 	*x = CommandResult{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[12]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1331,7 +1393,7 @@ func (x *CommandResult) String() string {
 func (*CommandResult) ProtoMessage() {}
 
 func (x *CommandResult) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[12]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1344,7 +1406,7 @@ func (x *CommandResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandResult.ProtoReflect.Descriptor instead.
 func (*CommandResult) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{12}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CommandResult) GetCommandId() string {
@@ -1420,7 +1482,7 @@ type Accepted struct {
 
 func (x *Accepted) Reset() {
 	*x = Accepted{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[13]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1432,7 +1494,7 @@ func (x *Accepted) String() string {
 func (*Accepted) ProtoMessage() {}
 
 func (x *Accepted) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[13]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1445,7 +1507,7 @@ func (x *Accepted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Accepted.ProtoReflect.Descriptor instead.
 func (*Accepted) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{13}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{14}
 }
 
 type CommandError struct {
@@ -1459,7 +1521,7 @@ type CommandError struct {
 
 func (x *CommandError) Reset() {
 	*x = CommandError{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[14]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1471,7 +1533,7 @@ func (x *CommandError) String() string {
 func (*CommandError) ProtoMessage() {}
 
 func (x *CommandError) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[14]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1484,7 +1546,7 @@ func (x *CommandError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CommandError.ProtoReflect.Descriptor instead.
 func (*CommandError) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{14}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CommandError) GetCode() CommandErrorCode {
@@ -1512,7 +1574,7 @@ type InspectNodeResult struct {
 
 func (x *InspectNodeResult) Reset() {
 	*x = InspectNodeResult{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[15]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1524,7 +1586,7 @@ func (x *InspectNodeResult) String() string {
 func (*InspectNodeResult) ProtoMessage() {}
 
 func (x *InspectNodeResult) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[15]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1537,7 +1599,7 @@ func (x *InspectNodeResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InspectNodeResult.ProtoReflect.Descriptor instead.
 func (*InspectNodeResult) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{15}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *InspectNodeResult) GetDocker() *DockerInfo {
@@ -1573,7 +1635,7 @@ type DockerInfo struct {
 
 func (x *DockerInfo) Reset() {
 	*x = DockerInfo{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[16]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1585,7 +1647,7 @@ func (x *DockerInfo) String() string {
 func (*DockerInfo) ProtoMessage() {}
 
 func (x *DockerInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[16]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1598,7 +1660,7 @@ func (x *DockerInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DockerInfo.ProtoReflect.Descriptor instead.
 func (*DockerInfo) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{16}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DockerInfo) GetServerVersion() string {
@@ -1695,7 +1757,7 @@ type ManagedContainer struct {
 
 func (x *ManagedContainer) Reset() {
 	*x = ManagedContainer{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[17]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1707,7 +1769,7 @@ func (x *ManagedContainer) String() string {
 func (*ManagedContainer) ProtoMessage() {}
 
 func (x *ManagedContainer) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[17]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1720,7 +1782,7 @@ func (x *ManagedContainer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ManagedContainer.ProtoReflect.Descriptor instead.
 func (*ManagedContainer) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{17}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ManagedContainer) GetId() string {
@@ -1803,7 +1865,7 @@ type BuildCommand struct {
 
 func (x *BuildCommand) Reset() {
 	*x = BuildCommand{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[18]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1815,7 +1877,7 @@ func (x *BuildCommand) String() string {
 func (*BuildCommand) ProtoMessage() {}
 
 func (x *BuildCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[18]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1828,7 +1890,7 @@ func (x *BuildCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildCommand.ProtoReflect.Descriptor instead.
 func (*BuildCommand) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{18}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *BuildCommand) GetBuildId() string {
@@ -1940,7 +2002,7 @@ type CancelBuildCommand struct {
 
 func (x *CancelBuildCommand) Reset() {
 	*x = CancelBuildCommand{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[19]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1952,7 +2014,7 @@ func (x *CancelBuildCommand) String() string {
 func (*CancelBuildCommand) ProtoMessage() {}
 
 func (x *CancelBuildCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[19]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1965,7 +2027,7 @@ func (x *CancelBuildCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelBuildCommand.ProtoReflect.Descriptor instead.
 func (*CancelBuildCommand) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{19}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *CancelBuildCommand) GetBuildId() string {
@@ -1986,7 +2048,7 @@ type BuildLog struct {
 
 func (x *BuildLog) Reset() {
 	*x = BuildLog{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[20]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1998,7 +2060,7 @@ func (x *BuildLog) String() string {
 func (*BuildLog) ProtoMessage() {}
 
 func (x *BuildLog) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[20]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2011,7 +2073,7 @@ func (x *BuildLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildLog.ProtoReflect.Descriptor instead.
 func (*BuildLog) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{20}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *BuildLog) GetBuildId() string {
@@ -2044,7 +2106,7 @@ type BuildFinished struct {
 
 func (x *BuildFinished) Reset() {
 	*x = BuildFinished{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[21]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2056,7 +2118,7 @@ func (x *BuildFinished) String() string {
 func (*BuildFinished) ProtoMessage() {}
 
 func (x *BuildFinished) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[21]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2069,7 +2131,7 @@ func (x *BuildFinished) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildFinished.ProtoReflect.Descriptor instead.
 func (*BuildFinished) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{21}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *BuildFinished) GetBuildId() string {
@@ -2144,7 +2206,7 @@ type StartInstanceCommand struct {
 
 func (x *StartInstanceCommand) Reset() {
 	*x = StartInstanceCommand{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[22]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2156,7 +2218,7 @@ func (x *StartInstanceCommand) String() string {
 func (*StartInstanceCommand) ProtoMessage() {}
 
 func (x *StartInstanceCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[22]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2169,7 +2231,7 @@ func (x *StartInstanceCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StartInstanceCommand.ProtoReflect.Descriptor instead.
 func (*StartInstanceCommand) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{22}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *StartInstanceCommand) GetInstanceId() string {
@@ -2301,7 +2363,7 @@ type EnvVar struct {
 
 func (x *EnvVar) Reset() {
 	*x = EnvVar{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[23]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2313,7 +2375,7 @@ func (x *EnvVar) String() string {
 func (*EnvVar) ProtoMessage() {}
 
 func (x *EnvVar) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[23]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2326,7 +2388,7 @@ func (x *EnvVar) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnvVar.ProtoReflect.Descriptor instead.
 func (*EnvVar) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{23}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *EnvVar) GetName() string {
@@ -2355,7 +2417,7 @@ type StopInstanceCommand struct {
 
 func (x *StopInstanceCommand) Reset() {
 	*x = StopInstanceCommand{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[24]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2367,7 +2429,7 @@ func (x *StopInstanceCommand) String() string {
 func (*StopInstanceCommand) ProtoMessage() {}
 
 func (x *StopInstanceCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[24]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2380,7 +2442,7 @@ func (x *StopInstanceCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopInstanceCommand.ProtoReflect.Descriptor instead.
 func (*StopInstanceCommand) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{24}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *StopInstanceCommand) GetInstanceId() string {
@@ -2417,7 +2479,7 @@ type StreamLogsCommand struct {
 
 func (x *StreamLogsCommand) Reset() {
 	*x = StreamLogsCommand{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[25]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2429,7 +2491,7 @@ func (x *StreamLogsCommand) String() string {
 func (*StreamLogsCommand) ProtoMessage() {}
 
 func (x *StreamLogsCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[25]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2442,7 +2504,7 @@ func (x *StreamLogsCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamLogsCommand.ProtoReflect.Descriptor instead.
 func (*StreamLogsCommand) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{25}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *StreamLogsCommand) GetStreamId() string {
@@ -2503,7 +2565,7 @@ type StopLogsCommand struct {
 
 func (x *StopLogsCommand) Reset() {
 	*x = StopLogsCommand{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[26]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2515,7 +2577,7 @@ func (x *StopLogsCommand) String() string {
 func (*StopLogsCommand) ProtoMessage() {}
 
 func (x *StopLogsCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[26]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2528,7 +2590,7 @@ func (x *StopLogsCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopLogsCommand.ProtoReflect.Descriptor instead.
 func (*StopLogsCommand) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{26}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *StopLogsCommand) GetStreamId() string {
@@ -2557,7 +2619,7 @@ type InstanceStatus struct {
 
 func (x *InstanceStatus) Reset() {
 	*x = InstanceStatus{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[27]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2569,7 +2631,7 @@ func (x *InstanceStatus) String() string {
 func (*InstanceStatus) ProtoMessage() {}
 
 func (x *InstanceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[27]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2582,7 +2644,7 @@ func (x *InstanceStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstanceStatus.ProtoReflect.Descriptor instead.
 func (*InstanceStatus) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{27}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *InstanceStatus) GetInstanceId() string {
@@ -2650,7 +2712,7 @@ type InstanceReport struct {
 
 func (x *InstanceReport) Reset() {
 	*x = InstanceReport{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[28]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2662,7 +2724,7 @@ func (x *InstanceReport) String() string {
 func (*InstanceReport) ProtoMessage() {}
 
 func (x *InstanceReport) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[28]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2675,7 +2737,7 @@ func (x *InstanceReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use InstanceReport.ProtoReflect.Descriptor instead.
 func (*InstanceReport) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{28}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *InstanceReport) GetInstanceId() string {
@@ -2734,7 +2796,7 @@ type AppLog struct {
 
 func (x *AppLog) Reset() {
 	*x = AppLog{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[29]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2746,7 +2808,7 @@ func (x *AppLog) String() string {
 func (*AppLog) ProtoMessage() {}
 
 func (x *AppLog) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[29]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2759,7 +2821,7 @@ func (x *AppLog) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AppLog.ProtoReflect.Descriptor instead.
 func (*AppLog) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{29}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *AppLog) GetStreamId() string {
@@ -2802,7 +2864,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[30]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2814,7 +2876,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_nook_agent_v1_node_service_proto_msgTypes[30]
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2827,7 +2889,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{30}
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *LogLine) GetTime() *timestamppb.Timestamp {
@@ -2907,10 +2969,15 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\x05Hello\x12+\n" +
 	"\x04info\x18\x01 \x01(\v2\x17.nook.agent.v1.NodeInfoR\x04info\x12(\n" +
 	"\x10active_build_ids\x18\x02 \x03(\tR\x0eactiveBuildIds\x12;\n" +
-	"\tinstances\x18\x03 \x03(\v2\x1d.nook.agent.v1.InstanceReportR\tinstances\"t\n" +
+	"\tinstances\x18\x03 \x03(\v2\x1d.nook.agent.v1.InstanceReportR\tinstances\"\xb0\x01\n" +
 	"\x0fConnectAccepted\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12H\n" +
-	"\x12heartbeat_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x11heartbeatInterval\"\xf7\x02\n" +
+	"\x12heartbeat_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x11heartbeatInterval\x12:\n" +
+	"\tinstances\x18\x03 \x03(\v2\x1c.nook.agent.v1.KnownInstanceR\tinstances\"U\n" +
+	"\rKnownInstance\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12#\n" +
+	"\rrestart_count\x18\x02 \x01(\x05R\frestartCount\"\xf7\x02\n" +
 	"\tHeartbeat\x124\n" +
 	"\x16memory_available_bytes\x18\x01 \x01(\x03R\x14memoryAvailableBytes\x12\x1e\n" +
 	"\vcpu_load_1m\x18\x02 \x01(\x01R\tcpuLoad1m\x12&\n" +
@@ -3117,7 +3184,7 @@ func file_nook_agent_v1_node_service_proto_rawDescGZIP() []byte {
 }
 
 var file_nook_agent_v1_node_service_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_nook_agent_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_nook_agent_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_nook_agent_v1_node_service_proto_goTypes = []any{
 	(CommandErrorCode)(0),            // 0: nook.agent.v1.CommandErrorCode
 	(BuildResult)(0),                 // 1: nook.agent.v1.BuildResult
@@ -3131,86 +3198,88 @@ var file_nook_agent_v1_node_service_proto_goTypes = []any{
 	(*ConnectResponse)(nil),          // 9: nook.agent.v1.ConnectResponse
 	(*Hello)(nil),                    // 10: nook.agent.v1.Hello
 	(*ConnectAccepted)(nil),          // 11: nook.agent.v1.ConnectAccepted
-	(*Heartbeat)(nil),                // 12: nook.agent.v1.Heartbeat
-	(*Command)(nil),                  // 13: nook.agent.v1.Command
-	(*InspectNodeCommand)(nil),       // 14: nook.agent.v1.InspectNodeCommand
-	(*CommandResult)(nil),            // 15: nook.agent.v1.CommandResult
-	(*Accepted)(nil),                 // 16: nook.agent.v1.Accepted
-	(*CommandError)(nil),             // 17: nook.agent.v1.CommandError
-	(*InspectNodeResult)(nil),        // 18: nook.agent.v1.InspectNodeResult
-	(*DockerInfo)(nil),               // 19: nook.agent.v1.DockerInfo
-	(*ManagedContainer)(nil),         // 20: nook.agent.v1.ManagedContainer
-	(*BuildCommand)(nil),             // 21: nook.agent.v1.BuildCommand
-	(*CancelBuildCommand)(nil),       // 22: nook.agent.v1.CancelBuildCommand
-	(*BuildLog)(nil),                 // 23: nook.agent.v1.BuildLog
-	(*BuildFinished)(nil),            // 24: nook.agent.v1.BuildFinished
-	(*StartInstanceCommand)(nil),     // 25: nook.agent.v1.StartInstanceCommand
-	(*EnvVar)(nil),                   // 26: nook.agent.v1.EnvVar
-	(*StopInstanceCommand)(nil),      // 27: nook.agent.v1.StopInstanceCommand
-	(*StreamLogsCommand)(nil),        // 28: nook.agent.v1.StreamLogsCommand
-	(*StopLogsCommand)(nil),          // 29: nook.agent.v1.StopLogsCommand
-	(*InstanceStatus)(nil),           // 30: nook.agent.v1.InstanceStatus
-	(*InstanceReport)(nil),           // 31: nook.agent.v1.InstanceReport
-	(*AppLog)(nil),                   // 32: nook.agent.v1.AppLog
-	(*LogLine)(nil),                  // 33: nook.agent.v1.LogLine
-	nil,                              // 34: nook.agent.v1.JoinRequest.LabelsEntry
-	nil,                              // 35: nook.agent.v1.ManagedContainer.LabelsEntry
-	(*durationpb.Duration)(nil),      // 36: google.protobuf.Duration
-	(*timestamppb.Timestamp)(nil),    // 37: google.protobuf.Timestamp
+	(*KnownInstance)(nil),            // 12: nook.agent.v1.KnownInstance
+	(*Heartbeat)(nil),                // 13: nook.agent.v1.Heartbeat
+	(*Command)(nil),                  // 14: nook.agent.v1.Command
+	(*InspectNodeCommand)(nil),       // 15: nook.agent.v1.InspectNodeCommand
+	(*CommandResult)(nil),            // 16: nook.agent.v1.CommandResult
+	(*Accepted)(nil),                 // 17: nook.agent.v1.Accepted
+	(*CommandError)(nil),             // 18: nook.agent.v1.CommandError
+	(*InspectNodeResult)(nil),        // 19: nook.agent.v1.InspectNodeResult
+	(*DockerInfo)(nil),               // 20: nook.agent.v1.DockerInfo
+	(*ManagedContainer)(nil),         // 21: nook.agent.v1.ManagedContainer
+	(*BuildCommand)(nil),             // 22: nook.agent.v1.BuildCommand
+	(*CancelBuildCommand)(nil),       // 23: nook.agent.v1.CancelBuildCommand
+	(*BuildLog)(nil),                 // 24: nook.agent.v1.BuildLog
+	(*BuildFinished)(nil),            // 25: nook.agent.v1.BuildFinished
+	(*StartInstanceCommand)(nil),     // 26: nook.agent.v1.StartInstanceCommand
+	(*EnvVar)(nil),                   // 27: nook.agent.v1.EnvVar
+	(*StopInstanceCommand)(nil),      // 28: nook.agent.v1.StopInstanceCommand
+	(*StreamLogsCommand)(nil),        // 29: nook.agent.v1.StreamLogsCommand
+	(*StopLogsCommand)(nil),          // 30: nook.agent.v1.StopLogsCommand
+	(*InstanceStatus)(nil),           // 31: nook.agent.v1.InstanceStatus
+	(*InstanceReport)(nil),           // 32: nook.agent.v1.InstanceReport
+	(*AppLog)(nil),                   // 33: nook.agent.v1.AppLog
+	(*LogLine)(nil),                  // 34: nook.agent.v1.LogLine
+	nil,                              // 35: nook.agent.v1.JoinRequest.LabelsEntry
+	nil,                              // 36: nook.agent.v1.ManagedContainer.LabelsEntry
+	(*durationpb.Duration)(nil),      // 37: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil),    // 38: google.protobuf.Timestamp
 }
 var file_nook_agent_v1_node_service_proto_depIdxs = []int32{
-	34, // 0: nook.agent.v1.JoinRequest.labels:type_name -> nook.agent.v1.JoinRequest.LabelsEntry
+	35, // 0: nook.agent.v1.JoinRequest.labels:type_name -> nook.agent.v1.JoinRequest.LabelsEntry
 	3,  // 1: nook.agent.v1.JoinRequest.info:type_name -> nook.agent.v1.NodeInfo
 	10, // 2: nook.agent.v1.ConnectRequest.hello:type_name -> nook.agent.v1.Hello
-	12, // 3: nook.agent.v1.ConnectRequest.heartbeat:type_name -> nook.agent.v1.Heartbeat
-	15, // 4: nook.agent.v1.ConnectRequest.command_result:type_name -> nook.agent.v1.CommandResult
-	23, // 5: nook.agent.v1.ConnectRequest.build_log:type_name -> nook.agent.v1.BuildLog
-	24, // 6: nook.agent.v1.ConnectRequest.build_finished:type_name -> nook.agent.v1.BuildFinished
-	30, // 7: nook.agent.v1.ConnectRequest.instance_status:type_name -> nook.agent.v1.InstanceStatus
-	32, // 8: nook.agent.v1.ConnectRequest.app_log:type_name -> nook.agent.v1.AppLog
+	13, // 3: nook.agent.v1.ConnectRequest.heartbeat:type_name -> nook.agent.v1.Heartbeat
+	16, // 4: nook.agent.v1.ConnectRequest.command_result:type_name -> nook.agent.v1.CommandResult
+	24, // 5: nook.agent.v1.ConnectRequest.build_log:type_name -> nook.agent.v1.BuildLog
+	25, // 6: nook.agent.v1.ConnectRequest.build_finished:type_name -> nook.agent.v1.BuildFinished
+	31, // 7: nook.agent.v1.ConnectRequest.instance_status:type_name -> nook.agent.v1.InstanceStatus
+	33, // 8: nook.agent.v1.ConnectRequest.app_log:type_name -> nook.agent.v1.AppLog
 	11, // 9: nook.agent.v1.ConnectResponse.accepted:type_name -> nook.agent.v1.ConnectAccepted
-	13, // 10: nook.agent.v1.ConnectResponse.command:type_name -> nook.agent.v1.Command
+	14, // 10: nook.agent.v1.ConnectResponse.command:type_name -> nook.agent.v1.Command
 	3,  // 11: nook.agent.v1.Hello.info:type_name -> nook.agent.v1.NodeInfo
-	31, // 12: nook.agent.v1.Hello.instances:type_name -> nook.agent.v1.InstanceReport
-	36, // 13: nook.agent.v1.ConnectAccepted.heartbeat_interval:type_name -> google.protobuf.Duration
-	36, // 14: nook.agent.v1.Heartbeat.uptime:type_name -> google.protobuf.Duration
-	36, // 15: nook.agent.v1.Command.timeout:type_name -> google.protobuf.Duration
-	14, // 16: nook.agent.v1.Command.inspect_node:type_name -> nook.agent.v1.InspectNodeCommand
-	21, // 17: nook.agent.v1.Command.build:type_name -> nook.agent.v1.BuildCommand
-	22, // 18: nook.agent.v1.Command.cancel_build:type_name -> nook.agent.v1.CancelBuildCommand
-	25, // 19: nook.agent.v1.Command.start_instance:type_name -> nook.agent.v1.StartInstanceCommand
-	27, // 20: nook.agent.v1.Command.stop_instance:type_name -> nook.agent.v1.StopInstanceCommand
-	28, // 21: nook.agent.v1.Command.stream_logs:type_name -> nook.agent.v1.StreamLogsCommand
-	29, // 22: nook.agent.v1.Command.stop_logs:type_name -> nook.agent.v1.StopLogsCommand
-	17, // 23: nook.agent.v1.CommandResult.error:type_name -> nook.agent.v1.CommandError
-	18, // 24: nook.agent.v1.CommandResult.inspect_node:type_name -> nook.agent.v1.InspectNodeResult
-	16, // 25: nook.agent.v1.CommandResult.accepted:type_name -> nook.agent.v1.Accepted
-	0,  // 26: nook.agent.v1.CommandError.code:type_name -> nook.agent.v1.CommandErrorCode
-	19, // 27: nook.agent.v1.InspectNodeResult.docker:type_name -> nook.agent.v1.DockerInfo
-	20, // 28: nook.agent.v1.InspectNodeResult.containers:type_name -> nook.agent.v1.ManagedContainer
-	35, // 29: nook.agent.v1.ManagedContainer.labels:type_name -> nook.agent.v1.ManagedContainer.LabelsEntry
-	37, // 30: nook.agent.v1.ManagedContainer.created_at:type_name -> google.protobuf.Timestamp
-	36, // 31: nook.agent.v1.BuildCommand.timeout:type_name -> google.protobuf.Duration
-	1,  // 32: nook.agent.v1.BuildFinished.result:type_name -> nook.agent.v1.BuildResult
-	36, // 33: nook.agent.v1.StartInstanceCommand.startup_timeout:type_name -> google.protobuf.Duration
-	26, // 34: nook.agent.v1.StartInstanceCommand.env:type_name -> nook.agent.v1.EnvVar
-	36, // 35: nook.agent.v1.StopInstanceCommand.drain:type_name -> google.protobuf.Duration
-	37, // 36: nook.agent.v1.StreamLogsCommand.since:type_name -> google.protobuf.Timestamp
-	36, // 37: nook.agent.v1.StreamLogsCommand.max_duration:type_name -> google.protobuf.Duration
-	2,  // 38: nook.agent.v1.InstanceStatus.state:type_name -> nook.agent.v1.InstanceState
-	33, // 39: nook.agent.v1.AppLog.lines:type_name -> nook.agent.v1.LogLine
-	37, // 40: nook.agent.v1.LogLine.time:type_name -> google.protobuf.Timestamp
-	4,  // 41: nook.agent.v1.NodeService.Join:input_type -> nook.agent.v1.JoinRequest
-	8,  // 42: nook.agent.v1.NodeService.Connect:input_type -> nook.agent.v1.ConnectRequest
-	6,  // 43: nook.agent.v1.NodeService.RenewCertificate:input_type -> nook.agent.v1.RenewCertificateRequest
-	5,  // 44: nook.agent.v1.NodeService.Join:output_type -> nook.agent.v1.JoinResponse
-	9,  // 45: nook.agent.v1.NodeService.Connect:output_type -> nook.agent.v1.ConnectResponse
-	7,  // 46: nook.agent.v1.NodeService.RenewCertificate:output_type -> nook.agent.v1.RenewCertificateResponse
-	44, // [44:47] is the sub-list for method output_type
-	41, // [41:44] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	32, // 12: nook.agent.v1.Hello.instances:type_name -> nook.agent.v1.InstanceReport
+	37, // 13: nook.agent.v1.ConnectAccepted.heartbeat_interval:type_name -> google.protobuf.Duration
+	12, // 14: nook.agent.v1.ConnectAccepted.instances:type_name -> nook.agent.v1.KnownInstance
+	37, // 15: nook.agent.v1.Heartbeat.uptime:type_name -> google.protobuf.Duration
+	37, // 16: nook.agent.v1.Command.timeout:type_name -> google.protobuf.Duration
+	15, // 17: nook.agent.v1.Command.inspect_node:type_name -> nook.agent.v1.InspectNodeCommand
+	22, // 18: nook.agent.v1.Command.build:type_name -> nook.agent.v1.BuildCommand
+	23, // 19: nook.agent.v1.Command.cancel_build:type_name -> nook.agent.v1.CancelBuildCommand
+	26, // 20: nook.agent.v1.Command.start_instance:type_name -> nook.agent.v1.StartInstanceCommand
+	28, // 21: nook.agent.v1.Command.stop_instance:type_name -> nook.agent.v1.StopInstanceCommand
+	29, // 22: nook.agent.v1.Command.stream_logs:type_name -> nook.agent.v1.StreamLogsCommand
+	30, // 23: nook.agent.v1.Command.stop_logs:type_name -> nook.agent.v1.StopLogsCommand
+	18, // 24: nook.agent.v1.CommandResult.error:type_name -> nook.agent.v1.CommandError
+	19, // 25: nook.agent.v1.CommandResult.inspect_node:type_name -> nook.agent.v1.InspectNodeResult
+	17, // 26: nook.agent.v1.CommandResult.accepted:type_name -> nook.agent.v1.Accepted
+	0,  // 27: nook.agent.v1.CommandError.code:type_name -> nook.agent.v1.CommandErrorCode
+	20, // 28: nook.agent.v1.InspectNodeResult.docker:type_name -> nook.agent.v1.DockerInfo
+	21, // 29: nook.agent.v1.InspectNodeResult.containers:type_name -> nook.agent.v1.ManagedContainer
+	36, // 30: nook.agent.v1.ManagedContainer.labels:type_name -> nook.agent.v1.ManagedContainer.LabelsEntry
+	38, // 31: nook.agent.v1.ManagedContainer.created_at:type_name -> google.protobuf.Timestamp
+	37, // 32: nook.agent.v1.BuildCommand.timeout:type_name -> google.protobuf.Duration
+	1,  // 33: nook.agent.v1.BuildFinished.result:type_name -> nook.agent.v1.BuildResult
+	37, // 34: nook.agent.v1.StartInstanceCommand.startup_timeout:type_name -> google.protobuf.Duration
+	27, // 35: nook.agent.v1.StartInstanceCommand.env:type_name -> nook.agent.v1.EnvVar
+	37, // 36: nook.agent.v1.StopInstanceCommand.drain:type_name -> google.protobuf.Duration
+	38, // 37: nook.agent.v1.StreamLogsCommand.since:type_name -> google.protobuf.Timestamp
+	37, // 38: nook.agent.v1.StreamLogsCommand.max_duration:type_name -> google.protobuf.Duration
+	2,  // 39: nook.agent.v1.InstanceStatus.state:type_name -> nook.agent.v1.InstanceState
+	34, // 40: nook.agent.v1.AppLog.lines:type_name -> nook.agent.v1.LogLine
+	38, // 41: nook.agent.v1.LogLine.time:type_name -> google.protobuf.Timestamp
+	4,  // 42: nook.agent.v1.NodeService.Join:input_type -> nook.agent.v1.JoinRequest
+	8,  // 43: nook.agent.v1.NodeService.Connect:input_type -> nook.agent.v1.ConnectRequest
+	6,  // 44: nook.agent.v1.NodeService.RenewCertificate:input_type -> nook.agent.v1.RenewCertificateRequest
+	5,  // 45: nook.agent.v1.NodeService.Join:output_type -> nook.agent.v1.JoinResponse
+	9,  // 46: nook.agent.v1.NodeService.Connect:output_type -> nook.agent.v1.ConnectResponse
+	7,  // 47: nook.agent.v1.NodeService.RenewCertificate:output_type -> nook.agent.v1.RenewCertificateResponse
+	45, // [45:48] is the sub-list for method output_type
+	42, // [42:45] is the sub-list for method input_type
+	42, // [42:42] is the sub-list for extension type_name
+	42, // [42:42] is the sub-list for extension extendee
+	0,  // [0:42] is the sub-list for field type_name
 }
 
 func init() { file_nook_agent_v1_node_service_proto_init() }
@@ -3231,7 +3300,7 @@ func file_nook_agent_v1_node_service_proto_init() {
 		(*ConnectResponse_Accepted)(nil),
 		(*ConnectResponse_Command)(nil),
 	}
-	file_nook_agent_v1_node_service_proto_msgTypes[10].OneofWrappers = []any{
+	file_nook_agent_v1_node_service_proto_msgTypes[11].OneofWrappers = []any{
 		(*Command_InspectNode)(nil),
 		(*Command_Build)(nil),
 		(*Command_CancelBuild)(nil),
@@ -3240,7 +3309,7 @@ func file_nook_agent_v1_node_service_proto_init() {
 		(*Command_StreamLogs)(nil),
 		(*Command_StopLogs)(nil),
 	}
-	file_nook_agent_v1_node_service_proto_msgTypes[12].OneofWrappers = []any{
+	file_nook_agent_v1_node_service_proto_msgTypes[13].OneofWrappers = []any{
 		(*CommandResult_Error)(nil),
 		(*CommandResult_InspectNode)(nil),
 		(*CommandResult_Accepted)(nil),
@@ -3251,7 +3320,7 @@ func file_nook_agent_v1_node_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nook_agent_v1_node_service_proto_rawDesc), len(file_nook_agent_v1_node_service_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   33,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

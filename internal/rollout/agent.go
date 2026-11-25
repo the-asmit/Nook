@@ -122,13 +122,21 @@ func (c *Controller) stopInstance(ctx context.Context, inst *store.AppInstance, 
 			return
 		}
 	}
-	if inst.NodeID == nil {
+	if inst.NodeID == nil || c.nodeRemoved(ctx, *inst.NodeID) {
+		// Nothing can confirm the stop of an instance on a removed node; it
+		// holds no reservation any more.
 		if _, err := c.Store.InstanceStopped(ctx, inst.ID); err != nil && !store.IsNotFound(err) {
 			c.Logger.WarnContext(ctx, "could not record stopped instance", "instance", inst.ID.String(), "error", err.Error())
 		}
 		return
 	}
 	c.sendStop(ctx, *inst.NodeID, inst.ID.String(), drain)
+}
+
+// nodeRemoved reports whether a node was removed from Nook.
+func (c *Controller) nodeRemoved(ctx context.Context, nodeID uuid.UUID) bool {
+	status, err := c.Store.GetNodeStatus(ctx, nodeID)
+	return store.IsNotFound(err) || (err == nil && status == store.NodeStatusRemoved)
 }
 
 func (c *Controller) sendStop(ctx context.Context, nodeID uuid.UUID, instanceID string, drain time.Duration) {
@@ -241,6 +249,20 @@ func (c *Controller) AgentConnected(ctx context.Context, nodeID uuid.UUID, repor
 			}
 		}
 	}
+}
+
+// KnownInstances lists the instances the control plane has on a node with
+// their restart counts (sent to a (re)connecting agent).
+func (c *Controller) KnownInstances(ctx context.Context, nodeID uuid.UUID) ([]*agentv1.KnownInstance, error) {
+	list, err := c.Store.ListInstancesOnNode(ctx, &nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("list node instances: %w", err)
+	}
+	out := make([]*agentv1.KnownInstance, 0, len(list))
+	for i := range list {
+		out = append(out, &agentv1.KnownInstance{InstanceId: list[i].ID.String(), RestartCount: list[i].RestartCount})
+	}
+	return out, nil
 }
 
 // restart sends the start command of an instance again (it is idempotent

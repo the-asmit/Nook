@@ -117,7 +117,7 @@ func TestConfigValidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaults: %v", err)
 	}
-	if c.BuildSlots != 2 || !strings.Contains(c.BuildImage, "@sha256:") || c.BuildNetwork != managedBuildNetwork ||
+	if c.BuildSlots != 2 || !strings.Contains(c.BuildImage, "@sha256:") || c.BuildProxy || c.BuildNetwork != defaultBuildNetwork ||
 		!c.EgressFilter || c.FirewallChain != "NOOK" || !strings.Contains(c.FirewallImage, "@sha256:") {
 		t.Fatalf("defaults %+v", c)
 	}
@@ -125,7 +125,9 @@ func TestConfigValidate(t *testing.T) {
 		"max below min":   func(c *Config) { c.ReconnectMax = time.Millisecond },
 		"unpinned image":  func(c *Config) { c.BuildImage = "moby/buildkit:rootless" },
 		"too many slots":  func(c *Config) { c.BuildSlots = 65 },
-		"no network":      func(c *Config) { c.BuildNetwork = "" },
+		"bad network":     func(c *Config) { c.BuildNetwork = "Not A Name" },
+		"bad build host":  func(c *Config) { c.BuildHosts = []string{"registry:10.0.0.5"} },
+		"bad build ip":    func(c *Config) { c.BuildHosts = []string{"registry=x"} },
 		"tiny context":    func(c *Config) { c.BuildMaxContextBytes = 10 },
 		"empty state dir": func(c *Config) { c.StateDir = "" },
 		"no advertise":    func(c *Config) { c.AdvertiseAddr = "" },
