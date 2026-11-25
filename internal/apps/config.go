@@ -1,11 +1,14 @@
 // Package apps manages apps and their deployments: who may create and
-// delete them, per-workspace quotas, and the upload of source archives
-// that turns into a queued build.
+// delete them, per-workspace quotas, the upload of source archives that
+// turns into a queued build, environment variables (encrypted), and the
+// lifecycle requests that the rollout controller carries out (stop,
+// start, rollback, configuration releases).
 //
 // Every operation resolves the workspace through the caller's own
 // membership first (non-members see "not found"), then the app inside
-// that workspace. Members may create apps, deploy and read logs; only
-// admins and owners may delete apps.
+// that workspace. Members may create, configure, deploy, stop, start and
+// roll back apps, read logs and set plain environment variables; only
+// admins and owners may delete apps and set, change or remove secrets.
 package apps
 
 import (
@@ -24,6 +27,11 @@ type Config struct {
 	// Default quotas for workspaces without an override.
 	DefaultMaxApps             int32 `env:"NOOK_QUOTA_MAX_APPS" envDefault:"20"`
 	DefaultMaxConcurrentBuilds int32 `env:"NOOK_QUOTA_MAX_CONCURRENT_BUILDS" envDefault:"2"`
+	// DefaultMaxMemoryMB caps the memory a workspace's running apps reserve.
+	DefaultMaxMemoryMB int32 `env:"NOOK_QUOTA_MAX_MEMORY_MB" envDefault:"8192"`
+	// MaxStartupTimeout is the longest startup timeout an app may ask for
+	// in nook.toml.
+	MaxStartupTimeout time.Duration `env:"NOOK_APP_MAX_STARTUP_TIMEOUT" envDefault:"10m"`
 	// Upper bounds for an app's resource limits.
 	MaxAppMemoryMB      int32 `env:"NOOK_APP_MAX_MEMORY_MB" envDefault:"4096"`
 	MaxAppCPUMillicores int32 `env:"NOOK_APP_MAX_CPU_MILLICORES" envDefault:"4000"`
@@ -36,6 +44,8 @@ func (c *Config) Validate() error {
 		config.CheckDuration("NOOK_UPLOAD_URL_TTL", c.UploadURLTTL, time.Minute, 12*time.Hour),
 		config.CheckRange("NOOK_QUOTA_MAX_APPS", c.DefaultMaxApps, 0, 10000),
 		config.CheckRange("NOOK_QUOTA_MAX_CONCURRENT_BUILDS", c.DefaultMaxConcurrentBuilds, 0, 100),
+		config.CheckRange("NOOK_QUOTA_MAX_MEMORY_MB", c.DefaultMaxMemoryMB, 0, maxQuotaMemoryMB),
+		config.CheckDuration("NOOK_APP_MAX_STARTUP_TIMEOUT", c.MaxStartupTimeout, DefaultStartupTimeout, time.Hour),
 		config.CheckRange("NOOK_APP_MAX_MEMORY_MB", c.MaxAppMemoryMB, DefaultMemoryMB, 1048576),
 		config.CheckRange("NOOK_APP_MAX_CPU_MILLICORES", c.MaxAppCPUMillicores, DefaultCPUMillicores, 1024000),
 	)
@@ -47,6 +57,9 @@ const (
 	DefaultHealthCheckPath = "/"
 	DefaultMemoryMB        = 256
 	DefaultCPUMillicores   = 500
+	DefaultStartupTimeout  = 60 * time.Second
+	// maxQuotaMemoryMB bounds a workspace memory quota (10 TiB).
+	maxQuotaMemoryMB = 10485760
 	// minimums keep limits meaningful.
 	minMemoryMB      = 16
 	minCPUMillicores = 10

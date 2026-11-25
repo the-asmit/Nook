@@ -157,12 +157,13 @@ func (s *Service) deployment(ctx context.Context, q *store.Queries, appID uuid.U
 	return d, nil
 }
 
-// Detail is a deployment with its app and build attempts.
+// Detail is a deployment with its app, build attempts and newest instance.
 type Detail struct {
 	Workspace  store.Workspace
 	App        store.App
 	Deployment store.Deployment
 	Builds     []store.Build
+	Instance   *store.AppInstance
 }
 
 // GetDeployment returns one deployment with its builds.
@@ -179,7 +180,14 @@ func (s *Service) GetDeployment(ctx context.Context, actor workspace.Actor, wsSl
 	if err != nil {
 		return Detail{}, fmt.Errorf("list builds: %w", err)
 	}
-	return Detail{Workspace: v.Workspace, App: app, Deployment: d, Builds: builds}, nil
+	out := Detail{Workspace: v.Workspace, App: app, Deployment: d, Builds: builds}
+	inst, err := s.store.LatestInstanceOfDeployment(ctx, d.ID)
+	if err == nil {
+		out.Instance = &inst
+	} else if !store.IsNotFound(err) {
+		return Detail{}, fmt.Errorf("read instance: %w", err)
+	}
+	return out, nil
 }
 
 // LatestDeployment returns the app's newest deployment.

@@ -33,6 +33,8 @@ type HeartbeatView struct {
 	DockerReachable      bool      `json:"docker_reachable"`
 	AgentVersion         string    `json:"agent_version"`
 	UptimeSeconds        int64     `json:"uptime_seconds"`
+	// BuildsUnavailableReason says why the node cannot build right now.
+	BuildsUnavailableReason string `json:"builds_unavailable_reason"`
 }
 
 // NodeView is a worker node.
@@ -51,9 +53,15 @@ type NodeView struct {
 	AgentVersion     string            `json:"agent_version"`
 	OS               string            `json:"os"`
 	Arch             string            `json:"arch"`
-	JoinedAt         time.Time         `json:"joined_at"`
-	LastHeartbeatAt  *time.Time        `json:"last_heartbeat_at"`
-	Heartbeat        *HeartbeatView    `json:"heartbeat"`
+	// AdvertiseAddress is the private address the node publishes apps on.
+	AdvertiseAddress string `json:"advertise_address"`
+	BuildSlots       int32  `json:"build_slots"`
+	// BuildsUnavailableReason says why the node cannot build (with the
+	// fix), or is empty.
+	BuildsUnavailableReason string         `json:"builds_unavailable_reason"`
+	JoinedAt                time.Time      `json:"joined_at"`
+	LastHeartbeatAt         *time.Time     `json:"last_heartbeat_at"`
+	Heartbeat               *HeartbeatView `json:"heartbeat"`
 }
 
 // NodeEventView is one state transition.
@@ -78,12 +86,14 @@ func nodeView(n *store.Node, hb *nodes.Sample) NodeView {
 		Hostname: n.Hostname, Addresses: n.Addresses, CPUCount: n.CpuCount, MemoryTotalBytes: n.MemoryTotalBytes,
 		DiskTotalBytes: n.DiskTotalBytes, DockerVersion: n.DockerVersion, AgentVersion: n.AgentVersion,
 		OS: n.Os, Arch: n.Arch, JoinedAt: n.JoinedAt, LastHeartbeatAt: n.LastHeartbeatAt,
+		AdvertiseAddress: n.AdvertiseAddress, BuildSlots: n.BuildSlots, BuildsUnavailableReason: n.BuildsUnavailableReason,
 	}
 	if hb != nil {
 		v.Heartbeat = &HeartbeatView{
 			ReceivedAt: hb.ReceivedAt, MemoryAvailableBytes: hb.MemoryAvailableBytes, CPULoad1m: hb.CPULoad1m,
 			DiskFreeBytes: hb.DiskFreeBytes, RunningContainers: hb.RunningContainers, DockerReachable: hb.DockerReachable,
 			AgentVersion: hb.AgentVersion, UptimeSeconds: int64(hb.Uptime.Seconds()),
+			BuildsUnavailableReason: hb.BuildsUnavailableReason,
 		}
 		// Redis holds the freshest heartbeat time; Postgres lags by design.
 		if v.LastHeartbeatAt == nil || hb.ReceivedAt.After(*v.LastHeartbeatAt) {

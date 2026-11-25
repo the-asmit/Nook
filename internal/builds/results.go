@@ -124,7 +124,9 @@ func (d *Dispatcher) BuildFinished(ctx context.Context, nodeID uuid.UUID, m *age
 	d.metrics.finished.WithLabelValues(string(result)).Inc()
 	d.metrics.duration.Observe(time.Since(b.DispatchedAt).Seconds())
 	d.persistLog(ctx, &dep, &finished)
-	if result != store.BuildResultInfraError {
+	// A built deployment's log goes on with its rollout; infrastructure
+	// failures are retried.
+	if result != store.BuildResultInfraError && result != store.BuildResultSucceeded {
 		d.ended(ctx, dep.ID)
 	}
 	_ = d.Redis.Publish(ctx, wakeChannel, dep.ID.String()).Err()

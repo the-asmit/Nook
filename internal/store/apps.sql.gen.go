@@ -16,7 +16,7 @@ const cancelWaitingDeployment = `-- name: CancelWaitingDeployment :one
 UPDATE deployments
 SET status = 'cancelled', cancelled_at = now(), failure_reason = $1
 WHERE id = $2 AND status IN ('pending', 'uploading', 'queued')
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 type CancelWaitingDeploymentParams struct {
@@ -51,6 +51,14 @@ func (q *Queries) CancelWaitingDeployment(ctx context.Context, arg CancelWaiting
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -79,20 +87,24 @@ func (q *Queries) CountLiveApps(ctx context.Context, workspaceID uuid.UUID) (int
 }
 
 const createApp = `-- name: CreateApp :one
-INSERT INTO apps (workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at
+INSERT INTO apps (workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores,
+                  startup_timeout_seconds, read_only_rootfs)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10)
+RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs
 `
 
 type CreateAppParams struct {
-	WorkspaceID     uuid.UUID
-	Slug            string
-	Name            string
-	CreatedBy       *uuid.UUID
-	Port            int32
-	HealthCheckPath string
-	MemoryMb        int32
-	CpuMillicores   int32
+	WorkspaceID           uuid.UUID
+	Slug                  string
+	Name                  string
+	CreatedBy             *uuid.UUID
+	Port                  int32
+	HealthCheckPath       string
+	MemoryMb              int32
+	CpuMillicores         int32
+	StartupTimeoutSeconds int32
+	ReadOnlyRootfs        bool
 }
 
 func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, error) {
@@ -105,6 +117,8 @@ func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, erro
 		arg.HealthCheckPath,
 		arg.MemoryMb,
 		arg.CpuMillicores,
+		arg.StartupTimeoutSeconds,
+		arg.ReadOnlyRootfs,
 	)
 	var i App
 	err := row.Scan(
@@ -120,6 +134,11 @@ func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, erro
 		&i.NextDeploymentNumber,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.DesiredState,
+		&i.DesiredStateAt,
+		&i.CurrentDeploymentID,
+		&i.StartupTimeoutSeconds,
+		&i.ReadOnlyRootfs,
 	)
 	return i, err
 }
@@ -127,7 +146,7 @@ func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, erro
 const createDeployment = `-- name: CreateDeployment :one
 INSERT INTO deployments (app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, created_by)
 VALUES ($1, $2, 'pending', $3, $4, $5, $6, $7)
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 type CreateDeploymentParams struct {
@@ -174,12 +193,20 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
 
 const getApp = `-- name: GetApp :one
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at FROM apps WHERE workspace_id = $1 AND slug = $2 AND deleted_at IS NULL
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs FROM apps WHERE workspace_id = $1 AND slug = $2 AND deleted_at IS NULL
 `
 
 type GetAppParams struct {
@@ -205,12 +232,17 @@ func (q *Queries) GetApp(ctx context.Context, arg GetAppParams) (App, error) {
 		&i.NextDeploymentNumber,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.DesiredState,
+		&i.DesiredStateAt,
+		&i.CurrentDeploymentID,
+		&i.StartupTimeoutSeconds,
+		&i.ReadOnlyRootfs,
 	)
 	return i, err
 }
 
 const getAppByID = `-- name: GetAppByID :one
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at FROM apps WHERE id = $1
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs FROM apps WHERE id = $1
 `
 
 func (q *Queries) GetAppByID(ctx context.Context, id uuid.UUID) (App, error) {
@@ -229,12 +261,17 @@ func (q *Queries) GetAppByID(ctx context.Context, id uuid.UUID) (App, error) {
 		&i.NextDeploymentNumber,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.DesiredState,
+		&i.DesiredStateAt,
+		&i.CurrentDeploymentID,
+		&i.StartupTimeoutSeconds,
+		&i.ReadOnlyRootfs,
 	)
 	return i, err
 }
 
 const getDeployment = `-- name: GetDeployment :one
-SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at FROM deployments WHERE app_id = $1 AND number = $2
+SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at FROM deployments WHERE app_id = $1 AND number = $2
 `
 
 type GetDeploymentParams struct {
@@ -268,12 +305,20 @@ func (q *Queries) GetDeployment(ctx context.Context, arg GetDeploymentParams) (D
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
 
 const getDeploymentByID = `-- name: GetDeploymentByID :one
-SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at FROM deployments WHERE id = $1
+SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at FROM deployments WHERE id = $1
 `
 
 func (q *Queries) GetDeploymentByID(ctx context.Context, id uuid.UUID) (Deployment, error) {
@@ -302,6 +347,14 @@ func (q *Queries) GetDeploymentByID(ctx context.Context, id uuid.UUID) (Deployme
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -325,7 +378,7 @@ func (q *Queries) GetWorkspaceBySlug(ctx context.Context, slug string) (Workspac
 }
 
 const getWorkspaceQuota = `-- name: GetWorkspaceQuota :one
-SELECT workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at FROM workspace_quotas WHERE workspace_id = $1
+SELECT workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at, max_memory_mb FROM workspace_quotas WHERE workspace_id = $1
 `
 
 func (q *Queries) GetWorkspaceQuota(ctx context.Context, workspaceID uuid.UUID) (WorkspaceQuota, error) {
@@ -337,6 +390,7 @@ func (q *Queries) GetWorkspaceQuota(ctx context.Context, workspaceID uuid.UUID) 
 		&i.MaxConcurrentBuilds,
 		&i.UpdatedBy,
 		&i.UpdatedAt,
+		&i.MaxMemoryMb,
 	)
 	return i, err
 }
@@ -353,7 +407,8 @@ type IsRecordedImageParams struct {
 }
 
 // Whether a digest is the image of a deployment (so it must not be
-// garbage-collected as a stray push).
+// garbage-collected as a stray push, nor deleted while another
+// deployment releases it again).
 func (q *Queries) IsRecordedImage(ctx context.Context, arg IsRecordedImageParams) (bool, error) {
 	row := q.db.QueryRow(ctx, isRecordedImage, arg.AppID, arg.ImageDigest)
 	var recorded bool
@@ -362,7 +417,7 @@ func (q *Queries) IsRecordedImage(ctx context.Context, arg IsRecordedImageParams
 }
 
 const listAbandonedUploads = `-- name: ListAbandonedUploads :many
-SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at FROM deployments
+SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at FROM deployments
 WHERE status IN ('pending', 'uploading') AND upload_expires_at < $1
 ORDER BY created_at
 LIMIT $2
@@ -405,6 +460,14 @@ func (q *Queries) ListAbandonedUploads(ctx context.Context, arg ListAbandonedUpl
 			&i.CancelledAt,
 			&i.SourceDeletedAt,
 			&i.ImageDeletedAt,
+			&i.Kind,
+			&i.ImageOfDeploymentID,
+			&i.RollbackTo,
+			&i.EnvSnapshotID,
+			&i.DeployingAt,
+			&i.LiveAt,
+			&i.SupersededAt,
+			&i.RolledBackAt,
 		); err != nil {
 			return nil, err
 		}
@@ -417,7 +480,7 @@ func (q *Queries) ListAbandonedUploads(ctx context.Context, arg ListAbandonedUpl
 }
 
 const listApps = `-- name: ListApps :many
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at FROM apps
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs FROM apps
 WHERE workspace_id = $1 AND deleted_at IS NULL AND slug > $2
 ORDER BY slug
 LIMIT $3
@@ -451,6 +514,11 @@ func (q *Queries) ListApps(ctx context.Context, arg ListAppsParams) ([]App, erro
 			&i.NextDeploymentNumber,
 			&i.CreatedAt,
 			&i.DeletedAt,
+			&i.DesiredState,
+			&i.DesiredStateAt,
+			&i.CurrentDeploymentID,
+			&i.StartupTimeoutSeconds,
+			&i.ReadOnlyRootfs,
 		); err != nil {
 			return nil, err
 		}
@@ -463,9 +531,17 @@ func (q *Queries) ListApps(ctx context.Context, arg ListAppsParams) ([]App, erro
 }
 
 const listDeletedApps = `-- name: ListDeletedApps :many
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at FROM apps WHERE deleted_at IS NOT NULL ORDER BY deleted_at LIMIT $1
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs FROM apps a
+WHERE a.deleted_at IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM app_instances i
+      WHERE i.app_id = a.id AND i.state IN ('starting', 'healthy', 'unhealthy', 'stopping')
+  )
+ORDER BY a.deleted_at
+LIMIT $1
 `
 
+// Deleted apps whose instances have all stopped.
 func (q *Queries) ListDeletedApps(ctx context.Context, rowLimit int32) ([]App, error) {
 	rows, err := q.db.Query(ctx, listDeletedApps, rowLimit)
 	if err != nil {
@@ -488,6 +564,11 @@ func (q *Queries) ListDeletedApps(ctx context.Context, rowLimit int32) ([]App, e
 			&i.NextDeploymentNumber,
 			&i.CreatedAt,
 			&i.DeletedAt,
+			&i.DesiredState,
+			&i.DesiredStateAt,
+			&i.CurrentDeploymentID,
+			&i.StartupTimeoutSeconds,
+			&i.ReadOnlyRootfs,
 		); err != nil {
 			return nil, err
 		}
@@ -500,7 +581,7 @@ func (q *Queries) ListDeletedApps(ctx context.Context, rowLimit int32) ([]App, e
 }
 
 const listDeployments = `-- name: ListDeployments :many
-SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at FROM deployments
+SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at FROM deployments
 WHERE app_id = $1 AND number < $2
 ORDER BY number DESC
 LIMIT $3
@@ -544,6 +625,14 @@ func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams
 			&i.CancelledAt,
 			&i.SourceDeletedAt,
 			&i.ImageDeletedAt,
+			&i.Kind,
+			&i.ImageOfDeploymentID,
+			&i.RollbackTo,
+			&i.EnvSnapshotID,
+			&i.DeployingAt,
+			&i.LiveAt,
+			&i.SupersededAt,
+			&i.RolledBackAt,
 		); err != nil {
 			return nil, err
 		}
@@ -558,7 +647,7 @@ func (q *Queries) ListDeployments(ctx context.Context, arg ListDeploymentsParams
 const listExpiredSources = `-- name: ListExpiredSources :many
 SELECT id, source_key FROM deployments
 WHERE source_deleted_at IS NULL AND created_at < $1
-  AND status IN ('built', 'failed', 'cancelled')
+  AND status NOT IN ('pending', 'uploading', 'queued', 'building')
 LIMIT $2
 `
 
@@ -595,12 +684,14 @@ func (q *Queries) ListExpiredSources(ctx context.Context, arg ListExpiredSources
 
 const listImagesBeyondRetention = `-- name: ListImagesBeyondRetention :many
 SELECT id, app_id, number, image_digest FROM (
-    SELECT d.id, d.app_id, d.number, d.image_digest,
+    SELECT d.id, d.app_id, d.number, d.image_digest, d.status,
            row_number() OVER (PARTITION BY d.app_id ORDER BY d.number DESC) AS rank
     FROM deployments d
-    WHERE d.status = 'built' AND d.image_deleted_at IS NULL
+    WHERE d.image_digest IS NOT NULL AND d.image_deleted_at IS NULL
 ) ranked
 WHERE rank > $1::bigint
+  AND status NOT IN ('deploying', 'live')
+  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.current_deployment_id = ranked.id)
 ORDER BY number
 LIMIT $2
 `
@@ -617,7 +708,10 @@ type ListImagesBeyondRetentionRow struct {
 	ImageDigest *string
 }
 
-// Built images beyond the newest @keep per app, oldest first.
+// Images beyond the newest @keep deployments with an image per app,
+// oldest first. Images being released or live are never candidates, and
+// neither is the app's current deployment. (A built deployment that far
+// back is never released: starting an app releases its newest one.)
 func (q *Queries) ListImagesBeyondRetention(ctx context.Context, arg ListImagesBeyondRetentionParams) ([]ListImagesBeyondRetentionRow, error) {
 	rows, err := q.db.Query(ctx, listImagesBeyondRetention, arg.Keep, arg.RowLimit)
 	if err != nil {
@@ -704,9 +798,10 @@ func (q *Queries) ListSourcesOfApp(ctx context.Context, appID uuid.UUID) ([]List
 }
 
 const listUnownedActiveDeployments = `-- name: ListUnownedActiveDeployments :many
-SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at FROM deployments
-WHERE status IN ('queued', 'building') AND (enqueued_at IS NULL OR enqueued_at < $1)
-ORDER BY created_at
+SELECT d.id, d.app_id, d.number, d.status, d.source_key, d.source_sha256, d.source_size, d.upload_expires_at, d.image_digest, d.created_by, d.failure_reason, d.cancel_requested_at, d.enqueued_at, d.created_at, d.uploading_at, d.queued_at, d.building_at, d.built_at, d.failed_at, d.cancelled_at, d.source_deleted_at, d.image_deleted_at, d.kind, d.image_of_deployment_id, d.rollback_to, d.env_snapshot_id, d.deploying_at, d.live_at, d.superseded_at, d.rolled_back_at FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE (d.status IN ('queued', 'building', 'deploying') OR (d.status = 'built' AND a.desired_state = 'running'))
+  AND (d.enqueued_at IS NULL OR d.enqueued_at < $1)
+ORDER BY d.created_at
 LIMIT $2
 `
 
@@ -715,8 +810,10 @@ type ListUnownedActiveDeploymentsParams struct {
 	RowLimit int32
 }
 
-// Queued or building deployments not re-added to the queue recently; the
-// janitor re-enqueues them in case their queue entry was lost.
+// Deployments still moving (queued, building, waiting for or in their
+// rollout) not re-added to the queue recently; the janitor re-enqueues
+// them in case their queue entry was lost.
+// (Built deployments of stopped apps wait for `nook apps start`.)
 func (q *Queries) ListUnownedActiveDeployments(ctx context.Context, arg ListUnownedActiveDeploymentsParams) ([]Deployment, error) {
 	rows, err := q.db.Query(ctx, listUnownedActiveDeployments, arg.Before, arg.RowLimit)
 	if err != nil {
@@ -749,6 +846,14 @@ func (q *Queries) ListUnownedActiveDeployments(ctx context.Context, arg ListUnow
 			&i.CancelledAt,
 			&i.SourceDeletedAt,
 			&i.ImageDeletedAt,
+			&i.Kind,
+			&i.ImageOfDeploymentID,
+			&i.RollbackTo,
+			&i.EnvSnapshotID,
+			&i.DeployingAt,
+			&i.LiveAt,
+			&i.SupersededAt,
+			&i.RolledBackAt,
 		); err != nil {
 			return nil, err
 		}
@@ -760,8 +865,37 @@ func (q *Queries) ListUnownedActiveDeployments(ctx context.Context, arg ListUnow
 	return items, nil
 }
 
+const lockApp = `-- name: LockApp :one
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs FROM apps WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockApp(ctx context.Context, id uuid.UUID) (App, error) {
+	row := q.db.QueryRow(ctx, lockApp, id)
+	var i App
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Slug,
+		&i.Name,
+		&i.CreatedBy,
+		&i.Port,
+		&i.HealthCheckPath,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.NextDeploymentNumber,
+		&i.CreatedAt,
+		&i.DeletedAt,
+		&i.DesiredState,
+		&i.DesiredStateAt,
+		&i.CurrentDeploymentID,
+		&i.StartupTimeoutSeconds,
+		&i.ReadOnlyRootfs,
+	)
+	return i, err
+}
+
 const lockDeployment = `-- name: LockDeployment :one
-SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at FROM deployments WHERE id = $1 FOR UPDATE
+SELECT id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at FROM deployments WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockDeployment(ctx context.Context, id uuid.UUID) (Deployment, error) {
@@ -790,6 +924,14 @@ func (q *Queries) LockDeployment(ctx context.Context, id uuid.UUID) (Deployment,
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -797,7 +939,7 @@ func (q *Queries) LockDeployment(ctx context.Context, id uuid.UUID) (Deployment,
 const markBuilt = `-- name: MarkBuilt :one
 UPDATE deployments SET status = 'built', built_at = now(), image_digest = $1
 WHERE id = $2 AND status = 'building'
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 type MarkBuiltParams struct {
@@ -831,6 +973,14 @@ func (q *Queries) MarkBuilt(ctx context.Context, arg MarkBuiltParams) (Deploymen
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -838,7 +988,7 @@ func (q *Queries) MarkBuilt(ctx context.Context, arg MarkBuiltParams) (Deploymen
 const markCancelled = `-- name: MarkCancelled :one
 UPDATE deployments SET status = 'cancelled', cancelled_at = now(), failure_reason = $1
 WHERE id = $2 AND status IN ('queued', 'building')
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 type MarkCancelledParams struct {
@@ -872,6 +1022,14 @@ func (q *Queries) MarkCancelled(ctx context.Context, arg MarkCancelledParams) (D
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -879,7 +1037,7 @@ func (q *Queries) MarkCancelled(ctx context.Context, arg MarkCancelledParams) (D
 const markDeploymentUploading = `-- name: MarkDeploymentUploading :one
 UPDATE deployments SET status = 'uploading', uploading_at = now()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 func (q *Queries) MarkDeploymentUploading(ctx context.Context, id uuid.UUID) (Deployment, error) {
@@ -908,6 +1066,14 @@ func (q *Queries) MarkDeploymentUploading(ctx context.Context, id uuid.UUID) (De
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -924,7 +1090,7 @@ func (q *Queries) MarkEnqueued(ctx context.Context, id uuid.UUID) error {
 const markFailed = `-- name: MarkFailed :one
 UPDATE deployments SET status = 'failed', failed_at = now(), failure_reason = $1
 WHERE id = $2 AND status IN ('pending', 'uploading', 'queued', 'building')
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 type MarkFailedParams struct {
@@ -958,6 +1124,14 @@ func (q *Queries) MarkFailed(ctx context.Context, arg MarkFailedParams) (Deploym
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -1028,7 +1202,7 @@ func (q *Queries) PurgeApp(ctx context.Context, id uuid.UUID) error {
 const queueDeployment = `-- name: QueueDeployment :one
 UPDATE deployments SET status = 'queued', queued_at = now(), enqueued_at = now()
 WHERE id = $1 AND status IN ('pending', 'uploading')
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 // The upload was verified: the deployment enters the build queue.
@@ -1058,6 +1232,14 @@ func (q *Queries) QueueDeployment(ctx context.Context, id uuid.UUID) (Deployment
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -1065,7 +1247,7 @@ func (q *Queries) QueueDeployment(ctx context.Context, id uuid.UUID) (Deployment
 const requestCancel = `-- name: RequestCancel :one
 UPDATE deployments SET cancel_requested_at = coalesce(cancel_requested_at, now())
 WHERE id = $1 AND status = 'building'
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 func (q *Queries) RequestCancel(ctx context.Context, id uuid.UUID) (Deployment, error) {
@@ -1094,6 +1276,14 @@ func (q *Queries) RequestCancel(ctx context.Context, id uuid.UUID) (Deployment, 
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -1101,7 +1291,7 @@ func (q *Queries) RequestCancel(ctx context.Context, id uuid.UUID) (Deployment, 
 const requeueDeployment = `-- name: RequeueDeployment :one
 UPDATE deployments SET status = 'queued'
 WHERE id = $1 AND status = 'building'
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 // An attempt failed for infrastructure reasons; the deployment waits for
@@ -1132,12 +1322,70 @@ func (q *Queries) RequeueDeployment(ctx context.Context, id uuid.UUID) (Deployme
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
+	)
+	return i, err
+}
+
+const setCurrentDeployment = `-- name: SetCurrentDeployment :exec
+UPDATE apps SET current_deployment_id = $1 WHERE id = $2
+`
+
+type SetCurrentDeploymentParams struct {
+	DeploymentID *uuid.UUID
+	ID           uuid.UUID
+}
+
+func (q *Queries) SetCurrentDeployment(ctx context.Context, arg SetCurrentDeploymentParams) error {
+	_, err := q.db.Exec(ctx, setCurrentDeployment, arg.DeploymentID, arg.ID)
+	return err
+}
+
+const setDesiredState = `-- name: SetDesiredState :one
+UPDATE apps SET desired_state = $1, desired_state_at = now()
+WHERE id = $2 AND deleted_at IS NULL
+RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs
+`
+
+type SetDesiredStateParams struct {
+	DesiredState AppDesiredState
+	ID           uuid.UUID
+}
+
+func (q *Queries) SetDesiredState(ctx context.Context, arg SetDesiredStateParams) (App, error) {
+	row := q.db.QueryRow(ctx, setDesiredState, arg.DesiredState, arg.ID)
+	var i App
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Slug,
+		&i.Name,
+		&i.CreatedBy,
+		&i.Port,
+		&i.HealthCheckPath,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.NextDeploymentNumber,
+		&i.CreatedAt,
+		&i.DeletedAt,
+		&i.DesiredState,
+		&i.DesiredStateAt,
+		&i.CurrentDeploymentID,
+		&i.StartupTimeoutSeconds,
+		&i.ReadOnlyRootfs,
 	)
 	return i, err
 }
 
 const softDeleteApp = `-- name: SoftDeleteApp :one
-UPDATE apps SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at
+UPDATE apps SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs
 `
 
 func (q *Queries) SoftDeleteApp(ctx context.Context, id uuid.UUID) (App, error) {
@@ -1156,6 +1404,11 @@ func (q *Queries) SoftDeleteApp(ctx context.Context, id uuid.UUID) (App, error) 
 		&i.NextDeploymentNumber,
 		&i.CreatedAt,
 		&i.DeletedAt,
+		&i.DesiredState,
+		&i.DesiredStateAt,
+		&i.CurrentDeploymentID,
+		&i.StartupTimeoutSeconds,
+		&i.ReadOnlyRootfs,
 	)
 	return i, err
 }
@@ -1163,7 +1416,7 @@ func (q *Queries) SoftDeleteApp(ctx context.Context, id uuid.UUID) (App, error) 
 const startBuilding = `-- name: StartBuilding :one
 UPDATE deployments SET status = 'building', building_at = coalesce(building_at, now())
 WHERE id = $1 AND status = 'queued'
-RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at
+RETURNING id, app_id, number, status, source_key, source_sha256, source_size, upload_expires_at, image_digest, created_by, failure_reason, cancel_requested_at, enqueued_at, created_at, uploading_at, queued_at, building_at, built_at, failed_at, cancelled_at, source_deleted_at, image_deleted_at, kind, image_of_deployment_id, rollback_to, env_snapshot_id, deploying_at, live_at, superseded_at, rolled_back_at
 `
 
 func (q *Queries) StartBuilding(ctx context.Context, id uuid.UUID) (Deployment, error) {
@@ -1192,6 +1445,14 @@ func (q *Queries) StartBuilding(ctx context.Context, id uuid.UUID) (Deployment, 
 		&i.CancelledAt,
 		&i.SourceDeletedAt,
 		&i.ImageDeletedAt,
+		&i.Kind,
+		&i.ImageOfDeploymentID,
+		&i.RollbackTo,
+		&i.EnvSnapshotID,
+		&i.DeployingAt,
+		&i.LiveAt,
+		&i.SupersededAt,
+		&i.RolledBackAt,
 	)
 	return i, err
 }
@@ -1235,19 +1496,72 @@ func (q *Queries) SupersedeQueued(ctx context.Context, arg SupersedeQueuedParams
 	return items, nil
 }
 
+const updateAppSettings = `-- name: UpdateAppSettings :one
+UPDATE apps
+SET port = $1, health_check_path = $2, memory_mb = $3,
+    cpu_millicores = $4, startup_timeout_seconds = $5,
+    read_only_rootfs = $6
+WHERE id = $7 AND deleted_at IS NULL
+RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs
+`
+
+type UpdateAppSettingsParams struct {
+	Port                  int32
+	HealthCheckPath       string
+	MemoryMb              int32
+	CpuMillicores         int32
+	StartupTimeoutSeconds int32
+	ReadOnlyRootfs        bool
+	ID                    uuid.UUID
+}
+
+func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsParams) (App, error) {
+	row := q.db.QueryRow(ctx, updateAppSettings,
+		arg.Port,
+		arg.HealthCheckPath,
+		arg.MemoryMb,
+		arg.CpuMillicores,
+		arg.StartupTimeoutSeconds,
+		arg.ReadOnlyRootfs,
+		arg.ID,
+	)
+	var i App
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Slug,
+		&i.Name,
+		&i.CreatedBy,
+		&i.Port,
+		&i.HealthCheckPath,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.NextDeploymentNumber,
+		&i.CreatedAt,
+		&i.DeletedAt,
+		&i.DesiredState,
+		&i.DesiredStateAt,
+		&i.CurrentDeploymentID,
+		&i.StartupTimeoutSeconds,
+		&i.ReadOnlyRootfs,
+	)
+	return i, err
+}
+
 const upsertWorkspaceQuota = `-- name: UpsertWorkspaceQuota :one
-INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at)
-VALUES ($1, $2, $3, $4, now())
+INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, max_memory_mb, updated_by, updated_at)
+VALUES ($1, $2, $3, $4, $5, now())
 ON CONFLICT (workspace_id) DO UPDATE
 SET max_apps = EXCLUDED.max_apps, max_concurrent_builds = EXCLUDED.max_concurrent_builds,
-    updated_by = EXCLUDED.updated_by, updated_at = now()
-RETURNING workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at
+    max_memory_mb = EXCLUDED.max_memory_mb, updated_by = EXCLUDED.updated_by, updated_at = now()
+RETURNING workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at, max_memory_mb
 `
 
 type UpsertWorkspaceQuotaParams struct {
 	WorkspaceID         uuid.UUID
 	MaxApps             int32
 	MaxConcurrentBuilds int32
+	MaxMemoryMb         int32
 	UpdatedBy           *uuid.UUID
 }
 
@@ -1256,6 +1570,7 @@ func (q *Queries) UpsertWorkspaceQuota(ctx context.Context, arg UpsertWorkspaceQ
 		arg.WorkspaceID,
 		arg.MaxApps,
 		arg.MaxConcurrentBuilds,
+		arg.MaxMemoryMb,
 		arg.UpdatedBy,
 	)
 	var i WorkspaceQuota
@@ -1265,6 +1580,7 @@ func (q *Queries) UpsertWorkspaceQuota(ctx context.Context, arg UpsertWorkspaceQ
 		&i.MaxConcurrentBuilds,
 		&i.UpdatedBy,
 		&i.UpdatedAt,
+		&i.MaxMemoryMb,
 	)
 	return i, err
 }

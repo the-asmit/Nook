@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"runtime"
 	"testing"
 	"time"
 	"uuid"
@@ -185,6 +186,13 @@ func TestStrayImagesAreRemoved(t *testing.T) {
 // pushTestImage pushes a one-layer image to the shared registry.
 func pushTestImage(t *testing.T, repo, tag string, layer []byte) string {
 	t.Helper()
+	return pushImage(t, repo, tag, layer, nil)
+}
+
+// pushImage pushes a one-layer image whose config holds runConfig (the
+// image's Cmd, User, ...) and returns the manifest digest.
+func pushImage(t *testing.T, repo, tag string, layer []byte, runConfig map[string]any) string {
+	t.Helper()
 	ca, _, err := pki.LoadOrCreateCA(shared.caPath)
 	if err != nil {
 		t.Fatal(err)
@@ -205,16 +213,22 @@ func pushTestImage(t *testing.T, repo, tag string, layer []byte) string {
 		if ctype != "" {
 			req.Header.Set("Content-Type", ctype)
 		}
-		resp, err := hc.Do(req)
-		if err != nil {
-			t.Fatal(err)
+		resp, doErr := hc.Do(req)
+		if doErr != nil {
+			t.Fatal(doErr)
 		}
 		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return result{StatusCode: resp.StatusCode, Header: resp.Header}
 	}
 	digest := func(b []byte) string { s := sha256.Sum256(b); return "sha256:" + hex.EncodeToString(s[:]) }
-	cfg := []byte(`{"architecture":"amd64","os":"linux","rootfs":{"type":"layers","diff_ids":["` + digest(layer) + `"]}}`)
+	cfg, err := json.Marshal(map[string]any{
+		"architecture": runtime.GOARCH, "os": "linux", "config": runConfig,
+		"rootfs": map[string]any{"type": "layers", "diff_ids": []string{digest(layer)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, blob := range [][]byte{cfg, layer} {
 		start := call(http.MethodPost, base+"/v2/"+repo+"/blobs/uploads/", "", nil)
 		loc, err := url.Parse(start.Header.Get("Location"))

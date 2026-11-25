@@ -328,6 +328,7 @@ func (q *Queries) ListActiveBuildsOnNode(ctx context.Context, nodeID *uuid.UUID)
 const listBuildNodes = `-- name: ListBuildNodes :many
 SELECT id, name, build_slots, memory_available_bytes FROM nodes
 WHERE status = 'ready' AND NOT draining AND removed_at IS NULL AND build_slots > 0
+  AND builds_unavailable_reason = ''
 `
 
 type ListBuildNodesRow struct {
@@ -337,7 +338,8 @@ type ListBuildNodesRow struct {
 	MemoryAvailableBytes *int64
 }
 
-// Nodes that may receive builds.
+// Nodes that may receive builds: ready, not draining, with build slots
+// and able to run rootless BuildKit.
 func (q *Queries) ListBuildNodes(ctx context.Context) ([]ListBuildNodesRow, error) {
 	rows, err := q.db.Query(ctx, listBuildNodes)
 	if err != nil {

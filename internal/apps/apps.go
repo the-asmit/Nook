@@ -12,6 +12,7 @@ import (
 	"github.com/the-asmit/nook/internal/apperr"
 	"github.com/the-asmit/nook/internal/audit"
 	"github.com/the-asmit/nook/internal/objstore"
+	"github.com/the-asmit/nook/internal/secrets"
 	"github.com/the-asmit/nook/internal/store"
 	"github.com/the-asmit/nook/internal/workspace"
 )
@@ -30,13 +31,14 @@ type Service struct {
 	store   *store.Store
 	objects *objstore.Client
 	queue   Queue
+	keyring *secrets.Keyring
 	cfg     Config
 	now     func() time.Time
 }
 
-// NewService returns the service.
-func NewService(st *store.Store, objects *objstore.Client, queue Queue, cfg Config) *Service {
-	return &Service{store: st, objects: objects, queue: queue, cfg: cfg, now: time.Now}
+// NewService returns the service. The keyring encrypts environment values.
+func NewService(st *store.Store, objects *objstore.Client, queue Queue, keyring *secrets.Keyring, cfg Config) *Service {
+	return &Service{store: st, objects: objects, queue: queue, keyring: keyring, cfg: cfg, now: time.Now}
 }
 
 // RepositoryName is the registry repository of an app's images. IDs, not
@@ -60,6 +62,11 @@ type Spec struct {
 	HealthCheckPath string
 	MemoryMB        int32
 	CPUMillicores   int32
+	// StartupTimeoutSeconds bounds how long a new instance may take to
+	// pass its health check.
+	StartupTimeoutSeconds int32
+	// ReadOnlyRootfs runs the container with a read-only root file system.
+	ReadOnlyRootfs bool
 }
 
 func (s *Service) normalize(spec Spec) (Spec, error) {
@@ -96,6 +103,13 @@ func (s *Service) normalize(spec Spec) (Spec, error) {
 	}
 	if spec.CPUMillicores < minCPUMillicores || spec.CPUMillicores > s.cfg.MaxAppCPUMillicores {
 		return spec, apperr.Invalid("invalid_cpu", "cpu must be between %d and %d millicores", minCPUMillicores, s.cfg.MaxAppCPUMillicores)
+	}
+	if spec.StartupTimeoutSeconds == 0 {
+		spec.StartupTimeoutSeconds = int32(DefaultStartupTimeout / time.Second)
+	}
+	maxStartup := int32(s.cfg.MaxStartupTimeout / time.Second) //nolint:gosec // G115: validated to be at most an hour.
+	if spec.StartupTimeoutSeconds < 1 || spec.StartupTimeoutSeconds > maxStartup {
+		return spec, apperr.Invalid("invalid_startup_timeout", "startup timeout must be between 1 and %d seconds", maxStartup)
 	}
 	return spec, nil
 }
@@ -138,6 +152,8 @@ func resolve(ctx context.Context, q *store.Queries, actor workspace.Actor, wsSlu
 type Quota struct {
 	MaxApps             int32 `json:"max_apps"`
 	MaxConcurrentBuilds int32 `json:"max_concurrent_builds"`
+	// MaxMemoryMB caps the memory the workspace's instances reserve.
+	MaxMemoryMB int32 `json:"max_memory_mb"`
 	// Default is true when no override is set.
 	Default bool `json:"default"`
 }
@@ -146,12 +162,22 @@ type Quota struct {
 func (s *Service) QuotaFor(ctx context.Context, q *store.Queries, workspaceID uuid.UUID) (Quota, error) {
 	row, err := q.GetWorkspaceQuota(ctx, workspaceID)
 	if store.IsNotFound(err) {
-		return Quota{MaxApps: s.cfg.DefaultMaxApps, MaxConcurrentBuilds: s.cfg.DefaultMaxConcurrentBuilds, Default: true}, nil
+		return Quota{
+			MaxApps: s.cfg.DefaultMaxApps, MaxConcurrentBuilds: s.cfg.DefaultMaxConcurrentBuilds,
+			MaxMemoryMB: s.cfg.DefaultMaxMemoryMB, Default: true,
+		}, nil
 	}
 	if err != nil {
 		return Quota{}, fmt.Errorf("read quota: %w", err)
 	}
-	return Quota{MaxApps: row.MaxApps, MaxConcurrentBuilds: row.MaxConcurrentBuilds}, nil
+	return Quota{MaxApps: row.MaxApps, MaxConcurrentBuilds: row.MaxConcurrentBuilds, MaxMemoryMB: row.MaxMemoryMb}, nil
+}
+
+// MemoryQuotaMB returns a workspace's memory quota (for the rollout
+// controller's placement check).
+func (s *Service) MemoryQuotaMB(ctx context.Context, q *store.Queries, workspaceID uuid.UUID) (int64, error) {
+	quota, err := s.QuotaFor(ctx, q, workspaceID)
+	return int64(quota.MaxMemoryMB), err
 }
 
 // Create makes an app in a workspace the actor belongs to.
@@ -183,6 +209,7 @@ func (s *Service) Create(ctx context.Context, actor workspace.Actor, wsSlug stri
 		app, err = q.CreateApp(ctx, store.CreateAppParams{
 			WorkspaceID: v.Workspace.ID, Slug: spec.Slug, Name: spec.Name, CreatedBy: &actor.UserID,
 			Port: spec.Port, HealthCheckPath: spec.HealthCheckPath, MemoryMb: spec.MemoryMB, CpuMillicores: spec.CPUMillicores,
+			StartupTimeoutSeconds: spec.StartupTimeoutSeconds, ReadOnlyRootfs: spec.ReadOnlyRootfs,
 		})
 		if err != nil {
 			return err
@@ -219,10 +246,10 @@ func (s *Service) Get(ctx context.Context, actor workspace.Actor, wsSlug, appSlu
 }
 
 // Delete removes an app (admins and owners only). Its waiting deployments
-// are canceled and running builds stopped; its images, sources and logs
-// are purged in the background.
+// are canceled, running builds and instances stopped; its images, sources
+// and logs are purged in the background.
 func (s *Service) Delete(ctx context.Context, actor workspace.Actor, wsSlug, appSlug string) error {
-	var building []uuid.UUID
+	var building, releasing []uuid.UUID
 	err := s.store.InTx(ctx, func(q *store.Queries) error {
 		v, app, err := resolve(ctx, q, actor, wsSlug, appSlug)
 		if err != nil {
@@ -250,6 +277,9 @@ func (s *Service) Delete(ctx context.Context, actor workspace.Actor, wsSlug, app
 					return fmt.Errorf("cancel build: %w", err)
 				}
 				building = append(building, d.ID)
+			case store.DeploymentStatusBuilt, store.DeploymentStatusDeploying, store.DeploymentStatusLive:
+				// The rollout controller stops the app's instances.
+				releasing = append(releasing, d.ID)
 			default:
 				// Finished deployments need nothing.
 			}
@@ -266,6 +296,9 @@ func (s *Service) Delete(ctx context.Context, actor workspace.Actor, wsSlug, app
 	for _, id := range building {
 		s.queue.Wake(ctx, id)
 	}
+	for _, id := range releasing {
+		s.release(ctx, id)
+	}
 	return nil
 }
 
@@ -278,31 +311,45 @@ func (s *Service) GetQuota(ctx context.Context, wsSlug string) (Quota, error) {
 	return s.QuotaFor(ctx, s.store.Queries, ws.ID)
 }
 
-// SetQuota overrides a workspace's quota (instance admins).
-func (s *Service) SetQuota(ctx context.Context, actor workspace.Actor, wsSlug string, maxApps, maxBuilds int32) (Quota, error) {
+// SetQuota overrides a workspace's quota (instance admins). A nil
+// maxMemory keeps the workspace's current memory quota.
+func (s *Service) SetQuota(ctx context.Context, actor workspace.Actor, wsSlug string, maxApps, maxBuilds int32, maxMemory *int32) (Quota, error) {
 	if maxApps < 0 || maxApps > 10000 || maxBuilds < 0 || maxBuilds > 100 {
 		return Quota{}, apperr.Invalid("invalid_quota", "max_apps must be 0..10000 and max_concurrent_builds 0..100")
+	}
+	if maxMemory != nil && (*maxMemory < 0 || *maxMemory > maxQuotaMemoryMB) {
+		return Quota{}, apperr.Invalid("invalid_quota", "max_memory_mb must be 0..%d", maxQuotaMemoryMB)
 	}
 	ws, err := s.workspaceBySlug(ctx, wsSlug)
 	if err != nil {
 		return Quota{}, err
 	}
+	var out Quota
 	err = s.store.InTx(ctx, func(q *store.Queries) error {
+		current, quotaErr := s.QuotaFor(ctx, q, ws.ID)
+		if quotaErr != nil {
+			return quotaErr
+		}
+		memory := current.MaxMemoryMB
+		if maxMemory != nil {
+			memory = *maxMemory
+		}
 		if _, upErr := q.UpsertWorkspaceQuota(ctx, store.UpsertWorkspaceQuotaParams{
-			WorkspaceID: ws.ID, MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds, UpdatedBy: &actor.UserID,
+			WorkspaceID: ws.ID, MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds, MaxMemoryMb: memory, UpdatedBy: &actor.UserID,
 		}); upErr != nil {
 			return fmt.Errorf("set quota: %w", upErr)
 		}
+		out = Quota{MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds, MaxMemoryMB: memory}
 		return audit.Record(ctx, q, &audit.Entry{
 			WorkspaceID: &ws.ID, ActorID: &actor.UserID, IP: actor.IP,
 			Action: audit.ActionQuotaUpdate, TargetType: audit.TargetWorkspace, TargetID: ws.ID.String(),
-			Metadata: map[string]any{"max_apps": maxApps, "max_concurrent_builds": maxBuilds},
+			Metadata: map[string]any{"max_apps": maxApps, "max_concurrent_builds": maxBuilds, "max_memory_mb": memory},
 		})
 	})
 	if err != nil {
 		return Quota{}, err
 	}
-	return Quota{MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds}, nil
+	return out, nil
 }
 
 func (s *Service) workspaceBySlug(ctx context.Context, slug string) (store.Workspace, error) {

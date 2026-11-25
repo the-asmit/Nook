@@ -46,6 +46,13 @@ const (
 	ActionDeploymentCreate   = "deployment.create"
 	ActionDeploymentCancel   = "deployment.cancel"
 	ActionQuotaUpdate        = "quota.update"
+	ActionAppUpdate          = "app.update"
+	ActionAppStop            = "app.stop"
+	ActionAppStart           = "app.start"
+	ActionEnvSet             = "env.set"
+	ActionEnvUnset           = "env.unset"
+	ActionDeploymentRollback = "deployment.rollback"
+	ActionSecretsRotate      = "secrets.rotate_key"
 )
 
 // Target types.

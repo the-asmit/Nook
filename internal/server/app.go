@@ -46,7 +46,7 @@ func (s *Server) mountApplication(ctx context.Context, router gin.IRouter, cfg *
 		VerificationURL: site.Origin + "/device",
 		Admin:           identity.NewAdmin(st), Nodes: registry, Hub: s.hub,
 		AgentServer: cfg.GRPC.ResolvePublicAddr(publicHost), CAHash: s.ca.Fingerprint(),
-		Apps: s.apps, Logs: s.logs, GCWindow: s.gcWindow, RegistryGCSecret: cfg.Registry.GCSecret,
+		Apps: s.apps, Logs: s.logs, AppLogs: s.appLogs, GCWindow: s.gcWindow, RegistryGCSecret: cfg.Registry.GCSecret,
 		RegistryAddr: cfg.Registry.Addr, MaxSourceBytes: cfg.Apps.MaxSourceBytes,
 	})
 	pages, err := web.New(&web.Deps{
@@ -98,7 +98,7 @@ func (s *Server) startNodes(ctx context.Context, st *store.Store, cfg *Config, l
 
 	publicHost := cfg.PublicURLParsed().Hostname()
 	s.grpc, err = agentlink.Listen(ctx, cfg.GRPC.Addr, cfg.GRPC.CertificateNames(publicHost), &agentlink.Deps{
-		Registry: registry, Builds: s.dispatcher, Hub: s.hub, CA: ca, Limiter: limiter, Metrics: reg, Logger: s.logger,
+		Registry: registry, Builds: s.dispatcher, Runtime: runtimeEvents{s.rollout, s.appLogs}, Hub: s.hub, CA: ca, Limiter: limiter, Metrics: reg, Logger: s.logger,
 	})
 	if err != nil {
 		return nil, err

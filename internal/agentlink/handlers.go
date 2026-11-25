@@ -154,7 +154,7 @@ func infoFromProto(i *agentv1.NodeInfo) nodes.Info {
 		Hostname: i.GetHostname(), Addresses: i.GetAddresses(), CPUCount: i.GetCpuCount(),
 		MemoryTotalBytes: i.GetMemoryTotalBytes(), DiskTotalBytes: i.GetDiskTotalBytes(),
 		DockerVersion: i.GetDockerVersion(), AgentVersion: i.GetAgentVersion(), OS: i.GetOs(), Arch: i.GetArch(),
-		BuildSlots: i.GetBuildSlots(),
+		BuildSlots: i.GetBuildSlots(), AdvertiseAddress: i.GetAdvertiseAddress(), BuildsUnavailableReason: i.GetBuildsUnavailableReason(),
 	}
 }
 
@@ -228,6 +228,9 @@ func (s *Server) Connect(stream agentv1.NodeService_ConnectServer) error {
 			}
 		}
 	}()
+	// Reconciliation sends commands and waits for their results, which
+	// arrive through this handler's loop: it must not block it.
+	go s.runtime.AgentConnected(sess.ctx, id.NodeID, hello.GetInstances())
 
 	for {
 		select {
@@ -271,7 +274,7 @@ func (s *Server) handleMessage(ctx context.Context, id nodes.Identity, sess *ses
 			MemoryAvailableBytes: max(hb.GetMemoryAvailableBytes(), 0), CPULoad1m: max(hb.GetCpuLoad_1M(), 0),
 			DiskFreeBytes: max(hb.GetDiskFreeBytes(), 0), RunningContainers: max(hb.GetRunningContainers(), 0),
 			AgentVersion: truncate(hb.GetAgentVersion(), 64), Uptime: hb.GetUptime().AsDuration(),
-			DockerReachable: hb.GetDockerReachable(),
+			DockerReachable: hb.GetDockerReachable(), BuildsUnavailableReason: truncate(hb.GetBuildsUnavailableReason(), 500),
 		}
 		if err := s.registry.RecordHeartbeat(ctx, id.NodeID, sample); err != nil {
 			return s.toStatus(ctx, err)
@@ -289,6 +292,14 @@ func (s *Server) handleMessage(ctx context.Context, id nodes.Identity, sess *ses
 		}
 	case *agentv1.ConnectRequest_BuildFinished:
 		if err := s.builds.BuildFinished(ctx, id.NodeID, msg.BuildFinished); err != nil {
+			return s.toStatus(ctx, err)
+		}
+	case *agentv1.ConnectRequest_InstanceStatus:
+		if err := s.runtime.InstanceStatus(ctx, id.NodeID, msg.InstanceStatus); err != nil {
+			return s.toStatus(ctx, err)
+		}
+	case *agentv1.ConnectRequest_AppLog:
+		if err := s.runtime.AppLog(ctx, id.NodeID, msg.AppLog); err != nil {
 			return s.toStatus(ctx, err)
 		}
 	default:

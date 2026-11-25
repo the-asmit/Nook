@@ -59,10 +59,21 @@ type BuildEvents interface {
 	AgentConnected(ctx context.Context, nodeID uuid.UUID, activeIDs []string) error
 }
 
+// RuntimeEvents receives what agents report about app instances and logs
+// (rollout.Controller and rollout.LogStreams).
+type RuntimeEvents interface {
+	InstanceStatus(ctx context.Context, nodeID uuid.UUID, m *agentv1.InstanceStatus) error
+	AppLog(ctx context.Context, nodeID uuid.UUID, m *agentv1.AppLog) error
+	// AgentConnected reconciles the node's app containers with the
+	// instances the control plane wants on it.
+	AgentConnected(ctx context.Context, nodeID uuid.UUID, reports []*agentv1.InstanceReport)
+}
+
 // Deps are the collaborators of the gRPC server.
 type Deps struct {
 	Registry *nodes.Registry
 	Builds   BuildEvents
+	Runtime  RuntimeEvents
 	Hub      *Hub
 	CA       *pki.CA
 	Limiter  *ratelimit.Limiter
@@ -75,6 +86,7 @@ type Server struct {
 	agentv1.UnimplementedNodeServiceServer
 	registry *nodes.Registry
 	builds   BuildEvents
+	runtime  RuntimeEvents
 	hub      *Hub
 	ca       *pki.CA
 	limiter  *ratelimit.Limiter
@@ -104,7 +116,7 @@ func Listen(ctx context.Context, addr string, names []string, d *Deps) (*Server,
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{registry: d.Registry, builds: d.Builds, hub: d.Hub, ca: d.CA, limiter: d.Limiter, logger: d.Logger, health: health.NewServer()}
+	s := &Server{registry: d.Registry, builds: d.Builds, runtime: d.Runtime, hub: d.Hub, ca: d.CA, limiter: d.Limiter, logger: d.Logger, health: health.NewServer()}
 	s.grpc = grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
 		grpc.ConnectionTimeout(handshakeTimeout),

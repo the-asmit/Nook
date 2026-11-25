@@ -195,6 +195,10 @@ func baseEnviron(pgURL string) map[string]string {
 		"NOOK_BUILD_TIMEOUT":          "5m",
 		"NOOK_BUILD_JANITOR_INTERVAL": "24h",
 		"NOOK_BUILD_QUEUE_TIMEOUT":    "10m",
+		// Running apps, with short timings.
+		"NOOK_SECRETS_KEY":          testSecretsKey,
+		"NOOK_ROLLOUT_DRAIN":        "1s",
+		"NOOK_ROLLOUT_PULL_TIMEOUT": "2m",
 	}
 }
 

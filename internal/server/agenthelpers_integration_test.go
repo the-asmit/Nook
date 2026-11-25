@@ -4,16 +4,21 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	dockerclient "github.com/moby/moby/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -89,15 +94,35 @@ func (ra *runningAgent) exited(within time.Duration) (bool, error) {
 // build containers on the test network, where the registry is.
 func agentConfig(t *testing.T, stateDir string) agent.Config {
 	t.Helper()
-	cfg, err := config.Load[agent.Config](map[string]string{
+	return agentConfigWith(t, stateDir, nil)
+}
+
+// agentConfigWith is agentConfig with overrides. Every test agent installs
+// the egress firewall under chains of its own, removed when the test ends.
+// Builds use the shared network (where the registry is), which the agent
+// does not filter.
+func agentConfigWith(t *testing.T, stateDir string, overrides map[string]string) agent.Config {
+	t.Helper()
+	environ := map[string]string{
 		"NOOK_AGENT_STATE_DIR": stateDir, "NOOK_AGENT_HEALTH_ADDR": "127.0.0.1:0",
 		"NOOK_AGENT_RECONNECT_MIN": "50ms", "NOOK_AGENT_RECONNECT_MAX": "500ms",
 		"NOOK_AGENT_RENEW_CHECK_INTERVAL": "1h", "NOOK_AGENT_BUILD_NETWORK": shared.storage.Network.Name,
-	})
+		"NOOK_AGENT_ADVERTISE_ADDR": "127.0.0.1", "NOOK_AGENT_REGISTRY_PULL_ADDR": shared.storage.Registry.Addr,
+		"NOOK_AGENT_FIREWALL_CHAIN": testChain(),
+	}
+	maps.Copy(environ, overrides)
+	cfg, err := config.Load[agent.Config](environ)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return cfg
+}
+
+// testChain is a unique iptables chain prefix for one test agent.
+func testChain() string {
+	b := make([]byte, 5)
+	_, _ = rand.Read(b)
+	return "NT" + strings.ToUpper(hex.EncodeToString(b))
 }
 
 func runAgent(t *testing.T, stateDir string) *runningAgent {
@@ -108,7 +133,14 @@ func runAgent(t *testing.T, stateDir string) *runningAgent {
 func runAgentWith(t *testing.T, stateDir string, logger *slog.Logger) *runningAgent {
 	t.Helper()
 	cfg := agentConfig(t, stateDir)
-	a, err := agent.New(&cfg, logger)
+	return runConfiguredAgent(t, &cfg, logger)
+}
+
+// runConfiguredAgent runs an agent with cfg until the test ends, then
+// removes its firewall chains.
+func runConfiguredAgent(t *testing.T, cfg *agent.Config, logger *slog.Logger) *runningAgent {
+	t.Helper()
+	a, err := agent.New(cfg, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +156,12 @@ func runAgentWith(t *testing.T, stateDir string, logger *slog.Logger) *runningAg
 			t.Error("agent did not stop")
 		}
 		_ = a.Close()
+		ctx, cancelRemove := context.WithTimeout(context.Background(), time.Minute)
+		defer cancelRemove()
+		removeNodeContainers(t, ctx, a.NodeID())
+		if err := agent.RemoveFirewall(ctx, cfg, quietLogger); err != nil {
+			t.Errorf("remove the test agent's firewall: %v", err)
+		}
 	})
 	return ra
 }
@@ -226,4 +264,33 @@ func openSessionCtx(ctx context.Context, t *testing.T, c agentv1.NodeServiceClie
 		t.Fatalf("first message %v", first)
 	}
 	return stream, nil
+}
+
+// removeNodeContainers removes the app containers a test agent left
+// running (apps outlive their agent by design) and their networks.
+func removeNodeContainers(t *testing.T, ctx context.Context, nodeID string) {
+	t.Helper()
+	d, err := dockerclient.New(dockerclient.FromEnv)
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	defer func() { _ = d.Close() }()
+	list, err := d.ContainerList(ctx, dockerclient.ContainerListOptions{All: true, Filters: dockerclient.Filters{}.Add("label", "nook.node="+nodeID)})
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	apps := map[string]bool{}
+	for i := range list.Items {
+		apps[list.Items[i].Labels["nook.app"]] = true
+		if _, err := d.ContainerRemove(ctx, list.Items[i].ID, dockerclient.ContainerRemoveOptions{Force: true}); err != nil {
+			t.Errorf("remove container: %v", err)
+		}
+	}
+	for app := range apps {
+		if app != "" {
+			_, _ = d.NetworkRemove(ctx, "nook-app-"+app, dockerclient.NetworkRemoveOptions{})
+		}
+	}
 }

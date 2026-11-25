@@ -26,6 +26,7 @@ import (
 	"github.com/the-asmit/nook/internal/platform/metrics"
 	"github.com/the-asmit/nook/internal/platform/postgres"
 	"github.com/the-asmit/nook/internal/platform/redis"
+	"github.com/the-asmit/nook/internal/rollout"
 	"github.com/the-asmit/nook/internal/server/api"
 	"github.com/the-asmit/nook/internal/version"
 	"github.com/the-asmit/nook/migrations"
@@ -59,6 +60,8 @@ type Server struct {
 	dispatcher *builds.Dispatcher
 	janitor    *builds.Janitor
 	gcWindow   *builds.GCWindow
+	rollout    *rollout.Controller
+	appLogs    *rollout.LogStreams
 }
 
 // New connects to every dependency, applies migrations and binds the HTTP
@@ -142,7 +145,7 @@ func (s *Server) listen(ctx context.Context, cfg *Config) error {
 		HTTP:             cfg.HTTP,
 		ReadinessChecks:  s.dependencyChecks(),
 		ReadinessTimeout: cfg.ReadinessTimeout,
-		StreamingRoutes:  []string{api.RouteBuildLog},
+		StreamingRoutes:  []string{api.RouteBuildLog, api.RouteAppLogs},
 	})
 	if err != nil {
 		return err

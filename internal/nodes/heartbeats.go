@@ -56,6 +56,8 @@ type Sample struct {
 	AgentVersion         string        `json:"agent_version"`
 	Uptime               time.Duration `json:"uptime"`
 	DockerReachable      bool          `json:"docker_reachable"`
+	// BuildsUnavailableReason says why the node cannot build, or is empty.
+	BuildsUnavailableReason string `json:"builds_unavailable_reason,omitempty"`
 }
 
 // Heartbeats stores the latest heartbeat of every node in Redis, where

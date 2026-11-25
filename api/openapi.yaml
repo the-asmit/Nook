@@ -804,6 +804,8 @@ paths:
                 health_check_path: { type: string, pattern: "^/", maxLength: 200 }
                 memory_mb: { type: integer, minimum: 16 }
                 cpu_millicores: { type: integer, minimum: 10 }
+                startup_timeout_seconds: { type: integer, minimum: 1, description: "Default 60; at most the installation's maximum." }
+                read_only_rootfs: { type: boolean }
       responses:
         "201":
           description: Created.
@@ -824,15 +826,46 @@ paths:
     get:
       tags: [apps]
       operationId: getApp
-      summary: An app
+      summary: An app with what runs it
       responses:
         "200":
-          description: The app.
+          description: The app, its live deployment and instance.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/App" }
+              schema: { $ref: "#/components/schemas/AppDetail" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [apps]
+      operationId: updateApp
+      summary: Change an app's settings (any member)
+      description: |
+        Omitted fields stay as they are. The settings apply to the next
+        instance started (the next deployment, a rollback or a restart).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                port: { type: integer, minimum: 1, maximum: 65535 }
+                health_check_path: { type: string, pattern: "^/", maxLength: 200 }
+                memory_mb: { type: integer, minimum: 16 }
+                cpu_millicores: { type: integer, minimum: 10 }
+                startup_timeout_seconds: { type: integer, minimum: 1 }
+                read_only_rootfs: { type: boolean }
+      responses:
+        "200":
+          description: The app after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppDetail" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
     delete:
       tags: [apps]
       operationId: deleteApp
@@ -843,6 +876,199 @@ paths:
         background; its slug is free at once.
       responses:
         "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/stop:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    post:
+      tags: [apps]
+      operationId: stopApp
+      summary: Stop the app (any member)
+      description: |
+        Sets the desired state to stopped: the instance is stopped and new
+        deployments wait (status `built`) until the app is started again.
+      responses:
+        "200":
+          description: The app after the request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/start:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    post:
+      tags: [apps]
+      operationId: startApp
+      summary: Start the app (any member)
+      description: |
+        Sets the desired state to running: the newest deployment waiting to
+        be released is rolled out, otherwise the live deployment gets a new
+        instance (also after a crash loop).
+      responses:
+        "200":
+          description: The app after the request.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/rollback:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    post:
+      tags: [deployments]
+      operationId: rollback
+      summary: Release an earlier deployment again (any member)
+      description: |
+        Creates a deployment of kind `rollback` with the image and the
+        environment snapshot of deployment `to` (default: the newest earlier
+        deployment that was live) and rolls it out like any release. The
+        replaced deployment ends as `rolled_back`. Conflicts:
+        `no_rollback_target`, `not_built`, `image_deleted`, `already_live`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                to: { type: integer, minimum: 0, description: "Deployment number; 0 or omitted picks the previous live one." }
+      responses:
+        "201":
+          description: The rollback deployment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Deployment" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/logs:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    get:
+      tags: [apps]
+      operationId: getAppLogs
+      summary: The app's runtime output (Server-Sent Events)
+      description: |
+        Streams the output of the app's newest instance from the node that
+        runs it, wherever the node's agent is connected: `line` events
+        (`{"time", "stream", "text"}`, stream `stdout` or `stderr`) and a
+        final `end` (`{"reason"}`). Without `follow` the stream ends with
+        the retained output. Requests are rate-limited per user, and each is
+        limited in size and duration by the installation.
+      parameters:
+        - name: follow
+          in: query
+          schema: { type: string, enum: ["1", "true"] }
+        - name: tail
+          in: query
+          description: Lines from the end to start with (0 = everything retained).
+          schema: { type: integer, minimum: 0, maximum: 10000 }
+        - name: since
+          in: query
+          description: A duration such as `10m`, or an RFC 3339 time.
+          schema: { type: string }
+      responses:
+        "200":
+          description: The output.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/env:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    get:
+      tags: [apps]
+      operationId: listEnv
+      summary: The app's environment variables (secret values are never returned)
+      responses:
+        "200":
+          description: The variables, ordered by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/EnvVar" } }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [apps]
+      operationId: setEnv
+      summary: Set environment variables
+      description: |
+        Members may set plain variables; setting a secret (`secret: true`) or
+        overwriting one needs a workspace admin or owner. Names follow POSIX
+        (`[A-Za-z_][A-Za-z0-9_]*`, at most 128 characters); `PORT`,
+        `NOOK_APP`, `NOOK_DEPLOYMENT` and every `NOOK_` name are reserved.
+        Values are at most 32 KiB; an app has at most 200 variables of
+        256 KiB in total. Values are encrypted at rest. If the app is live,
+        a deployment of kind `config` (same image, new environment, no
+        rebuild) is created and rolled out.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [vars]
+              properties:
+                vars: { type: object, additionalProperties: { type: string }, minProperties: 1, maxProperties: 50 }
+                secret: { type: boolean }
+      responses:
+        "200":
+          description: The variables after the change and the deployment releasing them.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvChange" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/env/{key}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+      - name: key
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z_][A-Za-z0-9_]{0,127}$" }
+    delete:
+      tags: [apps]
+      operationId: unsetEnv
+      summary: Remove an environment variable (secrets need an admin or owner)
+      responses:
+        "200":
+          description: The variables after the change and the deployment releasing them.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EnvChange" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -1046,6 +1272,7 @@ paths:
               properties:
                 max_apps: { type: integer, minimum: 0, maximum: 10000 }
                 max_concurrent_builds: { type: integer, minimum: 0, maximum: 100 }
+                max_memory_mb: { type: integer, minimum: 0, maximum: 10485760, description: Omitted keeps the current memory quota. }
       responses:
         "200":
           description: The new quota.
@@ -1333,6 +1560,7 @@ components:
         docker_reachable: { type: boolean }
         agent_version: { type: string }
         uptime_seconds: { type: integer, format: int64 }
+        builds_unavailable_reason: { type: string }
     Node:
       type: object
       required: [id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_at, last_heartbeat_at, heartbeat]
@@ -1351,6 +1579,9 @@ components:
         agent_version: { type: string }
         os: { type: string }
         arch: { type: string }
+        advertise_address: { type: string, description: Private address apps are published on. }
+        build_slots: { type: integer }
+        builds_unavailable_reason: { type: string, description: "Why the node cannot build, with the fix; empty when it can." }
         joined_at: { type: string, format: date-time }
         last_heartbeat_at: { type: [string, "null"], format: date-time }
         heartbeat:
@@ -1438,11 +1669,57 @@ components:
         health_check_path: { type: string }
         memory_mb: { type: integer }
         cpu_millicores: { type: integer }
+        startup_timeout_seconds: { type: integer }
+        read_only_rootfs: { type: boolean }
+        desired_state: { type: string, enum: [running, stopped] }
         deployments: { type: integer, description: Number of deployments so far. }
         created_at: { type: string, format: date-time }
+    AppDetail:
+      allOf:
+        - $ref: "#/components/schemas/App"
+        - type: object
+          required: [live_deployment, health, instance]
+          properties:
+            live_deployment: { type: [integer, "null"] }
+            health: { type: string, enum: [running, starting, unhealthy, crashed, stopped, not_deployed] }
+            instance:
+              oneOf:
+                - $ref: "#/components/schemas/Instance"
+                - type: "null"
+    Instance:
+      type: object
+      required: [node, state, address, host_port, restart_count, last_error, started_at, last_healthy_at, created_at]
+      properties:
+        node: { type: string }
+        state: { type: string, enum: [starting, healthy, unhealthy, stopping, stopped, crashed, failed] }
+        address: { type: string, description: The node's advertise address. }
+        host_port: { type: [integer, "null"] }
+        restart_count: { type: integer }
+        last_error: { type: string }
+        started_at: { type: [string, "null"], format: date-time }
+        last_healthy_at: { type: [string, "null"], format: date-time }
+        startup_log: { type: string, description: Output of an instance that failed to start. }
+        created_at: { type: string, format: date-time }
+    EnvVar:
+      type: object
+      required: [key, value, secret, updated_at]
+      properties:
+        key: { type: string }
+        value: { type: [string, "null"], description: Null for secrets. }
+        secret: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    EnvChange:
+      type: object
+      required: [items, deployment]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/EnvVar" } }
+        deployment:
+          oneOf:
+            - $ref: "#/components/schemas/Deployment"
+            - type: "null"
     DeploymentStatus:
       type: string
-      enum: [pending, uploading, queued, building, built, failed, cancelled]
+      enum: [pending, uploading, queued, building, built, deploying, live, failed, superseded, rolled_back, cancelled]
     Build:
       type: object
       required: [attempt, node, dispatched_at, started_at, finished_at, result, message]
@@ -1479,10 +1756,18 @@ components:
         canceled_at: { type: [string, "null"], format: date-time }
         image_deleted: { type: boolean, description: The image was removed by retention. }
         builds: { type: array, items: { $ref: "#/components/schemas/Build" } }
+        kind: { type: string, enum: [build, config, rollback] }
+        rollback_to: { type: [integer, "null"] }
+        deploying_at: { type: [string, "null"], format: date-time }
+        live_at: { type: [string, "null"], format: date-time }
+        superseded_at: { type: [string, "null"], format: date-time }
+        rolled_back_at: { type: [string, "null"], format: date-time }
+        instance: { $ref: "#/components/schemas/Instance" }
     Quota:
       type: object
-      required: [max_apps, max_concurrent_builds, default]
+      required: [max_apps, max_concurrent_builds, max_memory_mb, default]
       properties:
         max_apps: { type: integer }
         max_concurrent_builds: { type: integer }
+        max_memory_mb: { type: integer, description: Memory the workspace's running instances may reserve. }
         default: { type: boolean, description: True when the instance defaults apply. }

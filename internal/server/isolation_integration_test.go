@@ -1,0 +1,352 @@
+//go:build integration
+
+package server
+
+import (
+	"context"
+	"net/http"
+	"net/netip"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
+)
+
+// TestCrashesAreRestartedAndCrashLoopsDetected: a killed app process is
+// restarted after a backoff; crashing more often than the limit within
+// the window makes the instance crashed (no more restarts), which the app
+// shows until it is started again.
+func TestCrashesAreRestartedAndCrashLoopsDetected(t *testing.T) {
+	r := startRuntimeEnvWith(t, nil, map[string]string{
+		"NOOK_AGENT_CRASH_LIMIT": "2", "NOOK_AGENT_CRASH_WINDOW": "1m",
+		"NOOK_AGENT_RESTART_BACKOFF_MIN": "200ms", "NOOK_AGENT_RESTART_BACKOFF_MAX": "1s",
+	})
+	r.newRuntimeApp(r.alice, r.ws, "web", nil)
+	n := r.release(r.ws, "web")
+	r.waitLive(r.alice, r.ws, "web", n)
+
+	crash := func(wantRestarts int32) {
+		t.Helper()
+		_, _ = get(r.appBase(r.alice, r.ws, "web") + "/crash")
+		eventually(t, time.Minute, "the instance to come back", func() bool {
+			a := r.app(r.alice, r.ws, "web")
+			return a.Instance != nil && a.Instance.State == "healthy" && a.Instance.RestartCount == wantRestarts
+		})
+		if code, _ := get(r.appBase(r.alice, r.ws, "web") + "/healthz"); code != http.StatusOK {
+			t.Fatalf("the restarted app does not answer: %d", code)
+		}
+	}
+	crash(1)
+	crash(2)
+	_, _ = get(r.appBase(r.alice, r.ws, "web") + "/crash")
+	var a appState
+	eventually(t, time.Minute, "the crash loop to be detected", func() bool {
+		a = r.app(r.alice, r.ws, "web")
+		return a.Health == "crashed"
+	})
+	if a.Instance.State != "crashed" || a.Instance.RestartCount != 3 ||
+		!strings.Contains(a.Instance.LastError, "exited with code 3") || !strings.Contains(a.Instance.LastError, "crashed 3 times within 1m0s") {
+		t.Fatalf("crashed instance %+v", a.Instance)
+	}
+	// No restart happens any more.
+	eventuallyStays(t, 3*time.Second, "the crashed instance to stay down", func() bool {
+		return r.app(r.alice, r.ws, "web").Instance.State == "crashed"
+	})
+
+	expectStatus(t, r.as(r.alice, http.MethodPost, appURL(r.ws, "web")+"/start", nil), http.StatusOK, "start")
+	eventually(t, time.Minute, "a fresh instance", func() bool {
+		a = r.app(r.alice, r.ws, "web")
+		return a.Health == "running" && a.Instance.RestartCount == 0
+	})
+	if code, _ := get(r.appBase(r.alice, r.ws, "web") + "/healthz"); code != http.StatusOK {
+		t.Fatalf("the restarted app does not answer: %d", code)
+	}
+}
+
+// eventuallyStays checks that cond holds at every poll until the period
+// passes.
+func eventuallyStays(t *testing.T, period time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(period)
+	for time.Now().Before(deadline) {
+		if !cond() {
+			t.Fatalf("%s: the condition stopped holding", what)
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		<-timer.C
+	}
+}
+
+// TestAppContainersAreLockedDown inspects a running app container: every
+// capability dropped, no privilege escalation, limits, no host mounts or
+// Docker socket, its own network, the port published on the advertise
+// address only, rotated logs and no Docker restart policy.
+func TestAppContainersAreLockedDown(t *testing.T) {
+	r := startRuntimeEnv(t, nil)
+	r.newRuntimeApp(r.alice, r.ws, "web", map[string]any{"memory_mb": 96, "cpu_millicores": 250, "read_only_rootfs": true})
+	n := r.release(r.ws, "web")
+	r.waitLive(r.alice, r.ws, "web", n)
+	_, appID := r.appIDs(r.ws, "web")
+	d := dockerClient(t)
+	list, err := d.ContainerList(context.Background(), client.ContainerListOptions{Filters: client.Filters{}.Add("label", "nook.app="+appID.String())})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("app containers: %v %d", err, len(list.Items))
+	}
+	res, err := d.ContainerInspect(context.Background(), list.Items[0].ID, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, hc := res.Container, res.Container.HostConfig
+	checks := map[string]bool{
+		"cap drop ALL":         len(hc.CapDrop) == 1 && hc.CapDrop[0] == "ALL" && len(hc.CapAdd) == 0,
+		"no new privileges":    len(hc.SecurityOpt) == 1 && hc.SecurityOpt[0] == "no-new-privileges:true",
+		"not privileged":       !hc.Privileged,
+		"memory limit":         hc.Memory == 96<<20 && hc.MemorySwap == 96<<20,
+		"cpu limit":            hc.NanoCPUs == 250_000_000,
+		"pids limit":           hc.PidsLimit != nil && *hc.PidsLimit == 1024,
+		"read-only rootfs":     hc.ReadonlyRootfs,
+		"tmpfs /tmp only":      len(hc.Tmpfs) == 1 && strings.Contains(hc.Tmpfs["/tmp"], "noexec"),
+		"no binds":             len(hc.Binds) == 0 && len(hc.Mounts) == 0,
+		"no host namespaces":   hc.PidMode == "" && hc.IpcMode != "host" && hc.UsernsMode == "",
+		"own network":          string(hc.NetworkMode) == "nook-app-"+appID.String(),
+		"no restart policy":    hc.RestartPolicy.Name == container.RestartPolicyDisabled,
+		"rotated logs":         hc.LogConfig.Type == "json-file" && hc.LogConfig.Config["max-size"] == "10m" && hc.LogConfig.Config["max-file"] == "3",
+		"default seccomp":      !strings.Contains(strings.Join(hc.SecurityOpt, ","), "seccomp"),
+		"labels":               c.Config.Labels["nook.workspace"] != "" && c.Config.Labels["nook.deployment"] != "",
+		"image's own user":     c.Config.User == "65532:65532",
+		"no docker socket env": !strings.Contains(strings.Join(c.Config.Env, ","), "DOCKER_HOST"),
+	}
+	for _, m := range c.Mounts {
+		if m.Type != "tmpfs" || strings.Contains(m.Source, "docker.sock") {
+			checks["only the tmpfs mount"] = false
+		}
+	}
+	port, _ := network.ParsePort("8080/tcp")
+	bindings := hc.PortBindings[port]
+	checks["port on the advertise address only"] = len(bindings) == 1 && bindings[0].HostIP == netip.MustParseAddr("127.0.0.1")
+	for name, ok := range checks {
+		if !ok {
+			t.Errorf("%s: not as required (%+v)", name, hc)
+		}
+	}
+	base := r.appBase(r.alice, r.ws, "web")
+	if _, body := get(base + "/write?path=/data.txt"); body != "false" {
+		t.Errorf("the read-only root file system is writable: %q", body)
+	}
+	if _, body := get(base + "/write?path=/tmp/data.txt"); body != "true" {
+		t.Errorf("/tmp is not writable: %q", body)
+	}
+	// The network keeps containers apart.
+	nw, err := d.NetworkInspect(context.Background(), "nook-app-"+appID.String(), client.NetworkInspectOptions{})
+	if err != nil || nw.Network.Options["com.docker.network.bridge.enable_icc"] != "false" ||
+		!strings.HasPrefix(nw.Network.Options["com.docker.network.bridge.name"], "nka") {
+		t.Errorf("app network %+v: %v", nw.Network.Options, err)
+	}
+}
+
+// Stand-ins for the egress tests. Real cloud metadata and the internet are
+// not available (or not wanted) in tests, so local servers take their
+// place in networks whose containers Docker lets other networks reach
+// (gateway mode nat-unprotected): without Nook's firewall, an app could
+// reach both.
+const (
+	metadataStandIn = "169.254.169.254"
+	publicStandIn   = "198.51.100.10" // TEST-NET-2: not a private range
+	standInImage    = "busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
+)
+
+// startStandIn runs an HTTP server at ip in a reachable network.
+func startStandIn(t *testing.T, name, subnet, ip string) {
+	t.Helper()
+	ctx := context.Background()
+	d := dockerClient(t)
+	prefix := netip.MustParsePrefix(subnet)
+	_, _ = d.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true})
+	_, _ = d.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
+	if _, err := d.NetworkCreate(ctx, name, client.NetworkCreateOptions{
+		Driver:  "bridge",
+		IPAM:    &network.IPAM{Config: []network.IPAMConfig{{Subnet: prefix}}},
+		Options: map[string]string{"com.docker.network.bridge.gateway_mode_ipv4": "nat-unprotected"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pull, err := d.ImagePull(ctx, standInImage, client.ImagePullOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = pull.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Name:       name,
+		Config:     &container.Config{Image: standInImage, Cmd: []string{"sh", "-c", "mkdir /w && echo " + name + " > /w/index.html && httpd -f -p 80 -h /w"}},
+		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(name)},
+		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
+			name: {IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: netip.MustParseAddr(ip)}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		_, _ = d.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true})
+		_, _ = d.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
+	})
+}
+
+// fetchFrom runs wget in a throwaway container on network nw.
+func fetchFrom(t *testing.T, nw, url string) bool {
+	t.Helper()
+	ctx := context.Background()
+	d := dockerClient(t)
+	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:     &container.Config{Image: standInImage, Cmd: []string{"wget", "-q", "-T", "3", "-O", "-", url}},
+		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(nw)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = d.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true}) }()
+	wait := d.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNextExit})
+	if _, err := d.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case res := <-wait.Result:
+		return res.StatusCode == 0
+	case err := <-wait.Error:
+		t.Fatal(err)
+	}
+	return false
+}
+
+// TestAppEgressIsFiltered: from an app container the metadata stand-in,
+// another app's container and the node itself are unreachable, while the
+// public stand-in answers. A plain container on an ordinary network
+// reaches both stand-ins, which shows the block is Nook's firewall.
+func TestAppEgressIsFiltered(t *testing.T) {
+	startStandIn(t, "nook-test-metadata", "169.254.169.0/24", metadataStandIn)
+	startStandIn(t, "nook-test-public", "198.51.100.0/24", publicStandIn)
+	r := startRuntimeEnv(t, nil)
+	r.newRuntimeApp(r.alice, r.ws, "web", nil)
+	r.newRuntimeApp(r.alice, r.ws, "other", nil)
+	r.waitLive(r.alice, r.ws, "web", r.release(r.ws, "web"))
+	r.waitLive(r.alice, r.ws, "other", r.release(r.ws, "other"))
+
+	if !fetchFrom(t, "bridge", "http://"+metadataStandIn+"/") || !fetchFrom(t, "bridge", "http://"+publicStandIn+"/") {
+		t.Fatal("the stand-ins are not reachable from an ordinary container; the test proves nothing")
+	}
+	base := r.appBase(r.alice, r.ws, "web")
+	fetch := func(url string) string {
+		_, body := get(base + "/fetch?url=" + url)
+		return body
+	}
+	if code, _ := get(r.appBase(r.alice, r.ws, "other") + "/healthz"); code != http.StatusOK {
+		t.Fatalf("the other app does not run: %d", code)
+	}
+	if got := fetch("http://" + publicStandIn + "/"); got != "status 200" {
+		t.Fatalf("public stand-in from the app: %q", got)
+	}
+	if got := fetch("http://" + metadataStandIn + "/"); !strings.HasPrefix(got, "error") {
+		t.Fatalf("metadata stand-in reachable from the app: %q", got)
+	}
+	_, otherID := r.appIDs(r.ws, "other")
+	d := dockerClient(t)
+	list, err := d.ContainerList(context.Background(), client.ContainerListOptions{Filters: client.Filters{}.Add("label", "nook.app="+otherID.String())})
+	if err != nil || len(list.Items) != 1 {
+		t.Fatalf("other app containers: %v", err)
+	}
+	info, err := d.ContainerInspect(context.Background(), list.Items[0].ID, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ep := range info.Container.NetworkSettings.Networks {
+		if got := fetch("http://" + ep.IPAddress.String() + ":8080/healthz"); !strings.HasPrefix(got, "error") {
+			t.Fatalf("another app's container is reachable: %q", got)
+		}
+		if got := fetch("http://" + ep.Gateway.String() + ":8080/"); !strings.HasPrefix(got, "error") {
+			t.Fatalf("the node is reachable through the gateway: %q", got)
+		}
+	}
+}
+
+// TestBuildEgressIsFiltered: build containers run on the agent's own
+// network (nook-builds), whose bridge the firewall filters. A container
+// on that network, as a build container is, reaches the public stand-in
+// but not the metadata stand-in; the registry the builds
+// push to is reachable once allowed. (A real build would first need
+// internet access for its base image, which tests do not rely on.)
+func TestBuildEgressIsFiltered(t *testing.T) {
+	startStandIn(t, "nook-test-metadata", "169.254.169.0/24", metadataStandIn)
+	startStandIn(t, "nook-test-public", "198.51.100.0/24", publicStandIn)
+	if !fetchFrom(t, "bridge", "http://"+metadataStandIn+"/") {
+		t.Fatal("the metadata stand-in is not reachable from an ordinary container; the test proves nothing")
+	}
+	registryIP := registryAddress(t)
+	startBuildEnvWith(t, nil, map[string]string{
+		"NOOK_AGENT_BUILD_NETWORK": "nook-builds", "NOOK_AGENT_BUILD_EGRESS_ALLOW": registryIP,
+	})
+	if !fetchFrom(t, "nook-builds", "http://"+publicStandIn+"/") {
+		t.Fatal("the public stand-in is not reachable from the build network")
+	}
+	if fetchFrom(t, "nook-builds", "http://"+metadataStandIn+"/") {
+		t.Fatal("the metadata stand-in is reachable from the build network")
+	}
+	// The allowed registry answers (HTTP on its TLS port fails the
+	// request, but the connection is made: wget reports a server error
+	// rather than a refused or timed-out connection).
+	if out := fetchOutput(t, "nook-builds", "http://"+registryIP+":5000/v2/"); strings.Contains(out, "refused") || strings.Contains(out, "timed out") {
+		t.Fatalf("the allowed registry is not reachable from the build network: %s", out)
+	}
+}
+
+// registryAddress is the test registry's address on the shared network.
+func registryAddress(t *testing.T) string {
+	t.Helper()
+	ip, err := shared.storage.Registry.ContainerIP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ip
+}
+
+// fetchOutput runs wget like fetchFrom and returns its output.
+func fetchOutput(t *testing.T, nw, url string) string {
+	t.Helper()
+	ctx := context.Background()
+	d := dockerClient(t)
+	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:     &container.Config{Image: standInImage, Cmd: []string{"sh", "-c", "wget -q -T 3 -O - " + url + " 2>&1; true"}},
+		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(nw)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = d.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true}) }()
+	wait := d.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNextExit})
+	if _, err = d.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-wait.Result:
+	case waitErr := <-wait.Error:
+		t.Fatal(waitErr)
+	}
+	rc, err := d.ContainerLogs(ctx, created.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rc.Close() }()
+	var sb strings.Builder
+	_, _ = stdcopy.StdCopy(&sb, &sb, rc)
+	return sb.String()
+}

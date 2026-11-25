@@ -20,6 +20,7 @@ import (
 	"github.com/the-asmit/nook/internal/nodes"
 	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/ratelimit"
+	"github.com/the-asmit/nook/internal/rollout"
 	"github.com/the-asmit/nook/internal/store"
 	"github.com/the-asmit/nook/internal/workspace"
 )
@@ -53,6 +54,7 @@ type V1Deps struct {
 	CAHash      string
 	Apps        *apps.Service
 	Logs        *builds.Logs
+	AppLogs     *rollout.LogStreams
 	GCWindow    *builds.GCWindow
 	// RegistryGCSecret authenticates the registry's garbage-collection job.
 	RegistryGCSecret config.Secret
@@ -98,7 +100,15 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	appRoutes.GET("", h.listApps)
 	appRoutes.POST("", h.createApp)
 	appRoutes.GET("/:app", h.getApp)
+	appRoutes.PATCH("/:app", h.updateApp)
 	appRoutes.DELETE("/:app", h.deleteApp)
+	appRoutes.POST("/:app/stop", h.stopApp)
+	appRoutes.POST("/:app/start", h.startApp)
+	appRoutes.POST("/:app/rollback", h.rollback)
+	appRoutes.GET("/:app/logs", h.appLogs)
+	appRoutes.GET("/:app/env", h.listEnv)
+	appRoutes.PUT("/:app/env", h.setEnv)
+	appRoutes.DELETE("/:app/env/:key", h.unsetEnv)
 	appRoutes.GET("/:app/deployments", h.listDeployments)
 	appRoutes.POST("/:app/deployments", h.createDeployment)
 	appRoutes.GET("/:app/deployments/:number", h.getDeployment)

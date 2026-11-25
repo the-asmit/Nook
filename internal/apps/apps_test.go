@@ -2,13 +2,14 @@ package apps
 
 import (
 	"testing"
+	"time"
 	"uuid"
 
 	"github.com/the-asmit/nook/internal/apperr"
 )
 
 func service() *Service {
-	return &Service{cfg: Config{MaxAppMemoryMB: 1024, MaxAppCPUMillicores: 2000}}
+	return &Service{cfg: Config{MaxAppMemoryMB: 1024, MaxAppCPUMillicores: 2000, MaxStartupTimeout: 5 * time.Minute}}
 }
 
 func TestNormalizeAppliesDefaults(t *testing.T) {
@@ -16,7 +17,8 @@ func TestNormalizeAppliesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Spec{Slug: "web", Name: "web", Port: DefaultPort, HealthCheckPath: "/", MemoryMB: DefaultMemoryMB, CPUMillicores: DefaultCPUMillicores}
+	want := Spec{Slug: "web", Name: "web", Port: DefaultPort, HealthCheckPath: "/", MemoryMB: DefaultMemoryMB,
+		CPUMillicores: DefaultCPUMillicores, StartupTimeoutSeconds: 60}
 	if spec != want {
 		t.Fatalf("got %+v", spec)
 	}
@@ -32,6 +34,8 @@ func TestNormalizeRejectsInvalidSpecs(t *testing.T) {
 		"path with space":  {Slug: "web", HealthCheckPath: "/a b"},
 		"memory over max":  {Slug: "web", MemoryMB: 2048},
 		"memory under min": {Slug: "web", MemoryMB: 8},
+		"startup too long": {Slug: "web", StartupTimeoutSeconds: 301},
+		"startup negative": {Slug: "web", StartupTimeoutSeconds: -1},
 		"cpu over max":     {Slug: "web", CPUMillicores: 4000},
 		"name too long":    {Slug: "web", Name: string(make([]rune, 101))},
 	} {

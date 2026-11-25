@@ -74,7 +74,7 @@ INSERT INTO nodes (name, labels, hostname, addresses, cpu_count, memory_total_by
                    docker_version, agent_version, os, arch, joined_with_token_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12)
-RETURNING id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots
+RETURNING id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots, advertise_address, builds_unavailable_reason
 `
 
 type CreateNodeParams struct {
@@ -133,12 +133,14 @@ func (q *Queries) CreateNode(ctx context.Context, arg CreateNodeParams) (Node, e
 		&i.DockerReachable,
 		&i.RemovedAt,
 		&i.BuildSlots,
+		&i.AdvertiseAddress,
+		&i.BuildsUnavailableReason,
 	)
 	return i, err
 }
 
 const getLiveNodeByID = `-- name: GetLiveNodeByID :one
-SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots FROM nodes WHERE id = $1 AND removed_at IS NULL
+SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots, advertise_address, builds_unavailable_reason FROM nodes WHERE id = $1 AND removed_at IS NULL
 `
 
 func (q *Queries) GetLiveNodeByID(ctx context.Context, id uuid.UUID) (Node, error) {
@@ -169,12 +171,14 @@ func (q *Queries) GetLiveNodeByID(ctx context.Context, id uuid.UUID) (Node, erro
 		&i.DockerReachable,
 		&i.RemovedAt,
 		&i.BuildSlots,
+		&i.AdvertiseAddress,
+		&i.BuildsUnavailableReason,
 	)
 	return i, err
 }
 
 const getLiveNodeByName = `-- name: GetLiveNodeByName :one
-SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots FROM nodes WHERE name = $1 AND removed_at IS NULL
+SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots, advertise_address, builds_unavailable_reason FROM nodes WHERE name = $1 AND removed_at IS NULL
 `
 
 func (q *Queries) GetLiveNodeByName(ctx context.Context, name string) (Node, error) {
@@ -205,6 +209,8 @@ func (q *Queries) GetLiveNodeByName(ctx context.Context, name string) (Node, err
 		&i.DockerReachable,
 		&i.RemovedAt,
 		&i.BuildSlots,
+		&i.AdvertiseAddress,
+		&i.BuildsUnavailableReason,
 	)
 	return i, err
 }
@@ -421,7 +427,7 @@ func (q *Queries) ListNodeEvents(ctx context.Context, arg ListNodeEventsParams) 
 }
 
 const listNodes = `-- name: ListNodes :many
-SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots FROM nodes
+SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots, advertise_address, builds_unavailable_reason FROM nodes
 WHERE removed_at IS NULL AND name > $1
 ORDER BY name
 LIMIT $2
@@ -466,6 +472,8 @@ func (q *Queries) ListNodes(ctx context.Context, arg ListNodesParams) ([]Node, e
 			&i.DockerReachable,
 			&i.RemovedAt,
 			&i.BuildSlots,
+			&i.AdvertiseAddress,
+			&i.BuildsUnavailableReason,
 		); err != nil {
 			return nil, err
 		}
@@ -478,7 +486,7 @@ func (q *Queries) ListNodes(ctx context.Context, arg ListNodesParams) ([]Node, e
 }
 
 const lockLiveNode = `-- name: LockLiveNode :one
-SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots FROM nodes WHERE id = $1 AND removed_at IS NULL FOR UPDATE
+SELECT id, name, status, draining, labels, hostname, addresses, cpu_count, memory_total_bytes, disk_total_bytes, docker_version, agent_version, os, arch, joined_with_token_id, joined_at, last_heartbeat_at, memory_available_bytes, cpu_load_1m, disk_free_bytes, running_containers, docker_reachable, removed_at, build_slots, advertise_address, builds_unavailable_reason FROM nodes WHERE id = $1 AND removed_at IS NULL FOR UPDATE
 `
 
 func (q *Queries) LockLiveNode(ctx context.Context, id uuid.UUID) (Node, error) {
@@ -509,6 +517,8 @@ func (q *Queries) LockLiveNode(ctx context.Context, id uuid.UUID) (Node, error) 
 		&i.DockerReachable,
 		&i.RemovedAt,
 		&i.BuildSlots,
+		&i.AdvertiseAddress,
+		&i.BuildsUnavailableReason,
 	)
 	return i, err
 }
@@ -659,22 +669,25 @@ UPDATE nodes
 SET hostname = $1, addresses = $2, cpu_count = $3,
     memory_total_bytes = $4, disk_total_bytes = $5,
     docker_version = $6, agent_version = $7, os = $8, arch = $9,
-    build_slots = $10
-WHERE id = $11 AND removed_at IS NULL
+    build_slots = $10, advertise_address = $11,
+    builds_unavailable_reason = $12
+WHERE id = $13 AND removed_at IS NULL
 `
 
 type UpdateNodeInfoParams struct {
-	Hostname         string
-	Addresses        []string
-	CpuCount         int32
-	MemoryTotalBytes int64
-	DiskTotalBytes   int64
-	DockerVersion    string
-	AgentVersion     string
-	Os               string
-	Arch             string
-	BuildSlots       int32
-	ID               uuid.UUID
+	Hostname                string
+	Addresses               []string
+	CpuCount                int32
+	MemoryTotalBytes        int64
+	DiskTotalBytes          int64
+	DockerVersion           string
+	AgentVersion            string
+	Os                      string
+	Arch                    string
+	BuildSlots              int32
+	AdvertiseAddress        string
+	BuildsUnavailableReason string
+	ID                      uuid.UUID
 }
 
 // Refreshes what the agent reports about itself on every connection.
@@ -690,6 +703,8 @@ func (q *Queries) UpdateNodeInfo(ctx context.Context, arg UpdateNodeInfoParams) 
 		arg.Os,
 		arg.Arch,
 		arg.BuildSlots,
+		arg.AdvertiseAddress,
+		arg.BuildsUnavailableReason,
 		arg.ID,
 	)
 	return err

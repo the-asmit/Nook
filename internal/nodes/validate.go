@@ -122,6 +122,10 @@ type Info struct {
 	Arch             string
 	// BuildSlots is how many builds the agent runs at once (0..64).
 	BuildSlots int32
+	// AdvertiseAddress is the private address apps are published on.
+	AdvertiseAddress string
+	// BuildsUnavailableReason says why the node cannot build, or is empty.
+	BuildsUnavailableReason string
 }
 
 // sanitized bounds everything an agent reports, since it is stored and
@@ -138,6 +142,14 @@ func (i *Info) sanitized() Info {
 		Arch:             clean(i.Arch, 32),
 		BuildSlots:       min(max(i.BuildSlots, 0), 64),
 		Addresses:        []string{},
+		// An agent reporting no build reason but a broken one is caught by
+		// the build itself; the reason is shown to administrators.
+		BuildsUnavailableReason: clean(i.BuildsUnavailableReason, 500),
+	}
+	// Only a specific unicast address can publish apps: never a wildcard
+	// (0.0.0.0 would expose apps on every interface of the node).
+	if addr, err := netip.ParseAddr(i.AdvertiseAddress); err == nil && !addr.IsUnspecified() && !addr.IsMulticast() {
+		out.AdvertiseAddress = addr.Unmap().String()
 	}
 	for _, a := range i.Addresses {
 		if addr, err := netip.ParseAddr(a); err == nil && len(out.Addresses) < 16 {

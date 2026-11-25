@@ -91,6 +91,33 @@ func (j *Janitor) requeueOrphans(ctx context.Context) error {
 		}
 		j.logger.InfoContext(ctx, "re-enqueued deployment without an owner", "deployment", d.ID.String())
 	}
+	return j.requeueDiverged(ctx, before)
+}
+
+// requeueDiverged re-adds jobs for live deployments whose instances do not
+// match their app's desired state (a start or stop whose job was lost, or
+// an app that could not be started for lack of capacity).
+func (j *Janitor) requeueDiverged(ctx context.Context, before time.Time) error {
+	deps, err := j.store.ListDeploymentsToConverge(ctx, store.ListDeploymentsToConvergeParams{Before: &before, RowLimit: batch})
+	if err != nil {
+		return fmt.Errorf("list live deployments to converge: %w", err)
+	}
+	for i := range deps {
+		d := &deps[i]
+		owned, err := hasOwner(ctx, j.queue.redis, d.ID)
+		if err != nil {
+			return err
+		}
+		if owned {
+			continue
+		}
+		if err := j.queue.Enqueue(ctx, d.ID); err != nil {
+			return err
+		}
+		if err := j.store.MarkEnqueued(ctx, d.ID); err != nil {
+			return fmt.Errorf("mark enqueued: %w", err)
+		}
+	}
 	return nil
 }
 

@@ -181,6 +181,8 @@ func TestExpiredRevokedAndDisabledSessionsAreRejected(t *testing.T) {
 			}
 		})
 	}
+	// The cases run in random (map) order: disable explicitly.
+	e.exec("UPDATE users SET disabled_at = now()")
 	if r := e.browser().signIn(testinfra.DexAlice); r.status != http.StatusForbidden || !strings.Contains(r.body, "disabled") {
 		t.Fatalf("disabled user signed in: %d", r.status)
 	}

@@ -23,6 +23,9 @@ import (
 	"github.com/the-asmit/nook/internal/platform/postgres"
 	"github.com/the-asmit/nook/internal/platform/redis"
 	"github.com/the-asmit/nook/internal/registry"
+	"github.com/the-asmit/nook/internal/rollout"
+	"github.com/the-asmit/nook/internal/scheduler"
+	"github.com/the-asmit/nook/internal/secrets"
 )
 
 // Config is the complete nook-server configuration.
@@ -49,6 +52,10 @@ type Config struct {
 	Registry registry.Config
 	Apps     apps.Config
 	Builds   builds.Config
+	// Secrets is the master key that encrypts app environment variables.
+	Secrets   secrets.Config
+	Scheduler scheduler.Config
+	Rollout   rollout.Config
 	// LeaderInterval is how often a follower tries to become the leader
 	// that runs the failure detector, and how often the leader verifies
 	// its lock; it bounds how long a failover takes.
@@ -89,6 +96,9 @@ func (c *Config) Validate() error {
 		c.Registry.Validate(),
 		c.Apps.Validate(),
 		c.Builds.Validate(),
+		c.Secrets.Validate(),
+		c.Scheduler.Validate(),
+		c.Rollout.Validate(),
 		config.CheckDuration("NOOK_LEADER_RETRY_INTERVAL", c.LeaderInterval, 100*time.Millisecond, time.Minute),
 		config.CheckDuration("NOOK_INVITATION_TTL", c.InvitationTTL, time.Hour, 90*24*time.Hour),
 		config.CheckDuration("NOOK_READINESS_TIMEOUT", c.ReadinessTimeout, 100*time.Millisecond, 30*time.Second),

@@ -28,6 +28,8 @@ func (d *Dispatcher) step(ctx context.Context, id uuid.UUID) (bool, error) {
 		return d.stepQueued(ctx, &dep)
 	case store.DeploymentStatusBuilding:
 		return d.stepBuilding(ctx, &dep)
+	case store.DeploymentStatusBuilt, store.DeploymentStatusDeploying, store.DeploymentStatusLive:
+		return d.Releases.Step(ctx, &dep)
 	default:
 		// Finished, or not yet uploaded (a stale job): nothing to do.
 		return true, nil
@@ -142,6 +144,9 @@ func (d *Dispatcher) finalizeFrom(ctx context.Context, dep *store.Deployment, b 
 	}
 	if err != nil && !store.IsNotFound(err) {
 		return false, fmt.Errorf("finish deployment: %w", err)
+	}
+	if b.Result != nil && *b.Result == store.BuildResultSucceeded {
+		return false, nil // the next step releases it
 	}
 	d.ended(ctx, dep.ID)
 	return true, nil

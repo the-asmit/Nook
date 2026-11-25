@@ -22,8 +22,9 @@ func (b *buildEnv) cliFor(u user) *cliRunner {
 
 // TestDeployExampleWithTheCLI is the whole pipeline: `nook deploy` in
 // examples/hello-go packs, uploads straight to storage, follows the live
-// build log of a real agent building with BuildKit, and ends with an image
-// stored in the registry by digest.
+// build log of a real agent building with BuildKit, stores the image in
+// the registry by digest, releases it and ends when it is live and
+// answering on its node.
 func TestDeployExampleWithTheCLI(t *testing.T) {
 	b := startBuildEnv(t, nil)
 	cli := b.cliFor(b.alice)
@@ -38,13 +39,24 @@ func TestDeployExampleWithTheCLI(t *testing.T) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
 	}
-	if !strings.Contains(stdout, "go build") || !strings.Contains(stdout, "Image: "+shared.storage.Registry.NetworkAddr+"/") {
-		t.Fatalf("stdout:\n%s", stdout)
+	for _, want := range []string{"go build", "Image: " + shared.storage.Registry.NetworkAddr + "/", "[nook] releasing deployment #1",
+		"Deployment #1 of hello-go is live.", "serving at http://127.0.0.1:"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout lacks %q:\n%s", want, stdout)
+		}
 	}
 
 	d := b.deployment(b.alice, b.ws, "hello-go", 1)
-	if d.Status != "built" || d.ImageDigest == nil || len(d.Builds) != 1 || *d.Builds[0].Result != "succeeded" || d.Builds[0].Node != "builder-1" {
+	if d.Status != "live" || d.ImageDigest == nil || len(d.Builds) != 1 || *d.Builds[0].Result != "succeeded" || d.Builds[0].Node != "builder-1" {
 		t.Fatalf("deployment %+v", d)
+	}
+	r := &runtimeEnv{buildEnv: b}
+	if status, body := get(r.appBase(b.alice, b.ws, "hello-go") + "/"); status != 200 || !strings.Contains(body, "Hello from a Nook app") {
+		t.Fatalf("the app answers %d %q", status, body)
+	}
+	code, stdout, _ = cli.run("apps", "info", "hello-go")
+	if code != 0 || !strings.Contains(stdout, "Health:       running") || !strings.Contains(stdout, "Live:         #1") {
+		t.Fatalf("apps info: %d\n%s", code, stdout)
 	}
 	var app struct {
 		ID string `json:"id"`
@@ -60,7 +72,7 @@ func TestDeployExampleWithTheCLI(t *testing.T) {
 	}
 
 	code, stdout, _ = cli.run("deployments", "list", "hello-go")
-	if code != 0 || !strings.Contains(stdout, "built") {
+	if code != 0 || !strings.Contains(stdout, "live") {
 		t.Fatalf("deployments list: %d\n%s", code, stdout)
 	}
 	code, stdout, _ = cli.run("build-logs", "hello-go")

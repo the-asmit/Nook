@@ -52,9 +52,11 @@ GROUP BY node_id;
 SELECT count(*)::integer FROM builds WHERE workspace_id = @workspace_id AND finished_at IS NULL;
 
 -- name: ListBuildNodes :many
--- Nodes that may receive builds.
+-- Nodes that may receive builds: ready, not draining, with build slots
+-- and able to run rootless BuildKit.
 SELECT id, name, build_slots, memory_available_bytes FROM nodes
-WHERE status = 'ready' AND NOT draining AND removed_at IS NULL AND build_slots > 0;
+WHERE status = 'ready' AND NOT draining AND removed_at IS NULL AND build_slots > 0
+  AND builds_unavailable_reason = '';
 
 -- name: GetNodeStatus :one
 SELECT status FROM nodes WHERE id = @id;

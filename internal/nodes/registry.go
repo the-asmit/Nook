@@ -212,7 +212,7 @@ func (r *Registry) UpdateInfo(ctx context.Context, nodeID uuid.UUID, info *Info)
 		ID: nodeID, Hostname: i.Hostname, Addresses: i.Addresses, CpuCount: i.CPUCount,
 		MemoryTotalBytes: i.MemoryTotalBytes, DiskTotalBytes: i.DiskTotalBytes,
 		DockerVersion: i.DockerVersion, AgentVersion: i.AgentVersion, Os: i.OS, Arch: i.Arch,
-		BuildSlots: i.BuildSlots,
+		BuildSlots: i.BuildSlots, AdvertiseAddress: i.AdvertiseAddress, BuildsUnavailableReason: i.BuildsUnavailableReason,
 	})
 	if err != nil {
 		return fmt.Errorf("update node info: %w", err)

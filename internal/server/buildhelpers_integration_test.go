@@ -30,22 +30,43 @@ type buildEnv struct {
 	alice user
 	ws    string
 	agent *runningAgent
+	// agentOverrides configure the agents joinBuilder starts.
+	agentOverrides map[string]string
+	// agentState is the state directory of the first agent.
+	agentState string
 }
 
 func startBuildEnv(t *testing.T, overrides map[string]string) *buildEnv {
 	t.Helper()
+	return startBuildEnvWith(t, overrides, nil)
+}
+
+// startBuildEnvWith also configures the agent.
+func startBuildEnvWith(t *testing.T, overrides, agentOverrides map[string]string) *buildEnv {
+	t.Helper()
 	e := startEnvWith(t, overrides)
 	alice := e.adminAlice()
-	b := &buildEnv{env: e, alice: alice, ws: alice.personal}
+	b := &buildEnv{env: e, alice: alice, ws: alice.personal, agentOverrides: agentOverrides}
 	b.agent = b.joinBuilder("builder-1", e.primary.grpc)
 	return b
+}
+
+// joinedState joins a node and returns its agent's state directory.
+func (b *buildEnv) joinedState(name, grpcAddr string) string {
+	b.t.Helper()
+	token, caHash := b.joinToken(b.alice, nil)
+	return joinAgent(b.t, grpcAddr, token, caHash, name)
 }
 
 // joinBuilder joins and runs an agent and waits until its node is ready.
 func (b *buildEnv) joinBuilder(name, grpcAddr string) *runningAgent {
 	b.t.Helper()
-	token, caHash := b.joinToken(b.alice, nil)
-	a := runAgent(b.t, joinAgent(b.t, grpcAddr, token, caHash, name))
+	state := b.joinedState(name, grpcAddr)
+	if b.agentState == "" {
+		b.agentState = state
+	}
+	cfg := agentConfigWith(b.t, state, b.agentOverrides)
+	a := runConfiguredAgent(b.t, &cfg, quietLogger)
 	eventually(b.t, 30*time.Second, name+" ready", func() bool { return b.nodeStatus(b.alice, name) == "ready" })
 	return a
 }
@@ -66,9 +87,13 @@ func project(t *testing.T, files map[string]string) string {
 	return dir
 }
 
+// createApp creates a stopped app for build tests: a stopped app keeps a
+// finished build "built" instead of releasing it (runtime tests use
+// running apps).
 func (b *buildEnv) createApp(u user, ws, slug string) {
 	b.t.Helper()
 	expectStatus(b.t, b.as(u, http.MethodPost, "/api/v1/workspaces/"+ws+"/apps", map[string]any{"slug": slug}), http.StatusCreated, "create app "+slug)
+	expectStatus(b.t, b.as(u, http.MethodPost, appURL(ws, slug)+"/stop", nil), http.StatusOK, "stop app "+slug)
 }
 
 func appURL(ws, app string) string { return "/api/v1/workspaces/" + ws + "/apps/" + app }

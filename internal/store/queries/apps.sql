@@ -2,11 +2,11 @@
 SELECT * FROM workspace_quotas WHERE workspace_id = @workspace_id;
 
 -- name: UpsertWorkspaceQuota :one
-INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at)
-VALUES (@workspace_id, @max_apps, @max_concurrent_builds, @updated_by, now())
+INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, max_memory_mb, updated_by, updated_at)
+VALUES (@workspace_id, @max_apps, @max_concurrent_builds, @max_memory_mb, @updated_by, now())
 ON CONFLICT (workspace_id) DO UPDATE
 SET max_apps = EXCLUDED.max_apps, max_concurrent_builds = EXCLUDED.max_concurrent_builds,
-    updated_by = EXCLUDED.updated_by, updated_at = now()
+    max_memory_mb = EXCLUDED.max_memory_mb, updated_by = EXCLUDED.updated_by, updated_at = now()
 RETURNING *;
 
 -- name: GetWorkspaceBySlug :one
@@ -21,8 +21,10 @@ SELECT count(*) FROM apps WHERE workspace_id = @workspace_id AND deleted_at IS N
 SELECT count(*) FROM apps WHERE workspace_id = @workspace_id;
 
 -- name: CreateApp :one
-INSERT INTO apps (workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores)
-VALUES (@workspace_id, @slug, @name, @created_by, @port, @health_check_path, @memory_mb, @cpu_millicores)
+INSERT INTO apps (workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores,
+                  startup_timeout_seconds, read_only_rootfs)
+VALUES (@workspace_id, @slug, @name, @created_by, @port, @health_check_path, @memory_mb, @cpu_millicores,
+        @startup_timeout_seconds, @read_only_rootfs)
 RETURNING *;
 
 -- name: GetApp :one
@@ -50,7 +52,15 @@ RETURNING (next_deployment_number - 1)::integer AS number;
 UPDATE apps SET deleted_at = now() WHERE id = @id AND deleted_at IS NULL RETURNING *;
 
 -- name: ListDeletedApps :many
-SELECT * FROM apps WHERE deleted_at IS NOT NULL ORDER BY deleted_at LIMIT @row_limit;
+-- Deleted apps whose instances have all stopped.
+SELECT * FROM apps a
+WHERE a.deleted_at IS NOT NULL
+  AND NOT EXISTS (
+      SELECT 1 FROM app_instances i
+      WHERE i.app_id = a.id AND i.state IN ('starting', 'healthy', 'unhealthy', 'stopping')
+  )
+ORDER BY a.deleted_at
+LIMIT @row_limit;
 
 -- name: PurgeApp :exec
 -- Removes a deleted app with its deployments and builds once its images,
@@ -144,11 +154,14 @@ WHERE id = @id AND status IN ('queued', 'building')
 RETURNING *;
 
 -- name: ListUnownedActiveDeployments :many
--- Queued or building deployments not re-added to the queue recently; the
--- janitor re-enqueues them in case their queue entry was lost.
-SELECT * FROM deployments
-WHERE status IN ('queued', 'building') AND (enqueued_at IS NULL OR enqueued_at < @before)
-ORDER BY created_at
+-- Deployments still moving (queued, building, waiting for or in their
+-- rollout) not re-added to the queue recently; the janitor re-enqueues
+-- them in case their queue entry was lost.
+-- (Built deployments of stopped apps wait for `nook apps start`.)
+SELECT d.* FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE (d.status IN ('queued', 'building', 'deploying') OR (d.status = 'built' AND a.desired_state = 'running'))
+  AND (d.enqueued_at IS NULL OR d.enqueued_at < @before)
+ORDER BY d.created_at
 LIMIT @row_limit;
 
 -- name: ListAbandonedUploads :many
@@ -158,14 +171,19 @@ ORDER BY created_at
 LIMIT @row_limit;
 
 -- name: ListImagesBeyondRetention :many
--- Built images beyond the newest @keep per app, oldest first.
+-- Images beyond the newest @keep deployments with an image per app,
+-- oldest first. Images being released or live are never candidates, and
+-- neither is the app's current deployment. (A built deployment that far
+-- back is never released: starting an app releases its newest one.)
 SELECT id, app_id, number, image_digest FROM (
-    SELECT d.id, d.app_id, d.number, d.image_digest,
+    SELECT d.id, d.app_id, d.number, d.image_digest, d.status,
            row_number() OVER (PARTITION BY d.app_id ORDER BY d.number DESC) AS rank
     FROM deployments d
-    WHERE d.status = 'built' AND d.image_deleted_at IS NULL
+    WHERE d.image_digest IS NOT NULL AND d.image_deleted_at IS NULL
 ) ranked
 WHERE rank > @keep::bigint
+  AND status NOT IN ('deploying', 'live')
+  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.current_deployment_id = ranked.id)
 ORDER BY number
 LIMIT @row_limit;
 
@@ -180,7 +198,7 @@ UPDATE deployments SET image_deleted_at = now() WHERE id = @id;
 -- Source archives of finished deployments older than the retention window.
 SELECT id, source_key FROM deployments
 WHERE source_deleted_at IS NULL AND created_at < @before
-  AND status IN ('built', 'failed', 'cancelled')
+  AND status NOT IN ('pending', 'uploading', 'queued', 'building')
 LIMIT @row_limit;
 
 -- name: ListSourcesOfApp :many
@@ -191,7 +209,27 @@ UPDATE deployments SET source_deleted_at = now() WHERE id = @id;
 
 -- name: IsRecordedImage :one
 -- Whether a digest is the image of a deployment (so it must not be
--- garbage-collected as a stray push).
+-- garbage-collected as a stray push, nor deleted while another
+-- deployment releases it again).
 SELECT EXISTS (
     SELECT 1 FROM deployments WHERE app_id = @app_id AND image_digest = @image_digest AND image_deleted_at IS NULL
 ) AS recorded;
+
+-- name: UpdateAppSettings :one
+UPDATE apps
+SET port = @port, health_check_path = @health_check_path, memory_mb = @memory_mb,
+    cpu_millicores = @cpu_millicores, startup_timeout_seconds = @startup_timeout_seconds,
+    read_only_rootfs = @read_only_rootfs
+WHERE id = @id AND deleted_at IS NULL
+RETURNING *;
+
+-- name: LockApp :one
+SELECT * FROM apps WHERE id = @id FOR UPDATE;
+
+-- name: SetDesiredState :one
+UPDATE apps SET desired_state = @desired_state, desired_state_at = now()
+WHERE id = @id AND deleted_at IS NULL
+RETURNING *;
+
+-- name: SetCurrentDeployment :exec
+UPDATE apps SET current_deployment_id = @deployment_id WHERE id = @id;

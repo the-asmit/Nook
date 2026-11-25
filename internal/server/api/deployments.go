@@ -2,12 +2,9 @@ package api
 
 import (
 	"encoding/hex"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -49,6 +46,48 @@ type DeploymentView struct {
 	CancelledAt     *time.Time  `json:"canceled_at"`
 	ImageDeleted    bool        `json:"image_deleted"`
 	Builds          []BuildView `json:"builds,omitempty"`
+	// Kind is "build", "config" (new environment) or "rollback".
+	Kind string `json:"kind"`
+	// RollbackTo is the deployment a rollback releases again.
+	RollbackTo   *int32     `json:"rollback_to"`
+	DeployingAt  *time.Time `json:"deploying_at"`
+	LiveAt       *time.Time `json:"live_at"`
+	SupersededAt *time.Time `json:"superseded_at"`
+	RolledBackAt *time.Time `json:"rolled_back_at"`
+	// Instance is the deployment's newest instance (detail views only).
+	Instance *InstanceView `json:"instance,omitempty"`
+}
+
+// InstanceView is where and how an app instance runs.
+type InstanceView struct {
+	Node  string `json:"node"`
+	State string `json:"state"`
+	// Address and HostPort are where the node publishes the app.
+	Address       string     `json:"address"`
+	HostPort      *int32     `json:"host_port"`
+	RestartCount  int32      `json:"restart_count"`
+	LastError     string     `json:"last_error"`
+	StartedAt     *time.Time `json:"started_at"`
+	LastHealthyAt *time.Time `json:"last_healthy_at"`
+	// StartupLog is the output of an instance that failed to start.
+	StartupLog string    `json:"startup_log,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func instanceView(i *store.AppInstance) *InstanceView {
+	if i == nil {
+		return nil
+	}
+	return &InstanceView{
+		Node: i.NodeName, State: string(i.State), Address: i.Address, HostPort: i.HostPort, RestartCount: i.RestartCount,
+		LastError: i.LastError, StartedAt: i.StartedAt, LastHealthyAt: i.LastHealthyAt, StartupLog: i.StartupLog, CreatedAt: i.CreatedAt,
+	}
+}
+
+func (h *V1) detailView(d *apps.Detail) DeploymentView {
+	v := h.deploymentView(&d.App, &d.Deployment, d.Builds)
+	v.Instance = instanceView(d.Instance)
+	return v
 }
 
 func (h *V1) deploymentView(app *store.App, d *store.Deployment, bs []store.Build) DeploymentView {
@@ -57,6 +96,8 @@ func (h *V1) deploymentView(app *store.App, d *store.Deployment, bs []store.Buil
 		ImageDigest: d.ImageDigest, FailureReason: d.FailureReason, CancelRequested: d.CancelRequestedAt != nil,
 		CreatedAt: d.CreatedAt, QueuedAt: d.QueuedAt, BuildingAt: d.BuildingAt, BuiltAt: d.BuiltAt,
 		FailedAt: d.FailedAt, CancelledAt: d.CancelledAt, ImageDeleted: d.ImageDeletedAt != nil,
+		Kind: string(d.Kind), RollbackTo: d.RollbackTo, DeployingAt: d.DeployingAt, LiveAt: d.LiveAt,
+		SupersededAt: d.SupersededAt, RolledBackAt: d.RolledBackAt,
 	}
 	if d.ImageDigest != nil {
 		ref := h.RegistryAddr + "/" + apps.RepositoryName(app.WorkspaceID, app.ID) + "@" + *d.ImageDigest
@@ -139,7 +180,7 @@ func (h *V1) respondDeployment(c *gin.Context, n int32) {
 		writeError(c, h.Logger, err)
 		return
 	}
-	c.JSON(http.StatusOK, h.deploymentView(&detail.App, &detail.Deployment, detail.Builds))
+	c.JSON(http.StatusOK, h.detailView(&detail))
 }
 
 func (h *V1) getDeployment(c *gin.Context) {
@@ -195,9 +236,6 @@ const maxFollow = 3 * time.Hour
 // errFollowLimit ends a follow that reached maxFollow.
 var errFollowLimit = errors.New("follow limit reached")
 
-// sseKeepalive keeps idle proxies from closing a quiet stream.
-const sseKeepalive = 15 * time.Second
-
 func (h *V1) buildLog(c *gin.Context) {
 	n, err := number(c)
 	if err != nil {
@@ -227,51 +265,8 @@ func (h *V1) buildLog(c *gin.Context) {
 // final "end" event. The route is exempt from the request timeout.
 func (h *V1) followLog(c *gin.Context, detail *apps.Detail) {
 	ctx := c.Request.Context()
-	rc := http.NewResponseController(c.Writer)
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-store")
-	c.Header("X-Accel-Buffering", "no")
-	c.Status(http.StatusOK)
-
-	var mu sync.Mutex
-	write := func(event string, data any) error {
-		mu.Lock()
-		defer mu.Unlock()
-		_ = rc.SetWriteDeadline(time.Now().Add(sseKeepalive * 2))
-		if event == "" {
-			if _, err := fmt.Fprint(c.Writer, ": keepalive\n\n"); err != nil {
-				return err
-			}
-		} else {
-			payload, err := json.Marshal(data)
-			if err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, payload); err != nil {
-				return err
-			}
-		}
-		return rc.Flush()
-	}
-	if err := write("", nil); err != nil {
-		return
-	}
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		t := time.NewTicker(sseKeepalive)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-t.C:
-				if write("", nil) != nil {
-					return
-				}
-			}
-		}
-	}()
+	write, stop := startSSE(c)
+	defer stop()
 	deadline := time.Now().Add(maxFollow)
 	who := actor(c)
 	_ = h.Logs.Follow(ctx, detail.Deployment.ID, func(e builds.Event) error {
@@ -288,7 +283,7 @@ func (h *V1) followLog(c *gin.Context, detail *apps.Detail) {
 			if err != nil {
 				return write("end", map[string]string{"status": string(e.Status)})
 			}
-			return write("end", h.deploymentView(&d.App, &d.Deployment, d.Builds))
+			return write("end", h.detailView(&d))
 		}
 	})
 }

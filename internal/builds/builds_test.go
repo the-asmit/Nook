@@ -37,7 +37,9 @@ func TestSanitize(t *testing.T) {
 
 func TestTerminal(t *testing.T) {
 	for s, want := range map[store.DeploymentStatus]bool{
-		store.DeploymentStatusBuilt: true, store.DeploymentStatusFailed: true, store.DeploymentStatusCancelled: true,
+		store.DeploymentStatusFailed: true, store.DeploymentStatusCancelled: true, store.DeploymentStatusLive: true,
+		store.DeploymentStatusSuperseded: true, store.DeploymentStatusRolledBack: true,
+		store.DeploymentStatusBuilt: false, store.DeploymentStatusDeploying: false,
 		store.DeploymentStatusQueued: false, store.DeploymentStatusBuilding: false, store.DeploymentStatusUploading: false,
 	} {
 		if Terminal(s) != want {

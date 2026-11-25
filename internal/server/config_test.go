@@ -27,8 +27,12 @@ func devEnviron() map[string]string {
 		"NOOK_S3_SECRET_ACCESS_KEY":  "storage-secret",
 		"NOOK_REGISTRY_ADDR":         "registry:5000",
 		"NOOK_REGISTRY_GC_SECRET":    "0123456789abcdef",
+		"NOOK_SECRETS_KEY":           testSecretsKey,
 	}
 }
+
+// testSecretsKey is a keyring for configuration tests only.
+const testSecretsKey = "1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
 
 // prodEnviron is a production configuration with TLS everywhere.
 func prodEnviron(t *testing.T) map[string]string {
@@ -51,6 +55,7 @@ func prodEnviron(t *testing.T) map[string]string {
 		"NOOK_S3_SECRET_ACCESS_KEY":   "storage-secret",
 		"NOOK_REGISTRY_ADDR":          "registry.internal:5000",
 		"NOOK_REGISTRY_GC_SECRET":     "0123456789abcdef",
+		"NOOK_SECRETS_KEY":            testSecretsKey,
 	}
 }
 
@@ -259,6 +264,15 @@ func TestExampleEnvFileIsValid(t *testing.T) {
 			env[k] = v
 		}
 	}
+	// The key file is created by `make dev-up`; stand in a fresh one.
+	if env["NOOK_SECRETS_KEY_FILE"] == "" {
+		t.Fatal(".env.example does not name NOOK_SECRETS_KEY_FILE")
+	}
+	keyFile := filepath.Join(t.TempDir(), "secrets.key")
+	if err := os.WriteFile(keyFile, []byte(testSecretsKey+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env["NOOK_SECRETS_KEY_FILE"] = keyFile
 	if _, err := config.Load[Config](env); err != nil {
 		t.Fatalf(".env.example does not load: %v", err)
 	}

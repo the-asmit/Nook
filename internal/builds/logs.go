@@ -73,6 +73,14 @@ func (l *Logs) Append(ctx context.Context, deploymentID, buildID uuid.UUID, line
 	return l.add(ctx, deploymentID, buildID.String(), kindLine, lines...)
 }
 
+// Output adds lines that are not from a build attempt (an app's output
+// during its rollout).
+func (l *Logs) Output(ctx context.Context, deploymentID uuid.UUID, lines []string) {
+	if err := l.add(ctx, deploymentID, "", kindLine, lines...); err != nil {
+		l.logger.WarnContext(ctx, "could not write deployment output", "error", err.Error())
+	}
+}
+
 // Note adds a line written by Nook itself (attempt headers, retries).
 func (l *Logs) Note(ctx context.Context, deploymentID uuid.UUID, buildID, text string) {
 	if err := l.add(ctx, deploymentID, buildID, kindNote, "[nook] "+text); err != nil {
@@ -243,9 +251,17 @@ func (l *Logs) Follow(ctx context.Context, deploymentID uuid.UUID, emit func(Eve
 	return nil
 }
 
-// Terminal reports whether a deployment status is final.
+// Terminal reports whether a deployment status is final for its log: the
+// deployment was released, will not be, or failed. (A built deployment
+// waits for its rollout.)
 func Terminal(s store.DeploymentStatus) bool {
-	return s == store.DeploymentStatusBuilt || s == store.DeploymentStatusFailed || s == store.DeploymentStatusCancelled
+	switch s {
+	case store.DeploymentStatusFailed, store.DeploymentStatusCancelled, store.DeploymentStatusLive,
+		store.DeploymentStatusSuperseded, store.DeploymentStatusRolledBack:
+		return true
+	default:
+		return false
+	}
 }
 
 // ctxDone reports whether ctx has ended.

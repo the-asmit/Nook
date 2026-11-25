@@ -25,6 +25,11 @@ type Commander interface {
 	Dispatch(ctx context.Context, nodeID uuid.UUID, cmd *agentv1.Command, timeout time.Duration) (*agentv1.CommandResult, error)
 }
 
+// Releases moves built deployments into service (rollout.Controller).
+type Releases interface {
+	Step(ctx context.Context, dep *store.Deployment) (bool, error)
+}
+
 // HeartbeatSource returns a node's latest heartbeat (nodes.Registry).
 type HeartbeatSource interface {
 	LatestHeartbeat(ctx context.Context, nodeID uuid.UUID) (*nodes.Sample, error)
@@ -43,13 +48,15 @@ type Deps struct {
 	// RegistryAddr is the registry host:port nodes push to.
 	RegistryAddr string
 	Logs         *Logs
+	Releases     Releases
 	Logger       *slog.Logger
 	Metrics      prometheus.Registerer
 }
 
-// Dispatcher consumes the build queue. Every control-plane instance runs
-// one; each queued deployment is owned by exactly one live instance,
-// which places its build on a node and follows it to the end.
+// Dispatcher consumes the deployment queue. Every control-plane instance
+// runs one; each deployment in the queue is owned by exactly one live
+// instance, which places its build on a node, follows it to the end and
+// then has the rollout controller release it.
 type Dispatcher struct {
 	Deps
 	cfg      Config

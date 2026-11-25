@@ -13,6 +13,64 @@ import (
 	"uuid"
 )
 
+type AppDesiredState string
+
+const (
+	AppDesiredStateRunning AppDesiredState = "running"
+	AppDesiredStateStopped AppDesiredState = "stopped"
+)
+
+func (e *AppDesiredState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppDesiredState(s)
+	case string:
+		*e = AppDesiredState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppDesiredState: %T", src)
+	}
+	return nil
+}
+
+type NullAppDesiredState struct {
+	AppDesiredState AppDesiredState
+	Valid           bool // Valid is true if AppDesiredState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppDesiredState) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppDesiredState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppDesiredState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppDesiredState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppDesiredState), nil
+}
+
+func (e AppDesiredState) Valid() bool {
+	switch e {
+	case AppDesiredStateRunning,
+		AppDesiredStateStopped:
+		return true
+	}
+	return false
+}
+
+func AllAppDesiredStateValues() []AppDesiredState {
+	return []AppDesiredState{
+		AppDesiredStateRunning,
+		AppDesiredStateStopped,
+	}
+}
+
 type BuildResult string
 
 const (
@@ -83,16 +141,81 @@ func AllBuildResultValues() []BuildResult {
 	}
 }
 
+type DeploymentKind string
+
+const (
+	DeploymentKindBuild    DeploymentKind = "build"
+	DeploymentKindConfig   DeploymentKind = "config"
+	DeploymentKindRollback DeploymentKind = "rollback"
+)
+
+func (e *DeploymentKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = DeploymentKind(s)
+	case string:
+		*e = DeploymentKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for DeploymentKind: %T", src)
+	}
+	return nil
+}
+
+type NullDeploymentKind struct {
+	DeploymentKind DeploymentKind
+	Valid          bool // Valid is true if DeploymentKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullDeploymentKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.DeploymentKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.DeploymentKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullDeploymentKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.DeploymentKind), nil
+}
+
+func (e DeploymentKind) Valid() bool {
+	switch e {
+	case DeploymentKindBuild,
+		DeploymentKindConfig,
+		DeploymentKindRollback:
+		return true
+	}
+	return false
+}
+
+func AllDeploymentKindValues() []DeploymentKind {
+	return []DeploymentKind{
+		DeploymentKindBuild,
+		DeploymentKindConfig,
+		DeploymentKindRollback,
+	}
+}
+
 type DeploymentStatus string
 
 const (
-	DeploymentStatusPending   DeploymentStatus = "pending"
-	DeploymentStatusUploading DeploymentStatus = "uploading"
-	DeploymentStatusQueued    DeploymentStatus = "queued"
-	DeploymentStatusBuilding  DeploymentStatus = "building"
-	DeploymentStatusBuilt     DeploymentStatus = "built"
-	DeploymentStatusFailed    DeploymentStatus = "failed"
-	DeploymentStatusCancelled DeploymentStatus = "cancelled"
+	DeploymentStatusPending    DeploymentStatus = "pending"
+	DeploymentStatusUploading  DeploymentStatus = "uploading"
+	DeploymentStatusQueued     DeploymentStatus = "queued"
+	DeploymentStatusBuilding   DeploymentStatus = "building"
+	DeploymentStatusBuilt      DeploymentStatus = "built"
+	DeploymentStatusFailed     DeploymentStatus = "failed"
+	DeploymentStatusCancelled  DeploymentStatus = "cancelled"
+	DeploymentStatusDeploying  DeploymentStatus = "deploying"
+	DeploymentStatusLive       DeploymentStatus = "live"
+	DeploymentStatusSuperseded DeploymentStatus = "superseded"
+	DeploymentStatusRolledBack DeploymentStatus = "rolled_back"
 )
 
 func (e *DeploymentStatus) Scan(src interface{}) error {
@@ -138,7 +261,11 @@ func (e DeploymentStatus) Valid() bool {
 		DeploymentStatusBuilding,
 		DeploymentStatusBuilt,
 		DeploymentStatusFailed,
-		DeploymentStatusCancelled:
+		DeploymentStatusCancelled,
+		DeploymentStatusDeploying,
+		DeploymentStatusLive,
+		DeploymentStatusSuperseded,
+		DeploymentStatusRolledBack:
 		return true
 	}
 	return false
@@ -153,6 +280,10 @@ func AllDeploymentStatusValues() []DeploymentStatus {
 		DeploymentStatusBuilt,
 		DeploymentStatusFailed,
 		DeploymentStatusCancelled,
+		DeploymentStatusDeploying,
+		DeploymentStatusLive,
+		DeploymentStatusSuperseded,
+		DeploymentStatusRolledBack,
 	}
 }
 
@@ -220,6 +351,79 @@ func AllDeviceStatusValues() []DeviceStatus {
 		DeviceStatusDenied,
 		DeviceStatusExpired,
 		DeviceStatusConsumed,
+	}
+}
+
+type InstanceState string
+
+const (
+	InstanceStateStarting  InstanceState = "starting"
+	InstanceStateHealthy   InstanceState = "healthy"
+	InstanceStateUnhealthy InstanceState = "unhealthy"
+	InstanceStateStopping  InstanceState = "stopping"
+	InstanceStateStopped   InstanceState = "stopped"
+	InstanceStateCrashed   InstanceState = "crashed"
+	InstanceStateFailed    InstanceState = "failed"
+)
+
+func (e *InstanceState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = InstanceState(s)
+	case string:
+		*e = InstanceState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for InstanceState: %T", src)
+	}
+	return nil
+}
+
+type NullInstanceState struct {
+	InstanceState InstanceState
+	Valid         bool // Valid is true if InstanceState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullInstanceState) Scan(value interface{}) error {
+	if value == nil {
+		ns.InstanceState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.InstanceState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullInstanceState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.InstanceState), nil
+}
+
+func (e InstanceState) Valid() bool {
+	switch e {
+	case InstanceStateStarting,
+		InstanceStateHealthy,
+		InstanceStateUnhealthy,
+		InstanceStateStopping,
+		InstanceStateStopped,
+		InstanceStateCrashed,
+		InstanceStateFailed:
+		return true
+	}
+	return false
+}
+
+func AllInstanceStateValues() []InstanceState {
+	return []InstanceState{
+		InstanceStateStarting,
+		InstanceStateHealthy,
+		InstanceStateUnhealthy,
+		InstanceStateStopping,
+		InstanceStateStopped,
+		InstanceStateCrashed,
+		InstanceStateFailed,
 	}
 }
 
@@ -367,18 +571,58 @@ type ApiToken struct {
 }
 
 type App struct {
-	ID                   uuid.UUID
-	WorkspaceID          uuid.UUID
-	Slug                 string
-	Name                 string
-	CreatedBy            *uuid.UUID
-	Port                 int32
-	HealthCheckPath      string
-	MemoryMb             int32
-	CpuMillicores        int32
-	NextDeploymentNumber int32
-	CreatedAt            time.Time
-	DeletedAt            *time.Time
+	ID                    uuid.UUID
+	WorkspaceID           uuid.UUID
+	Slug                  string
+	Name                  string
+	CreatedBy             *uuid.UUID
+	Port                  int32
+	HealthCheckPath       string
+	MemoryMb              int32
+	CpuMillicores         int32
+	NextDeploymentNumber  int32
+	CreatedAt             time.Time
+	DeletedAt             *time.Time
+	DesiredState          AppDesiredState
+	DesiredStateAt        time.Time
+	CurrentDeploymentID   *uuid.UUID
+	StartupTimeoutSeconds int32
+	ReadOnlyRootfs        bool
+}
+
+type AppEnv struct {
+	AppID      uuid.UUID
+	Key        string
+	Value      []byte
+	KeyVersion int32
+	IsSecret   bool
+	UpdatedBy  *uuid.UUID
+	UpdatedAt  time.Time
+}
+
+type AppInstance struct {
+	ID              uuid.UUID
+	AppID           uuid.UUID
+	DeploymentID    uuid.UUID
+	WorkspaceID     uuid.UUID
+	NodeID          *uuid.UUID
+	NodeName        string
+	State           InstanceState
+	MemoryMb        int32
+	CpuMillicores   int32
+	ContainerID     *string
+	Address         string
+	HostPort        *int32
+	RestartCount    int32
+	StartSentAt     *time.Time
+	StartedAt       *time.Time
+	LastHealthyAt   *time.Time
+	StopRequestedAt *time.Time
+	StoppedAt       *time.Time
+	LastError       string
+	StartupLog      string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }
 
 type AuditLog struct {
@@ -414,28 +658,36 @@ type Build struct {
 }
 
 type Deployment struct {
-	ID                uuid.UUID
-	AppID             uuid.UUID
-	Number            int32
-	Status            DeploymentStatus
-	SourceKey         string
-	SourceSha256      []byte
-	SourceSize        int64
-	UploadExpiresAt   time.Time
-	ImageDigest       *string
-	CreatedBy         *uuid.UUID
-	FailureReason     string
-	CancelRequestedAt *time.Time
-	EnqueuedAt        *time.Time
-	CreatedAt         time.Time
-	UploadingAt       *time.Time
-	QueuedAt          *time.Time
-	BuildingAt        *time.Time
-	BuiltAt           *time.Time
-	FailedAt          *time.Time
-	CancelledAt       *time.Time
-	SourceDeletedAt   *time.Time
-	ImageDeletedAt    *time.Time
+	ID                  uuid.UUID
+	AppID               uuid.UUID
+	Number              int32
+	Status              DeploymentStatus
+	SourceKey           string
+	SourceSha256        []byte
+	SourceSize          int64
+	UploadExpiresAt     time.Time
+	ImageDigest         *string
+	CreatedBy           *uuid.UUID
+	FailureReason       string
+	CancelRequestedAt   *time.Time
+	EnqueuedAt          *time.Time
+	CreatedAt           time.Time
+	UploadingAt         *time.Time
+	QueuedAt            *time.Time
+	BuildingAt          *time.Time
+	BuiltAt             *time.Time
+	FailedAt            *time.Time
+	CancelledAt         *time.Time
+	SourceDeletedAt     *time.Time
+	ImageDeletedAt      *time.Time
+	Kind                DeploymentKind
+	ImageOfDeploymentID *uuid.UUID
+	RollbackTo          *int32
+	EnvSnapshotID       *uuid.UUID
+	DeployingAt         *time.Time
+	LiveAt              *time.Time
+	SupersededAt        *time.Time
+	RolledBackAt        *time.Time
 }
 
 type DeviceAuthorization struct {
@@ -450,6 +702,21 @@ type DeviceAuthorization struct {
 	LastPolledAt        *time.Time
 	PollIntervalSeconds int32
 	ApiTokenID          *uuid.UUID
+}
+
+type EnvSnapshot struct {
+	ID        uuid.UUID
+	AppID     uuid.UUID
+	CreatedBy *uuid.UUID
+	CreatedAt time.Time
+}
+
+type EnvSnapshotVar struct {
+	SnapshotID uuid.UUID
+	Key        string
+	Value      []byte
+	KeyVersion int32
+	IsSecret   bool
 }
 
 type Invitation struct {
@@ -484,30 +751,32 @@ type Membership struct {
 }
 
 type Node struct {
-	ID                   uuid.UUID
-	Name                 string
-	Status               NodeStatus
-	Draining             bool
-	Labels               []byte
-	Hostname             string
-	Addresses            []string
-	CpuCount             int32
-	MemoryTotalBytes     int64
-	DiskTotalBytes       int64
-	DockerVersion        string
-	AgentVersion         string
-	Os                   string
-	Arch                 string
-	JoinedWithTokenID    *uuid.UUID
-	JoinedAt             time.Time
-	LastHeartbeatAt      *time.Time
-	MemoryAvailableBytes *int64
-	CpuLoad1m            *float64
-	DiskFreeBytes        *int64
-	RunningContainers    *int32
-	DockerReachable      *bool
-	RemovedAt            *time.Time
-	BuildSlots           int32
+	ID                      uuid.UUID
+	Name                    string
+	Status                  NodeStatus
+	Draining                bool
+	Labels                  []byte
+	Hostname                string
+	Addresses               []string
+	CpuCount                int32
+	MemoryTotalBytes        int64
+	DiskTotalBytes          int64
+	DockerVersion           string
+	AgentVersion            string
+	Os                      string
+	Arch                    string
+	JoinedWithTokenID       *uuid.UUID
+	JoinedAt                time.Time
+	LastHeartbeatAt         *time.Time
+	MemoryAvailableBytes    *int64
+	CpuLoad1m               *float64
+	DiskFreeBytes           *int64
+	RunningContainers       *int32
+	DockerReachable         *bool
+	RemovedAt               *time.Time
+	BuildSlots              int32
+	AdvertiseAddress        string
+	BuildsUnavailableReason string
 }
 
 type NodeCertificate struct {
@@ -525,6 +794,12 @@ type NodeEvent struct {
 	FromStatus *NodeStatus
 	ToStatus   NodeStatus
 	Reason     string
+	CreatedAt  time.Time
+}
+
+type SecretKeyCheck struct {
+	Version    int32
+	CheckValue []byte
 	CreatedAt  time.Time
 }
 
@@ -568,4 +843,5 @@ type WorkspaceQuota struct {
 	MaxConcurrentBuilds int32
 	UpdatedBy           *uuid.UUID
 	UpdatedAt           time.Time
+	MaxMemoryMb         int32
 }

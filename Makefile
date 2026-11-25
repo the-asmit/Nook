@@ -83,6 +83,8 @@ dev-up: env ## Start Postgres, Redis, MinIO, the registry and Dex and wait until
 	@# the server has not run yet); kept while it stays valid.
 	set -a; source ./.env; set +a; \
 		go run ./cmd/nook-server registry-cert --out .nook-dev/registry --names registry,localhost,127.0.0.1
+	@# The master key for app environment variables; never overwritten.
+	@test -f .nook-dev/secrets.key || go run ./cmd/nook-server secrets init --out .nook-dev/secrets.key
 	$(COMPOSE) up --detach --wait --wait-timeout 180
 	@# Docker Desktop can silently skip publishing a port that another program
 	@# (say a native Windows PostgreSQL) already holds; 127.0.0.1:<port> would
@@ -188,7 +190,7 @@ test: ## Run unit tests with the race detector
 
 .PHONY: test-integration
 test-integration: ## Run unit + integration tests (needs Docker) with the race detector
-	go test -race -shuffle=on -count=1 -tags=integration -timeout=20m ./...
+	go test -race -shuffle=on -count=1 -tags=integration -timeout=40m ./...
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint (including integration-tagged files)
