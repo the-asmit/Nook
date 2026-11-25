@@ -1,0 +1,3 @@
+# Not needed to build the image.
+nook.toml
+*.md

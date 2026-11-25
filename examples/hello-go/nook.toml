@@ -1,0 +1,10 @@
+# Nook project configuration. `nook deploy` reads it from this folder.
+# The app's name in URLs (lower-case letters, digits, hyphens).
+app = "hello-go"
+# The port your app listens on inside its container.
+port = 8080
+# Path that answers 2xx when the app is healthy.
+health_check_path = "/healthz"
+# Resource limits: memory in MB, CPU in millicores (1000 = one CPU).
+memory_mb = 64
+cpu_millicores = 250

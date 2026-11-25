@@ -40,9 +40,10 @@ const (
 )
 
 type runner struct {
-	app        *App
-	output     string
-	serverFlag string
+	app           *App
+	output        string
+	serverFlag    string
+	workspaceFlag string
 }
 
 // Execute runs the CLI with args and returns the process exit code.
@@ -86,10 +87,13 @@ func (r *runner) rootCommand() *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error { return &usageError{err} })
 	root.PersistentFlags().StringVarP(&r.output, "output", "o", outputText, "output format: text or json")
 	root.PersistentFlags().StringVar(&r.serverFlag, "server", "", "Nook server URL (overrides NOOK_SERVER and the saved login)")
+	root.PersistentFlags().StringVarP(&r.workspaceFlag, "workspace", "w", "",
+		"workspace slug (overrides NOOK_WORKSPACE, nook.toml and 'nook workspace use')")
 	root.AddCommand(
 		r.loginCommand(), r.logoutCommand(), r.whoamiCommand(),
 		r.workspaceCommand(), r.tokenCommand(), r.versionCommand(),
 		r.nodeCommand(), r.adminCommand(),
+		r.initCommand(), r.appsCommand(), r.deployCommand(), r.deploymentsCommand(), r.buildLogsCommand(),
 	)
 	return root
 }

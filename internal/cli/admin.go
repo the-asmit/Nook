@@ -56,7 +56,61 @@ func (r *runner) adminCommand() *cobra.Command {
 	list.Flags().StringVar(&email, "email", "", "show only this email address")
 
 	users.AddCommand(list, r.setDisabledCommand(true), r.setDisabledCommand(false))
-	cmd.AddCommand(users)
+	cmd.AddCommand(users, r.quotaCommand())
+	return cmd
+}
+
+type quotaInfo struct {
+	MaxApps             int32 `json:"max_apps"`
+	MaxConcurrentBuilds int32 `json:"max_concurrent_builds"`
+	Default             bool  `json:"default"`
+}
+
+func (r *runner) quotaCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "quota", Short: "Show and set a workspace's quota"}
+	show := func(ws string, q *quotaInfo) {
+		src := "override"
+		if q.Default {
+			src = "instance default"
+		}
+		r.printf("Workspace %s: at most %d apps and %d concurrent builds (%s).\n", ws, q.MaxApps, q.MaxConcurrentBuilds, src)
+	}
+	get := &cobra.Command{
+		Use: "get <workspace>", Short: "Show a workspace's quota", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, c, err := r.authed()
+			if err != nil {
+				return err
+			}
+			var q quotaInfo
+			if err := c.do(cmd.Context(), http.MethodGet, "/api/v1/admin/workspaces/"+url.PathEscape(args[0])+"/quota", nil, &q); err != nil {
+				return err
+			}
+			return r.emit(q, func() { show(args[0], &q) })
+		},
+	}
+	var maxApps, maxBuilds int32
+	set := &cobra.Command{
+		Use: "set <workspace> --max-apps N --max-builds N", Short: "Override a workspace's quota", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if maxApps < 0 || maxBuilds < 0 {
+				return &usageError{errors.New("--max-apps and --max-builds are required")}
+			}
+			_, c, err := r.authed()
+			if err != nil {
+				return err
+			}
+			var q quotaInfo
+			body := map[string]int32{"max_apps": maxApps, "max_concurrent_builds": maxBuilds}
+			if err := c.do(cmd.Context(), http.MethodPut, "/api/v1/admin/workspaces/"+url.PathEscape(args[0])+"/quota", body, &q); err != nil {
+				return err
+			}
+			return r.emit(q, func() { show(args[0], &q) })
+		},
+	}
+	set.Flags().Int32Var(&maxApps, "max-apps", -1, "maximum number of apps")
+	set.Flags().Int32Var(&maxBuilds, "max-builds", -1, "maximum concurrent builds")
+	cmd.AddCommand(get, set)
 	return cmd
 }
 
