@@ -92,7 +92,7 @@ jobs:
 
   integration:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -100,7 +100,14 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
-      # The runner's Docker daemon hosts the testcontainers Postgres and Redis.
+      # Ubuntu 24.04 forbids unprivileged user namespaces through AppArmor
+      # (kernel.apparmor_restrict_unprivileged_userns=1); rootless BuildKit
+      # needs them. This is the fix nook-agent prints for such nodes.
+      - name: Allow unprivileged user namespaces for rootless BuildKit
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # The runner's Docker daemon hosts the testcontainers services, the
+      # builds and the apps; the tests install and remove iptables rules in
+      # its network namespace through a helper container.
       - run: make test-integration
 
   vuln:

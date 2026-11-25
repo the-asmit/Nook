@@ -76,6 +76,8 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Validate the OpenAPI spec | `make openapi-lint` |
 | CLI release archives | `make release-snapshot` (into `dist/`) |
 | Multi-arch images (server + agent) | `make docker-build`, then `make docker-run` |
+| Master key for app environment variables | `go run ./cmd/nook-server secrets init --out FILE` (`make dev-up` does it) |
+| Show the agent's egress rules | `go run ./cmd/nook-agent firewall rules` |
 
 ## Conventions
 
@@ -148,6 +150,24 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 - **Untrusted code**: Dockerfiles and source archives are hostile input.
   Extract only through `archive.Extract`; run builds only in the locked-down
   container `internal/agent` creates.
+- **Running apps**: releases go through `rollout` (never start containers
+  any other way); deployment and instance state changes are
+  compare-and-set updates. A deployment is image + environment snapshot;
+  environment changes and rollbacks create new deployments (`config`,
+  `rollback`). Placement happens only in `scheduler.Place` inside a
+  transaction that locks the workspace row, then node rows (in that
+  order). Agents restart crashed containers themselves (no Docker
+  restart policy).
+- **Environment values** are sealed with `secrets.Keyring` bound to app
+  and key (`secrets.EnvAAD`); plaintext exists only in the
+  `StartInstance` command. Never log, audit, return or put in errors a
+  value; secret values are never returned by the API at all. Members set
+  plain variables; secrets need admins or owners.
+- **App containers** keep the hardening in `appContainerSpec`: all
+  capabilities dropped, no-new-privileges, limits, no host mounts or
+  Docker socket, own network, port published only on the advertise
+  address. Container egress is filtered by the agent's firewall; any new
+  container kind joins a filtered bridge.
 - **Spelling**: code and prose use US English (`canceled`); the API and
   database status value is `cancelled`, as specified.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
@@ -177,9 +197,9 @@ nook/
 │   ├── openapi.yaml           # OpenAPI 3.1 contract for every HTTP endpoint (tested against the router)
 │   └── redocly.yaml           # lint rules for the spec (make openapi-lint)
 ├── cmd/                       # one folder per binary; main.go only wires dependencies
-│   ├── nook-server/           # control plane entry point (+ `registry-cert` subcommand)
+│   ├── nook-server/           # control plane entry point (+ `registry-cert`, `secrets init|add-key|rotate-key`)
 │   ├── nook/                  # CLI entry point
-│   ├── nook-agent/            # worker agent entry point: `join`, `run`, `version`
+│   ├── nook-agent/            # worker agent entry point: `join`, `run`, `firewall rules|remove`, `version`
 │   └── nook-gateway/          # (planned) gateway
 ├── internal/
 │   ├── platform/              # shared infrastructure used by every binary
@@ -191,6 +211,7 @@ nook/
 │   │   ├── health/            # dependency probes for /readyz and startup waits
 │   │   └── httpserver/        # server lifecycle, graceful shutdown, common Gin middleware
 │   ├── server/                # control plane: config (incl. TLS rules) + startup/shutdown wiring
+│   │   ├── testdata/testapp/  # tiny app the runtime integration tests release (built and pushed by the tests)
 │   │   ├── api/               # Gin router, ops endpoints, /api/v1 JSON handlers
 │   │   └── web/               # server-rendered pages: sign-in, sign-out, not-invited, device approval
 │   ├── store/                 # sqlc: queries/*.sql, generated *.gen.go, sqlc.yaml, transactions
@@ -208,14 +229,18 @@ nook/
 │   ├── objstore/              # S3-compatible storage (SigV4): presigned upload/download URLs, verified HEAD, small objects
 │   ├── registry/              # private registry: repository-scoped ES256 tokens (x5c chain to the CA) + registry API client
 │   ├── archive/               # reproducible source archives (ignore files) and hostile-archive-safe extraction (os.Root)
-│   ├── apps/                  # apps, quotas, deployments and verified source uploads (tenant-scoped)
-│   ├── builds/                # build queue (Redis Streams), dispatcher, agent results, live logs, janitor, registry GC windows
+│   ├── apps/                  # apps, quotas, deployments, verified uploads, settings, stop/start, rollback, encrypted env (tenant-scoped)
+│   ├── builds/                # deployment queue (Redis Streams), dispatcher, agent results, live logs, janitor, registry GC windows
+│   ├── rollout/               # releases: placement → StartInstance → health-gated switch → drain; desired state, reconciliation, app log streams
+│   ├── secrets/               # AES-256-GCM keyring (versioned master key), key checks, rotation
 │   ├── cli/                   # Cobra commands, API client, config file (0600) for the nook CLI
 │   ├── version/               # build info set via ldflags
 │   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex, MinIO, registry (integration build tag only)
-│   ├── scheduler/             # (planned) placement + failover
+│   ├── scheduler/             # best-fit placement on reserved memory/CPU, serialized by node row locks (failover: planned)
 │   ├── agent/                 # worker agent: state dir, join, mTLS stream, heartbeats, Docker client, renewal, local health,
-│   │                          #   builds in locked-down rootless BuildKit containers
+│   │                          #   builds in locked-down rootless BuildKit containers (custom seccomp, userns check),
+│   │                          #   app instances (pull by digest, hardened containers, health checks, crash backoff,
+│   │                          #   adoption), log streaming, egress firewall (iptables via a helper container)
 │   └── gateway/               # (planned) gateway logic
 ├── migrations/                # goose SQL migrations, embedded into the binary by migrations.go
 ├── tools/

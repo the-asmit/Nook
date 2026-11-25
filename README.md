@@ -29,8 +29,17 @@ Nook is built in stages. So far:
    worker node builds the image with rootless BuildKit in a locked-down
    container and pushes it to Nook's private registry, where it is stored
    by digest.
+5. **Running apps**: every successful build is released: the scheduler
+   places the app on a node, the agent runs it in a locked-down container
+   (own network, no capabilities, limits, egress firewall), and a health
+   check gates the switch, so the previous version serves until the new
+   one is healthy and a failed release changes nothing. Crashes restart
+   with backoff; crash loops are reported. `nook env` manages variables
+   and secrets (encrypted at rest; changes release without a rebuild),
+   `nook logs --follow` streams output, `nook rollback` and
+   `nook apps stop/start` do what they say.
 
-Running the built images, the gateway and the dashboard come later.
+The gateway (public URLs) and the dashboard come later.
 
 ## Prerequisites
 
@@ -95,18 +104,33 @@ bin/nook node list                       # ready, with CPU, memory, disk and con
 bin/nook node inspect <name>             # live Docker information from the agent
 ```
 
-Then deploy an example app (run the agent with `NOOK_AGENT_BUILD_NETWORK=nook-dev`
-so build containers can reach the development registry):
+Then deploy an example app. Run the agent with the development settings:
+builds on `nook-dev` (where the registry is), apps published on
+127.0.0.1, images pulled from localhost:5000:
+
+```sh
+export NOOK_AGENT_BUILD_NETWORK=nook-dev NOOK_AGENT_ADVERTISE_ADDR=127.0.0.1 \
+  NOOK_AGENT_REGISTRY_PULL_ADDR=localhost:5000
+bin/nook-agent run
+```
 
 ```sh
 cd examples/hello-go
-../../bin/nook deploy                     # pack, upload, follow the build, print the image digest
-../../bin/nook deployments list hello-go
-../../bin/nook build-logs hello-go
+../../bin/nook deploy                     # pack, upload, build, release; ends with the app's address
+curl http://127.0.0.1:<port>/             # the address nook deploy printed
+../../bin/nook apps info hello-go         # desired state, live deployment, instance, restarts
+../../bin/nook env set hello-go GREETING=hi        # releases the change without a rebuild
+../../bin/nook logs hello-go --follow
+../../bin/nook rollback hello-go
 ```
 
-`nook init` writes a `nook.toml` for your own project; `nook apps`,
-`nook deployments cancel` and `nook build-logs --follow` cover the rest.
+`nook init` writes a `nook.toml` for your own project (port, health check
+path, memory, CPU, startup timeout, read-only root file system);
+`nook apps`, `nook deployments`, `nook build-logs` and `nook env` cover
+the rest. Secrets: `nook env set <app> KEY=- --secret` reads the value
+from standard input (workspace admins and owners only). The master key
+lives in `.nook-dev/secrets.key` (created by `make dev-up`; back it up
+apart from the database in production).
 
 Stop the server with Ctrl-C (it drains in-flight requests), and the stack with
 `make dev-down` (data volumes are kept). To use Google instead of Dex,
