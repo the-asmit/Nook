@@ -38,9 +38,9 @@ type Dex struct {
 	Passwords map[string]string
 }
 
-// repoRoot locates the repository from this source file, so helpers work
+// RepoRoot locates the repository from this source file, so helpers work
 // whatever package directory the test runs in.
-func repoRoot() string {
+func RepoRoot() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Join(filepath.Dir(file), "..", "..")
 }
@@ -97,7 +97,7 @@ func StartDex(ctx context.Context, port int, redirectURI string) (*Dex, testcont
 		testcontainers.WithCmd("dex", "serve", "/etc/dex/nook-dev.yaml"),
 		testcontainers.WithEnv(env),
 		testcontainers.WithFiles(testcontainers.ContainerFile{
-			HostFilePath:      filepath.Join(repoRoot(), "deploy", "compose", "dex", "config.yaml"),
+			HostFilePath:      filepath.Join(RepoRoot(), "deploy", "compose", "dex", "config.yaml"),
 			ContainerFilePath: "/etc/dex/nook-dev.yaml",
 			FileMode:          0o644,
 		}),

@@ -1,0 +1,57 @@
+# CNCF Distribution configuration for Nook's private image registry.
+# Shared by the development stack and the integration tests; production
+# uses the same file with its own environment overrides (REGISTRY_*).
+#
+# Credentials and endpoints come from the environment:
+#   REGISTRY_STORAGE_S3_ACCESSKEY, REGISTRY_STORAGE_S3_SECRETKEY,
+#   REGISTRY_STORAGE_S3_REGIONENDPOINT, REGISTRY_STORAGE_S3_BUCKET
+# See docs/decisions for why the registry uses token authentication.
+version: 0.1
+log:
+  level: info
+  formatter: json
+  fields:
+    service: nook-registry
+storage:
+  s3:
+    region: us-east-1
+    regionendpoint: http://minio:9000
+    bucket: nook-registry
+    forcepathstyle: true
+    rootdirectory: /registry
+  # Blob downloads go through the registry rather than redirecting clients
+  # to the storage service, which nodes cannot (and should not) reach.
+  redirect:
+    disable: true
+  delete:
+    enabled: true
+  maintenance:
+    uploadpurging:
+      enabled: true
+      age: 24h
+      interval: 1h
+      dryrun: false
+http:
+  addr: :5000
+  # Health endpoint for the container healthcheck, on loopback only.
+  debug:
+    addr: 127.0.0.1:5001
+  tls:
+    certificate: /certs/tls.crt
+    key: /certs/tls.key
+    minimumtls: tls1.2
+  headers:
+    X-Content-Type-Options: [nosniff]
+auth:
+  token:
+    # Required by the registry, but no client follows it: agents receive
+    # their tokens from the control plane inside build commands.
+    realm: https://nook.invalid/registry/token
+    service: nook-registry
+    issuer: nook
+    rootcertbundle: /certs/ca.crt
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3
