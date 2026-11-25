@@ -39,6 +39,9 @@ func TestDeployExampleWithTheCLI(t *testing.T) {
 			t.Errorf("stderr lacks %q:\n%s", want, stderr)
 		}
 	}
+	if n := strings.Count(stderr, "queued"); n != 1 {
+		t.Errorf("the queued status is printed %d times:\n%s", n, stderr)
+	}
 	for _, want := range []string{"go build", "Image: " + shared.storage.Registry.NetworkAddr + "/", "[nook] releasing deployment #1",
 		"Deployment #1 of hello-go is live.", "serving at http://127.0.0.1:"} {
 		if !strings.Contains(stdout, want) {
@@ -88,10 +91,12 @@ func TestDeployExampleWithTheCLI(t *testing.T) {
 
 func TestBrokenDockerfileFailsWithReadableLog(t *testing.T) {
 	b := startBuildEnv(t, nil)
+	b.createApp(b.alice, b.ws, "broken")
 	dir := project(t, map[string]string{
-		"Dockerfile": "FROM alpine:3.23\nRUN echo compiling... && false\n",
+		"Dockerfile": "FROM __BASE__\nRUN echo compiling... && false\n",
 		"nook.toml":  "app = \"broken\"\nport = 8080\nhealth_check_path = \"/\"\nmemory_mb = 64\ncpu_millicores = 100\n",
 	})
+	b.withBase(b.ws, "broken", dir)
 	code, stdout, stderr := b.cliFor(b.alice).run("deploy", "--dir", dir)
 	if code == 0 {
 		t.Fatalf("a failing build exited 0\n%s", stdout)

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/the-asmit/nook/internal/agent"
 	"github.com/the-asmit/nook/internal/pki"
 	"github.com/the-asmit/nook/internal/platform/config"
+	"github.com/the-asmit/nook/internal/testinfra"
 	agentv1 "github.com/the-asmit/nook/proto/nook/agent/v1"
 )
 
@@ -99,15 +101,17 @@ func agentConfig(t *testing.T, stateDir string) agent.Config {
 
 // agentConfigWith is agentConfig with overrides. Every test agent installs
 // the egress firewall under chains of its own, removed when the test ends.
-// Builds use the shared network (where the registry is), which the agent
-// does not filter.
+// Builds run on the filtered nook-builds network, as in production, and
+// reach the registry by its address on the shared network (allowed).
 func agentConfigWith(t *testing.T, stateDir string, overrides map[string]string) agent.Config {
 	t.Helper()
 	environ := map[string]string{
 		"NOOK_AGENT_STATE_DIR": stateDir, "NOOK_AGENT_HEALTH_ADDR": "127.0.0.1:0",
 		"NOOK_AGENT_RECONNECT_MIN": "50ms", "NOOK_AGENT_RECONNECT_MAX": "500ms",
-		"NOOK_AGENT_RENEW_CHECK_INTERVAL": "1h", "NOOK_AGENT_BUILD_NETWORK": shared.storage.Network.Name,
-		"NOOK_AGENT_ADVERTISE_ADDR": "127.0.0.1", "NOOK_AGENT_REGISTRY_PULL_ADDR": shared.storage.Registry.Addr,
+		"NOOK_AGENT_RENEW_CHECK_INTERVAL": "1h",
+		"NOOK_AGENT_BUILD_HOSTS":          testinfra.RegistryAlias + "=" + registryIP(t),
+		"NOOK_AGENT_BUILD_EGRESS_ALLOW":   registryIP(t),
+		"NOOK_AGENT_ADVERTISE_ADDR":       "127.0.0.1", "NOOK_AGENT_REGISTRY_PULL_ADDR": shared.storage.Registry.Addr,
 		"NOOK_AGENT_FIREWALL_CHAIN": testChain(),
 	}
 	maps.Copy(environ, overrides)
@@ -293,4 +297,22 @@ func removeNodeContainers(t *testing.T, ctx context.Context, nodeID string) {
 			_, _ = d.NetworkRemove(ctx, "nook-app-"+app, dockerclient.NetworkRemoveOptions{})
 		}
 	}
+}
+
+var sharedRegistryIP struct {
+	once sync.Once
+	ip   string
+	err  error
+}
+
+// registryIP is the shared registry's address on the shared network.
+func registryIP(t *testing.T) string {
+	t.Helper()
+	sharedRegistryIP.once.Do(func() {
+		sharedRegistryIP.ip, sharedRegistryIP.err = shared.storage.Registry.ContainerIP(context.Background())
+	})
+	if sharedRegistryIP.err != nil {
+		t.Fatal(sharedRegistryIP.err)
+	}
+	return sharedRegistryIP.ip
 }

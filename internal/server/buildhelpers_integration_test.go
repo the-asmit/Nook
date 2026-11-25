@@ -19,6 +19,7 @@ import (
 	"github.com/the-asmit/nook/internal/pki"
 	"github.com/the-asmit/nook/internal/registry"
 	"github.com/the-asmit/nook/internal/store"
+	"github.com/the-asmit/nook/internal/testinfra"
 )
 
 // statusCancelled is the API status of a canceled deployment.
@@ -123,10 +124,37 @@ type createResp struct {
 	} `json:"upload"`
 }
 
+// withBase replaces __BASE__ in dir's Dockerfile with a busybox base image
+// pushed into the app's repository, so builds need no internet access
+// (the build token covers that repository).
+func (b *buildEnv) withBase(ws, app, dir string) {
+	b.t.Helper()
+	path := filepath.Join(dir, "Dockerfile")
+	data, err := os.ReadFile(path)
+	if err != nil || !bytes.Contains(data, []byte("__BASE__")) {
+		return
+	}
+	var wsID, appID string
+	if err = b.db.QueryRow(context.Background(), `SELECT a.workspace_id::text, a.id::text FROM apps a JOIN workspaces w ON w.id = a.workspace_id
+		WHERE w.slug = $1 AND a.slug = $2 AND a.deleted_at IS NULL`, ws, app).Scan(&wsID, &appID); err != nil {
+		b.t.Fatalf("base image for %s/%s: %v", ws, app, err)
+	}
+	layer, err := testinfra.BusyboxLayer(context.Background())
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	repo := wsID + "/" + appID
+	ref := shared.storage.Registry.NetworkAddr + "/" + repo + "@" + pushImage(b.t, repo, "base", layer, map[string]any{"Cmd": []string{"sh"}})
+	if err = os.WriteFile(path, bytes.ReplaceAll(data, []byte("__BASE__"), []byte(ref)), 0o600); err != nil { //nolint:gosec // G703: the test's own project folder.
+		b.t.Fatal(err)
+	}
+}
+
 // startDeploy packs dir and creates a deployment for it, returning the
 // archive and the upload instructions.
 func (b *buildEnv) startDeploy(u user, ws, app, dir string) ([]byte, createResp) {
 	b.t.Helper()
+	b.withBase(ws, app, dir)
 	var buf bytes.Buffer
 	res, err := archive.Pack(dir, &buf, archive.PackOptions{})
 	if err != nil {
@@ -217,7 +245,7 @@ func registryClient(t *testing.T) *registry.Client {
 // helloDockerfile builds quickly and prints marker in its log.
 func helloDockerfile(marker string) map[string]string {
 	return map[string]string{
-		"Dockerfile": "FROM alpine:3.23\nCOPY marker.txt /marker.txt\nRUN cat /marker.txt\n",
+		"Dockerfile": "FROM __BASE__\nCOPY marker.txt /marker.txt\nRUN cat /marker.txt\n",
 		"marker.txt": marker + "\n",
 	}
 }
@@ -225,7 +253,7 @@ func helloDockerfile(marker string) map[string]string {
 // slowDockerfile runs long enough to be caught building.
 func slowDockerfile(marker string, seconds int) map[string]string {
 	return map[string]string{
-		"Dockerfile": "FROM alpine:3.23\nCOPY marker.txt /marker.txt\nRUN cat /marker.txt && sleep " + strconv.Itoa(seconds) + "\n",
+		"Dockerfile": "FROM __BASE__\nCOPY marker.txt /marker.txt\nRUN cat /marker.txt && sleep " + strconv.Itoa(seconds) + "\n",
 		"marker.txt": marker + "\n",
 	}
 }

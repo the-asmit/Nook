@@ -20,6 +20,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/moby/moby/client"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
@@ -63,9 +64,17 @@ func newBuildFixture(t *testing.T) *buildFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registryIP, err := s.Registry.ContainerIP(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Builds run on nook-builds and reach the registry by its address.
 	cfg, err := config.Load[Config](map[string]string{
-		"NOOK_AGENT_STATE_DIR": filepath.Join(dir, "agent"), "NOOK_AGENT_BUILD_NETWORK": s.Network.Name,
-		"NOOK_AGENT_ADVERTISE_ADDR": "127.0.0.1",
+		"NOOK_AGENT_STATE_DIR": filepath.Join(dir, "agent"), "NOOK_AGENT_ADVERTISE_ADDR": "127.0.0.1",
+		"NOOK_AGENT_BUILD_HOSTS": testinfra.RegistryAlias + "=" + registryIP, "NOOK_AGENT_BUILD_EGRESS_ALLOW": registryIP,
+		// A build network of its own: agents of other test packages filter
+		// nook-builds with their own registry allowed.
+		"NOOK_AGENT_BUILD_NETWORK": "nook-builds-" + strings.ToLower(nodeSuffix()),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +83,10 @@ func newBuildFixture(t *testing.T) *buildFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = d.close() })
+	t.Cleanup(func() {
+		_, _ = d.client.NetworkRemove(context.Background(), cfg.BuildNetwork, client.NetworkRemoveOptions{})
+		_ = d.close()
+	})
 	out := newOutbox()
 	nodeID := uuid.NewV7().String()
 	b := newBuilder(&cfg, d, out, slog.New(slog.NewTextHandler(io.Discard, nil)), func() string { return nodeID }, ca.CertificatePEM)
@@ -82,6 +94,26 @@ func newBuildFixture(t *testing.T) *buildFixture {
 	issuer := registry.NewIssuer(ca, "nook", "nook-registry")
 	regCfg := &registry.Config{Addr: s.Registry.Addr, Service: "nook-registry", Issuer: "nook", RequestTimeout: 30 * time.Second}
 	return &buildFixture{t: t, ca: ca, storage: s, objects: objects, issuer: issuer, registry: registry.NewClient(regCfg, issuer, ca), builder: b, outbox: out}
+}
+
+// base pushes the busybox base image into repo (builds pull base images
+// with the build's token, which covers that repository) and returns the
+// reference to use in FROM.
+func (f *buildFixture) base(repo string) string {
+	f.t.Helper()
+	layer, err := testinfra.BusyboxLayer(context.Background())
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	token, err := f.issuer.Token("test", time.Minute, registry.RepositoryAccess(repo, registry.ActionPush, registry.ActionPull))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	digest, err := testinfra.PushImage(context.Background(), f.storage.Registry.Addr, f.ca.Pool(), token, repo, "base", layer, map[string]any{"Cmd": []string{"sh"}})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return f.storage.Registry.NetworkAddr + "/" + repo + "@" + digest
 }
 
 // command packs files (a project), uploads the archive and returns a
@@ -153,7 +185,7 @@ func (f *buildFixture) await(id string, within time.Duration) (*agentv1.BuildFin
 func TestBuildPushesToTheRegistry(t *testing.T) {
 	f := newBuildFixture(t)
 	cmd := f.command(map[string]string{
-		"Dockerfile": "FROM alpine:3.23\nCOPY hello.txt /hello.txt\nRUN cat /hello.txt && id\n",
+		"Dockerfile": "FROM " + f.base("ws1/app1") + "\nCOPY hello.txt /hello.txt\nRUN cat /hello.txt && id\n",
 		"hello.txt":  "hello from nook\n",
 	}, 5*time.Minute)
 	if err := f.builder.start(cmd); err != nil {
@@ -181,7 +213,7 @@ func TestBuildPushesToTheRegistry(t *testing.T) {
 
 func TestFailingDockerfile(t *testing.T) {
 	f := newBuildFixture(t)
-	cmd := f.command(map[string]string{"Dockerfile": "FROM alpine:3.23\nRUN echo about to fail && exit 3\n"}, 5*time.Minute)
+	cmd := f.command(map[string]string{"Dockerfile": "FROM " + f.base("ws1/app1") + "\nRUN echo about to fail && exit 3\n"}, 5*time.Minute)
 	if err := f.builder.start(cmd); err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +226,7 @@ func TestFailingDockerfile(t *testing.T) {
 
 func TestBuildTimeLimit(t *testing.T) {
 	f := newBuildFixture(t)
-	cmd := f.command(map[string]string{"Dockerfile": "FROM alpine:3.23\nRUN sleep 600\n"}, 20*time.Second)
+	cmd := f.command(map[string]string{"Dockerfile": "FROM " + f.base("ws1/app1") + "\nRUN sleep 600\n"}, 20*time.Second)
 	start := time.Now()
 	if err := f.builder.start(cmd); err != nil {
 		t.Fatal(err)
@@ -210,7 +242,7 @@ func TestBuildTimeLimit(t *testing.T) {
 
 func TestCancelRunningBuild(t *testing.T) {
 	f := newBuildFixture(t)
-	cmd := f.command(map[string]string{"Dockerfile": "FROM alpine:3.23\nRUN echo started && sleep 600\n"}, 10*time.Minute)
+	cmd := f.command(map[string]string{"Dockerfile": "FROM " + f.base("ws1/app1") + "\nRUN echo started && sleep 600\n"}, 10*time.Minute)
 	if err := f.builder.start(cmd); err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +272,9 @@ func TestCancelRunningBuild(t *testing.T) {
 
 func TestPushWithTokenForAnotherRepositoryIsAnInfraError(t *testing.T) {
 	f := newBuildFixture(t)
-	cmd := f.command(map[string]string{"Dockerfile": "FROM alpine:3.23\nRUN true\n"}, 5*time.Minute)
+	// The base comes from the repository the token covers; pushing to
+	// ws1/app1 is what fails.
+	cmd := f.command(map[string]string{"Dockerfile": "FROM " + f.base("ws2/other") + "\nRUN true\n"}, 5*time.Minute)
 	cmd.RegistryToken, _ = f.issuer.Token("test-node", time.Hour, registry.RepositoryAccess("ws2/other", registry.ActionPush, registry.ActionPull))
 	if err := f.builder.start(cmd); err != nil {
 		t.Fatal(err)
@@ -306,4 +340,9 @@ func maliciousArchive(t *testing.T) []byte {
 	_ = tw.Close()
 	_ = gz.Close()
 	return buf.Bytes()
+}
+
+// nodeSuffix is a short random name part.
+func nodeSuffix() string {
+	return strings.ReplaceAll(uuid.NewV4().String(), "-", "")[:8]
 }

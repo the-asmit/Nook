@@ -166,6 +166,8 @@ func TestExpiredRevokedAndDisabledSessionsAreRejected(t *testing.T) {
 	}
 	for name, invalidate := range cases {
 		t.Run(name, func(t *testing.T) {
+			// The cases run in random (map) order; each starts clean.
+			e.exec("DELETE FROM sessions")
 			e.exec("UPDATE users SET disabled_at = NULL")
 			b := e.browser()
 			b.signIn(testinfra.DexAlice)

@@ -440,3 +440,17 @@ func TestMasterKeyChecksAndRotation(t *testing.T) {
 		t.Fatal("rotation not audited")
 	}
 }
+
+// TestStoppingOnARemovedNodeCompletes: an instance whose node was removed
+// can never confirm a stop; stopping the app records it as stopped, so
+// it holds no reservation and a deleted app can be purged.
+func TestStoppingOnARemovedNodeCompletes(t *testing.T) {
+	r := startRuntimeEnv(t, nil)
+	r.newRuntimeApp(r.alice, r.ws, "web", nil)
+	r.waitLive(r.alice, r.ws, "web", r.release(r.ws, "web"))
+	expectStatus(t, r.as(r.alice, http.MethodDelete, "/api/v1/nodes/builder-1", nil), http.StatusNoContent, "remove node")
+	expectStatus(t, r.as(r.alice, http.MethodPost, appURL(r.ws, "web")+"/stop", nil), http.StatusOK, "stop")
+	eventually(t, 30*time.Second, "the instance to be stopped", func() bool {
+		return r.count("SELECT count(*) FROM app_instances WHERE state IN ('starting', 'healthy', 'unhealthy', 'stopping')") == 0
+	})
+}

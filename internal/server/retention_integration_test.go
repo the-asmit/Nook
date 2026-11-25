@@ -3,18 +3,10 @@
 package server
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"crypto/tls"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"runtime"
 	"testing"
 	"time"
 	"uuid"
@@ -23,6 +15,7 @@ import (
 	"github.com/the-asmit/nook/internal/pki"
 	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/registry"
+	"github.com/the-asmit/nook/internal/testinfra"
 )
 
 // appRepo returns an app's ID and registry repository.
@@ -201,54 +194,9 @@ func pushImage(t *testing.T, repo, tag string, layer []byte, runConfig map[strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	hc := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: ca.Pool()}}}
-	base := "https://" + shared.storage.Registry.Addr
-	type result struct {
-		StatusCode int
-		Header     http.Header
-	}
-	call := func(method, target, ctype string, body []byte) result {
-		req, _ := http.NewRequestWithContext(context.Background(), method, target, bytes.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+token)
-		if ctype != "" {
-			req.Header.Set("Content-Type", ctype)
-		}
-		resp, doErr := hc.Do(req)
-		if doErr != nil {
-			t.Fatal(doErr)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return result{StatusCode: resp.StatusCode, Header: resp.Header}
-	}
-	digest := func(b []byte) string { s := sha256.Sum256(b); return "sha256:" + hex.EncodeToString(s[:]) }
-	cfg, err := json.Marshal(map[string]any{
-		"architecture": runtime.GOARCH, "os": "linux", "config": runConfig,
-		"rootfs": map[string]any{"type": "layers", "diff_ids": []string{digest(layer)}},
-	})
+	digest, err := testinfra.PushImage(context.Background(), shared.storage.Registry.Addr, ca.Pool(), token, repo, tag, layer, runConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, blob := range [][]byte{cfg, layer} {
-		start := call(http.MethodPost, base+"/v2/"+repo+"/blobs/uploads/", "", nil)
-		loc, err := url.Parse(start.Header.Get("Location"))
-		if err != nil || start.StatusCode != http.StatusAccepted {
-			t.Fatalf("start upload: %d", start.StatusCode)
-		}
-		q := loc.Query()
-		q.Set("digest", digest(blob))
-		loc.RawQuery = q.Encode()
-		if r := call(http.MethodPut, base+loc.RequestURI(), "application/octet-stream", blob); r.StatusCode != http.StatusCreated {
-			t.Fatalf("finish upload: %d", r.StatusCode)
-		}
-	}
-	manifest, _ := json.Marshal(map[string]any{
-		"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json",
-		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json", "digest": digest(cfg), "size": len(cfg)},
-		"layers": []any{map[string]any{"mediaType": "application/vnd.oci.image.layer.v1.tar", "digest": digest(layer), "size": len(layer)}},
-	})
-	if r := call(http.MethodPut, base+"/v2/"+repo+"/manifests/"+tag, "application/vnd.oci.image.manifest.v1+json", manifest); r.StatusCode != http.StatusCreated {
-		t.Fatalf("push manifest: %d", r.StatusCode)
-	}
-	return digest(manifest)
+	return digest
 }

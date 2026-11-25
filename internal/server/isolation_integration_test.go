@@ -6,14 +6,17 @@ import (
 	"context"
 	"net/http"
 	"net/netip"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
+
+	"github.com/the-asmit/nook/internal/testinfra"
 )
 
 // TestCrashesAreRestartedAndCrashLoopsDetected: a killed app process is
@@ -204,12 +207,19 @@ func startStandIn(t *testing.T, name, subnet, ip string) {
 }
 
 // fetchFrom runs wget in a throwaway container on network nw.
-func fetchFrom(t *testing.T, nw, url string) bool {
+func fetchFrom(t *testing.T, nw, target string) bool {
+	t.Helper()
+	return runProbe(t, nw, []string{"wget", "-q", "-T", "3", "-O", "-", target})
+}
+
+// runProbe runs cmd in a throwaway busybox container on network nw and
+// reports whether it succeeded.
+func runProbe(t *testing.T, nw string, cmd []string) bool {
 	t.Helper()
 	ctx := context.Background()
 	d := dockerClient(t)
 	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config:     &container.Config{Image: standInImage, Cmd: []string{"wget", "-q", "-T", "3", "-O", "-", url}},
+		Config:     &container.Config{Image: standInImage, Cmd: cmd},
 		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(nw)},
 	})
 	if err != nil {
@@ -279,74 +289,97 @@ func TestAppEgressIsFiltered(t *testing.T) {
 	}
 }
 
-// TestBuildEgressIsFiltered: build containers run on the agent's own
-// network (nook-builds), whose bridge the firewall filters. A container
-// on that network, as a build container is, reaches the public stand-in
-// but not the metadata stand-in; the registry the builds
-// push to is reachable once allowed. (A real build would first need
-// internet access for its base image, which tests do not rely on.)
+// TestBuildEgressIsFiltered runs a real build (its base image comes from
+// the registry, so it needs no internet) whose RUN steps probe the
+// network: the registry, which builds push to, is reachable; the metadata
+// stand-in and the node itself (the build network's gateway, on a port the
+// node publishes) are not; the public stand-in is. An ordinary container
+// reaches the metadata stand-in and the node port, which shows the
+// blocks are the agent's firewall.
 func TestBuildEgressIsFiltered(t *testing.T) {
 	startStandIn(t, "nook-test-metadata", "169.254.169.0/24", metadataStandIn)
 	startStandIn(t, "nook-test-public", "198.51.100.0/24", publicStandIn)
-	if !fetchFrom(t, "bridge", "http://"+metadataStandIn+"/") {
-		t.Fatal("the metadata stand-in is not reachable from an ordinary container; the test proves nothing")
+	b := startBuildEnv(t, nil)
+	nodePort := postgresPort(t)
+	if !fetchFrom(t, "bridge", "http://"+metadataStandIn+"/") || !tcpFrom(t, "bridge", "172.17.0.1", nodePort) {
+		t.Fatal("the stand-ins are not reachable from an ordinary container; the test proves nothing")
 	}
-	registryIP := registryAddress(t)
-	startBuildEnvWith(t, nil, map[string]string{
-		"NOOK_AGENT_BUILD_NETWORK": "nook-builds", "NOOK_AGENT_BUILD_EGRESS_ALLOW": registryIP,
-	})
-	if !fetchFrom(t, "nook-builds", "http://"+publicStandIn+"/") {
-		t.Fatal("the public stand-in is not reachable from the build network")
+	gateway := networkGateway(t, "nook-builds")
+	b.createApp(b.alice, b.ws, "probe")
+	probe := func(name, host, port string) string {
+		return "RUN (nc -z -w 3 " + host + " " + port + " && echo " + name + "-REACHABLE) || echo " + name + "-BLOCKED\n"
 	}
-	if fetchFrom(t, "nook-builds", "http://"+metadataStandIn+"/") {
-		t.Fatal("the metadata stand-in is reachable from the build network")
+	n := b.deploy(b.alice, b.ws, "probe", project(t, map[string]string{
+		"Dockerfile": "FROM __BASE__\n" +
+			probe("REGISTRY", testinfra.RegistryAlias, "5000") +
+			probe("METADATA", metadataStandIn, "80") +
+			probe("NODE", gateway, nodePort) +
+			probe("PUBLIC", publicStandIn, "80"),
+	}))
+	d := b.waitStatus(b.alice, b.ws, "probe", n, 3*time.Minute, "built", "failed")
+	log := b.buildLog(b.alice, b.ws, "probe", n)
+	// Output lines look like "#7 0.512 METADATA-BLOCKED"; the echoed RUN
+	// commands contain the markers too, so only output lines count.
+	output := func(marker string) bool {
+		return regexp.MustCompile(`(?m)^#\d+ \d+\.\d+ ` + marker + `$`).MatchString(log)
 	}
-	// The allowed registry answers (HTTP on its TLS port fails the
-	// request, but the connection is made: wget reports a server error
-	// rather than a refused or timed-out connection).
-	if out := fetchOutput(t, "nook-builds", "http://"+registryIP+":5000/v2/"); strings.Contains(out, "refused") || strings.Contains(out, "timed out") {
-		t.Fatalf("the allowed registry is not reachable from the build network: %s", out)
+	for _, want := range []string{"REGISTRY-REACHABLE", "METADATA-BLOCKED", "NODE-BLOCKED", "PUBLIC-REACHABLE"} {
+		if !output(want) {
+			t.Errorf("no %s in the build output", want)
+		}
+	}
+	if d.Status != "built" || t.Failed() {
+		t.Fatalf("deployment %s; build log:\n%s", d.Status, log)
 	}
 }
 
-// registryAddress is the test registry's address on the shared network.
-func registryAddress(t *testing.T) string {
+// postgresPort is a port the node publishes (the shared Postgres).
+func postgresPort(t *testing.T) string {
 	t.Helper()
-	ip, err := shared.storage.Registry.ContainerIP(context.Background())
+	u, err := url.Parse(shared.pgAdminURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return ip
+	return u.Port()
 }
 
-// fetchOutput runs wget like fetchFrom and returns its output.
-func fetchOutput(t *testing.T, nw, url string) string {
+// networkGateway is a Docker network's gateway address (the node).
+func networkGateway(t *testing.T, name string) string {
 	t.Helper()
-	ctx := context.Background()
-	d := dockerClient(t)
-	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config:     &container.Config{Image: standInImage, Cmd: []string{"sh", "-c", "wget -q -T 3 -O - " + url + " 2>&1; true"}},
-		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(nw)},
-	})
-	if err != nil {
-		t.Fatal(err)
+	res, err := dockerClient(t).NetworkInspect(context.Background(), name, client.NetworkInspectOptions{})
+	if err != nil || len(res.Network.IPAM.Config) == 0 {
+		t.Fatalf("inspect %s: %v", name, err)
 	}
-	defer func() { _, _ = d.ContainerRemove(ctx, created.ID, client.ContainerRemoveOptions{Force: true}) }()
-	wait := d.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNextExit})
-	if _, err = d.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
-		t.Fatal(err)
+	return res.Network.IPAM.Config[0].Gateway.String()
+}
+
+// tcpFrom reports whether a container on network nw connects to host:port.
+func tcpFrom(t *testing.T, nw, host, port string) bool {
+	t.Helper()
+	return runProbe(t, nw, []string{"nc", "-z", "-w", "3", host, port})
+}
+
+// TestRestartCountSurvivesAgentRestarts: an instance's restart count is
+// restored when a restarted agent adopts its container.
+func TestRestartCountSurvivesAgentRestarts(t *testing.T) {
+	r := startRuntimeEnvWith(t, nil, map[string]string{"NOOK_AGENT_RESTART_BACKOFF_MIN": "200ms", "NOOK_AGENT_RESTART_BACKOFF_MAX": "1s"})
+	r.newRuntimeApp(r.alice, r.ws, "web", nil)
+	r.waitLive(r.alice, r.ws, "web", r.release(r.ws, "web"))
+	crashAndWait := func(want int32) {
+		t.Helper()
+		_, _ = get(r.appBase(r.alice, r.ws, "web") + "/crash")
+		eventually(t, time.Minute, "restart "+itoa(want), func() bool {
+			a := r.app(r.alice, r.ws, "web")
+			return a.Instance != nil && a.Instance.State == "healthy" && a.Instance.RestartCount == want
+		})
 	}
-	select {
-	case <-wait.Result:
-	case waitErr := <-wait.Error:
-		t.Fatal(waitErr)
+	crashAndWait(1)
+	r.agent.stop()
+	if ok, _ := r.agent.exited(15 * time.Second); !ok {
+		t.Fatal("agent did not stop")
 	}
-	rc, err := d.ContainerLogs(ctx, created.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = rc.Close() }()
-	var sb strings.Builder
-	_, _ = stdcopy.StdCopy(&sb, &sb, rc)
-	return sb.String()
+	cfg := agentConfigWith(t, r.agentState, map[string]string{"NOOK_AGENT_RESTART_BACKOFF_MIN": "200ms", "NOOK_AGENT_RESTART_BACKOFF_MAX": "1s"})
+	r.agent = runConfiguredAgent(t, &cfg, quietLogger)
+	eventually(t, 30*time.Second, "the agent to reconnect", func() bool { return r.agent.Connected() })
+	crashAndWait(2)
 }
