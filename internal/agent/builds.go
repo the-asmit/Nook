@@ -56,6 +56,8 @@ type builder struct {
 	logger *slog.Logger
 	nodeID func() string
 	caPEM  func() []byte
+	// ready reports whether builds may run on the node now.
+	ready func() error
 
 	mu      sync.Mutex
 	running map[string]*runningBuild
@@ -94,6 +96,11 @@ func validateBuild(cmd *agentv1.BuildCommand) error {
 func (b *builder) start(cmd *agentv1.BuildCommand) error {
 	if err := validateBuild(cmd); err != nil {
 		return err
+	}
+	if b.ready != nil {
+		if err := b.ready(); err != nil {
+			return err
+		}
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()

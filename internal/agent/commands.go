@@ -36,9 +36,12 @@ func (a *Agent) execute(ctx context.Context, cmd *agentv1.Command) *agentv1.Comm
 		res.Result = &agentv1.CommandResult_InspectNode{InspectNode: out}
 	case *agentv1.Command_Build:
 		// A build outlives the command that starts it: the builder owns its context.
+		var notReady notReadyError
 		switch err := a.builder.start(kind.Build); { //nolint:contextcheck // see above
 		case errors.Is(err, errBusy), errors.Is(err, errShuttingDown):
 			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_BUSY, err.Error())
+		case errors.As(err, &notReady):
+			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, err.Error())
 		case err != nil:
 			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, "invalid build command: "+err.Error())
 		}
@@ -48,6 +51,37 @@ func (a *Agent) execute(ctx context.Context, cmd *agentv1.Command) *agentv1.Comm
 		if !a.builder.cancelBuild(kind.CancelBuild.GetBuildId()) {
 			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, "no such build is running on this node")
 		}
+		res.Result = accepted
+	case *agentv1.Command_StartInstance:
+		if err := a.containersReady(); err != nil {
+			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, err.Error())
+		}
+		// The instance outlives the command: the manager owns its context.
+		switch err := a.instances.start(kind.StartInstance); { //nolint:contextcheck // see above
+		case errors.Is(err, errShuttingDown), errors.Is(err, errStopping):
+			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_BUSY, err.Error())
+		case err != nil:
+			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, "invalid start command: "+err.Error())
+		}
+		a.logger.InfoContext(ctx, "starting app instance", "instance", kind.StartInstance.GetInstanceId(), "app", kind.StartInstance.GetAppSlug())
+		res.Result = accepted
+	case *agentv1.Command_StopInstance:
+		// The stop outlives the command (drain): the manager owns its context.
+		if err := a.instances.stop(kind.StopInstance.GetInstanceId(), kind.StopInstance.GetDrain().AsDuration()); err != nil { //nolint:contextcheck // see above
+			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, err.Error())
+		}
+		res.Result = accepted
+	case *agentv1.Command_StreamLogs:
+		// The stream outlives the command: the manager owns its context.
+		switch err := a.instances.streamLogs(kind.StreamLogs); { //nolint:contextcheck // see above
+		case errors.Is(err, errBusy), errors.Is(err, errShuttingDown):
+			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_BUSY, err.Error())
+		case err != nil:
+			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, err.Error())
+		}
+		res.Result = accepted
+	case *agentv1.Command_StopLogs:
+		a.instances.stopLogs(kind.StopLogs.GetStreamId())
 		res.Result = accepted
 	default:
 		return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_UNSUPPORTED, "this agent does not support the command; upgrade nook-agent")
@@ -64,6 +98,14 @@ func kindOf(cmd *agentv1.Command) string {
 		return "build"
 	case cmd.GetCancelBuild() != nil:
 		return "cancel_build"
+	case cmd.GetStartInstance() != nil:
+		return "start_instance"
+	case cmd.GetStopInstance() != nil:
+		return "stop_instance"
+	case cmd.GetStreamLogs() != nil:
+		return "stream_logs"
+	case cmd.GetStopLogs() != nil:
+		return "stop_logs"
 	default:
 		return "unknown"
 	}

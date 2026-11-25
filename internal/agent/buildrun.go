@@ -85,7 +85,7 @@ func (b *builder) runContainer(ctx context.Context, cmd *agentv1.BuildCommand, d
 	// Docker calls use their own context: cleanup must happen even after
 	// the build's context was canceled.
 	dockerCtx := context.WithoutCancel(ctx)
-	created, err := b.docker.client.ContainerCreate(dockerCtx, b.containerSpec(cmd))
+	created, err := b.docker.client.ContainerCreate(dockerCtx, b.containerSpec(cmd, b.docker.proxy(dockerCtx)))
 	if err != nil {
 		b.logger.Warn("could not create the build container", "build_id", id, "error", err.Error())
 		return withLog(infraError(id, "the node could not start the build"), logs)
@@ -195,9 +195,9 @@ func withLog(r *agentv1.BuildFinished, logs *logStream) *agentv1.BuildFinished {
 // containerSpec is the build container: BuildKit, rootless, in a user
 // namespace of its own, with every capability dropped except the two that
 // map that namespace, no host mounts, no Docker socket and hard limits.
-// The seccomp profile is relaxed because creating user namespaces is
-// otherwise forbidden (see the build-isolation ADR).
-func (b *builder) containerSpec(cmd *agentv1.BuildCommand) client.ContainerCreateOptions {
+// Its seccomp profile is Docker's default plus the system calls that
+// creating the user namespace needs (see the build-isolation ADR).
+func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) client.ContainerCreateOptions {
 	ref := cmd.GetRegistry() + "/" + cmd.GetRepository() + ":" + cmd.GetTag()
 	memory := min(max(cmd.GetMemoryBytes(), minBuildMemory), maxBuildMemory)
 	millicores := min(max(cmd.GetCpuMillicores(), 100), maxBuildMillicore)
@@ -208,25 +208,25 @@ func (b *builder) containerSpec(cmd *agentv1.BuildCommand) client.ContainerCreat
 			Image:      b.cfg.BuildImage,
 			User:       buildUser,
 			Entrypoint: []string{"buildctl-daemonless.sh"},
-			Cmd: []string{
+			Cmd: append([]string{
 				"build", "--frontend", "dockerfile.v0",
 				"--local", "context=" + containerHome + "/" + contextDir,
 				"--local", "dockerfile=" + containerHome + "/" + contextDir,
 				"--output", "type=image,name=" + ref + ",push=true",
 				"--metadata-file", containerHome + "/" + metadataFile,
 				"--progress", "plain",
-			},
-			Env: []string{
+			}, proxy.buildArgs()...),
+			Env: append([]string{
 				"BUILDKITD_FLAGS=--config=" + containerHome + "/.config/buildkit/buildkitd.toml",
 				"DOCKER_CONFIG=" + containerHome + "/.docker",
-			},
+			}, proxy.env(registryHost(cmd.GetRegistry()))...),
 			Labels: map[string]string{buildLabel: cmd.GetBuildId(), buildNodeLabel: b.nodeID()},
 		},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(b.cfg.BuildNetwork),
 			CapDrop:     []string{"ALL"},
 			CapAdd:      []string{"SETUID", "SETGID"},
-			SecurityOpt: []string{"seccomp=unconfined"},
+			SecurityOpt: []string{"seccomp=" + buildSeccompProfile},
 			Resources: container.Resources{
 				Memory: memory, MemorySwap: memory, NanoCPUs: millicores * 1_000_000, PidsLimit: &pids,
 			},

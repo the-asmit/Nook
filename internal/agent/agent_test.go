@@ -113,11 +113,12 @@ func TestPermanentErrors(t *testing.T) {
 }
 
 func TestConfigValidate(t *testing.T) {
-	c, err := config.Load[Config](map[string]string{})
+	c, err := config.Load[Config](map[string]string{"NOOK_AGENT_ADVERTISE_ADDR": "10.0.0.5"})
 	if err != nil {
 		t.Fatalf("defaults: %v", err)
 	}
-	if c.BuildSlots != 2 || !strings.Contains(c.BuildImage, "@sha256:") {
+	if c.BuildSlots != 2 || !strings.Contains(c.BuildImage, "@sha256:") || c.BuildNetwork != managedBuildNetwork ||
+		!c.EgressFilter || c.FirewallChain != "NOOK" || !strings.Contains(c.FirewallImage, "@sha256:") {
 		t.Fatalf("defaults %+v", c)
 	}
 	for name, mutate := range map[string]func(*Config){
@@ -127,6 +128,16 @@ func TestConfigValidate(t *testing.T) {
 		"no network":      func(c *Config) { c.BuildNetwork = "" },
 		"tiny context":    func(c *Config) { c.BuildMaxContextBytes = 10 },
 		"empty state dir": func(c *Config) { c.StateDir = "" },
+		"no advertise":    func(c *Config) { c.AdvertiseAddr = "" },
+		"wildcard v4":     func(c *Config) { c.AdvertiseAddr = "0.0.0.0" },
+		"wildcard v6":     func(c *Config) { c.AdvertiseAddr = "::" },
+		"bad chain":       func(c *Config) { c.FirewallChain = "nook; rm" },
+		"unpinned fw":     func(c *Config) { c.FirewallImage = "registry.k8s.io/build-image/distroless-iptables:v0.9.6" },
+		"bad allow":       func(c *Config) { c.BuildEgressAllow = []string{"registry.internal"} },
+		"bad block":       func(c *Config) { c.EgressBlock = []string{"10.0.0.0/33"} },
+		"bad pull addr":   func(c *Config) { c.RegistryPullAddr = "https://x" },
+		"zero crashes":    func(c *Config) { c.CrashLimit = 0 },
+		"backoff order":   func(c *Config) { c.RestartBackoffMax = time.Millisecond },
 	} {
 		bad := c
 		mutate(&bad)

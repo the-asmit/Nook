@@ -3,9 +3,13 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"time"
 
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/client"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -141,4 +145,110 @@ func (d *docker) ensureImage(ctx context.Context, ref string) error {
 		return fmt.Errorf("pull %s: %w", ref, err)
 	}
 	return nil
+}
+
+// runOnce runs a short-lived container to completion and returns its exit
+// code and combined output (at most 64 KiB). The container is removed.
+func (d *docker) runOnce(ctx context.Context, spec client.ContainerCreateOptions) (int64, string, error) {
+	created, err := d.client.ContainerCreate(ctx, spec)
+	if err != nil {
+		return 0, "", fmt.Errorf("create helper container: %w", err)
+	}
+	defer func() {
+		rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		_, _ = d.client.ContainerRemove(rmCtx, created.ID, client.ContainerRemoveOptions{Force: true})
+	}()
+	wait := d.client.ContainerWait(ctx, created.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNextExit})
+	if _, startErr := d.client.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); startErr != nil {
+		return 0, "", fmt.Errorf("start helper container: %w", startErr)
+	}
+	var code int64
+	select {
+	case res := <-wait.Result:
+		code = res.StatusCode
+	case waitErr := <-wait.Error:
+		return 0, "", fmt.Errorf("wait for helper container: %w", waitErr)
+	}
+	rc, err := d.client.ContainerLogs(ctx, created.ID, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true})
+	if err != nil {
+		return code, "", nil
+	}
+	defer func() { _ = rc.Close() }()
+	var sb strings.Builder
+	_, _ = stdcopy.StdCopy(&sb, &sb, io.LimitReader(rc, 64<<10))
+	return code, sb.String(), nil
+}
+
+// proxyConfig is the HTTP proxy the Docker engine is configured with.
+type proxyConfig struct {
+	HTTP, HTTPS, NoProxy string
+}
+
+// proxy returns the engine's proxy configuration (empty if none or if the
+// engine is unreachable). Builds use it to reach base images when the
+// node only has internet access through a proxy.
+func (d *docker) proxy(ctx context.Context) proxyConfig {
+	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
+	defer cancel()
+	info, err := d.client.Info(ctx, client.InfoOptions{})
+	if err != nil {
+		return proxyConfig{}
+	}
+	return proxyConfig{HTTP: info.Info.HTTPProxy, HTTPS: info.Info.HTTPSProxy, NoProxy: info.Info.NoProxy}
+}
+
+func (p proxyConfig) empty() bool { return p.HTTP == "" && p.HTTPS == "" }
+
+// withScheme makes "host:port" a URL, as programs expect in *_PROXY.
+func withScheme(s string) string {
+	if s == "" || strings.Contains(s, "://") {
+		return s
+	}
+	return "http://" + s
+}
+
+// noProxy is the engine's exclusions plus the registry (pushes go to it
+// directly) and loopback.
+func (p proxyConfig) noProxy(registry string) string {
+	list := []string{"localhost", "127.0.0.1"}
+	if registry != "" {
+		list = append(list, registry)
+	}
+	if p.NoProxy != "" {
+		list = append(list, p.NoProxy)
+	}
+	return strings.Join(list, ",")
+}
+
+// env is the proxy environment for BuildKit itself (pulling base images).
+func (p proxyConfig) env(registry string) []string {
+	if p.empty() {
+		return nil
+	}
+	h, s, n := withScheme(p.HTTP), withScheme(p.HTTPS), p.noProxy(registry)
+	return []string{"HTTP_PROXY=" + h, "http_proxy=" + h, "HTTPS_PROXY=" + s, "https_proxy=" + s, "NO_PROXY=" + n, "no_proxy=" + n}
+}
+
+// buildArgs passes the proxy to RUN steps (BuildKit's predefined proxy
+// build arguments, which do not end up in the image).
+func (p proxyConfig) buildArgs() []string {
+	if p.empty() {
+		return nil
+	}
+	h, s := withScheme(p.HTTP), withScheme(p.HTTPS)
+	var out []string
+	for _, kv := range []string{"HTTP_PROXY=" + h, "http_proxy=" + h, "HTTPS_PROXY=" + s, "https_proxy=" + s,
+		"NO_PROXY=" + p.noProxy(""), "no_proxy=" + p.noProxy("")} {
+		out = append(out, "--opt", "build-arg:"+kv)
+	}
+	return out
+}
+
+// registryHost strips the port from a registry address.
+func registryHost(addr string) string {
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	return addr
 }

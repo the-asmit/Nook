@@ -65,6 +65,7 @@ func newBuildFixture(t *testing.T) *buildFixture {
 	}
 	cfg, err := config.Load[Config](map[string]string{
 		"NOOK_AGENT_STATE_DIR": filepath.Join(dir, "agent"), "NOOK_AGENT_BUILD_NETWORK": s.Network.Name,
+		"NOOK_AGENT_ADVERTISE_ADDR": "127.0.0.1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +269,7 @@ func TestMaliciousArchiveIsRejected(t *testing.T) {
 }
 
 func TestBusyAndValidation(t *testing.T) {
-	cfg, err := config.Load[Config](map[string]string{"NOOK_AGENT_BUILD_SLOTS": "0"})
+	cfg, err := config.Load[Config](map[string]string{"NOOK_AGENT_BUILD_SLOTS": "0", "NOOK_AGENT_ADVERTISE_ADDR": "127.0.0.1"})
 	if err != nil {
 		t.Fatal(err)
 	}

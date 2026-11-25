@@ -46,6 +46,12 @@ message NodeInfo {
   string arch = 9;
   // How many builds the agent runs at once; 0 means it does not build.
   int32 build_slots = 10;
+  // The node's private address that apps are published on (never a
+  // wildcard address); the gateway reaches apps through it.
+  string advertise_address = 11;
+  // Why the node cannot run builds even though it has build slots (with
+  // the fix), or empty when it can.
+  string builds_unavailable_reason = 12;
 }
 
 message JoinRequest {
@@ -91,6 +97,11 @@ message ConnectRequest {
     BuildLog build_log = 4;
     // How a build ended; sent once per build, after its last BuildLog.
     BuildFinished build_finished = 5;
+    // A change in the state of an app instance on the node.
+    InstanceStatus instance_status = 6;
+    // Output of an app's container for a log stream the control plane
+    // opened with StreamLogsCommand.
+    AppLog app_log = 7;
   }
 }
 
@@ -108,6 +119,10 @@ message Hello {
   // Builds the agent is still running (or has results for). A build the
   // control plane assigned to this node that is missing here was lost.
   repeated string active_build_ids = 2;
+  // App instances whose containers exist on the node. The control plane
+  // removes those it no longer wants and restarts those it wants that are
+  // missing or not running.
+  repeated InstanceReport instances = 3;
 }
 
 message ConnectAccepted {
@@ -128,6 +143,8 @@ message Heartbeat {
   google.protobuf.Duration uptime = 6;
   // False when the agent cannot reach its Docker engine.
   bool docker_reachable = 7;
+  // Why builds cannot run on the node (with the fix), or empty.
+  string builds_unavailable_reason = 8;
 }
 
 // Command asks the agent to do something and answer with exactly one
@@ -140,6 +157,10 @@ message Command {
     InspectNodeCommand inspect_node = 3;
     BuildCommand build = 4;
     CancelBuildCommand cancel_build = 5;
+    StartInstanceCommand start_instance = 6;
+    StopInstanceCommand stop_instance = 7;
+    StreamLogsCommand stream_logs = 8;
+    StopLogsCommand stop_logs = 9;
   }
 }
 
@@ -270,4 +291,125 @@ enum BuildResult {
   // Something outside the user's control failed (download, Docker, push);
   // the control plane retries on another node.
   BUILD_RESULT_INFRA_ERROR = 5;
+}
+
+// StartInstanceCommand asks the agent to run an app instance: pull the
+// image by digest, create a locked-down container publishing the app's
+// port on the node's advertise address, start it and report HEALTHY once
+// its health check answers 2xx, or FAILED. It is idempotent by
+// instance_id: an instance that exists is started again if it stopped.
+message StartInstanceCommand {
+  string instance_id = 1;
+  string deployment_id = 2;
+  string app_id = 3;
+  string workspace_id = 4;
+  // For labels and messages only.
+  string app_slug = 5;
+  int32 deployment_number = 6;
+  // registry/repository@image_digest is the image; the token grants pull
+  // access to that repository only and expires soon.
+  string registry = 7;
+  string repository = 8;
+  string image_digest = 9;
+  string registry_token = 10;
+  // The port the app listens on inside the container.
+  int32 port = 11;
+  string health_check_path = 12;
+  // How long the instance may take to answer its health check.
+  google.protobuf.Duration startup_timeout = 13;
+  int64 memory_bytes = 14;
+  int64 cpu_millicores = 15;
+  bool read_only_rootfs = 16;
+  // The environment, decrypted by the control plane for this command
+  // only. Never logged by either side.
+  repeated EnvVar env = 17;
+}
+
+message EnvVar {
+  string name = 1;
+  string value = 2;
+}
+
+// StopInstanceCommand stops and removes an instance's container after
+// letting it serve for drain (zero: at once). The agent reports STOPPED.
+message StopInstanceCommand {
+  string instance_id = 1;
+  google.protobuf.Duration drain = 2;
+}
+
+// StreamLogsCommand asks for an instance's container output, sent as
+// AppLog messages with stream_id until the output ends (follow false),
+// max_bytes were sent, max_duration passed or StopLogsCommand arrives.
+message StreamLogsCommand {
+  string stream_id = 1;
+  string instance_id = 2;
+  bool follow = 3;
+  // Lines from the end to start with (0: all retained output).
+  int32 tail = 4;
+  // Only output after this time.
+  google.protobuf.Timestamp since = 5;
+  int64 max_bytes = 6;
+  google.protobuf.Duration max_duration = 7;
+}
+
+message StopLogsCommand {
+  string stream_id = 1;
+}
+
+enum InstanceState {
+  INSTANCE_STATE_UNSPECIFIED = 0;
+  // The container was created and is starting; its health check has not
+  // passed yet.
+  INSTANCE_STATE_STARTING = 1;
+  // Running and its health check passed.
+  INSTANCE_STATE_HEALTHY = 2;
+  // The container crashed; the agent restarts it after a backoff.
+  INSTANCE_STATE_UNHEALTHY = 3;
+  // The container was stopped and removed as asked.
+  INSTANCE_STATE_STOPPED = 4;
+  // The container crashed too often; the agent no longer restarts it.
+  INSTANCE_STATE_CRASHED = 5;
+  // The instance never became healthy; its container was removed.
+  INSTANCE_STATE_FAILED = 6;
+}
+
+// InstanceStatus reports a change of an instance's state.
+message InstanceStatus {
+  string instance_id = 1;
+  InstanceState state = 2;
+  string container_id = 3;
+  // The port published on the advertise address.
+  int32 host_port = 4;
+  int32 restart_count = 5;
+  // Why the instance is unhealthy, crashed or failed (user-facing).
+  string message = 6;
+  // For FAILED: the container's last output before it was removed.
+  repeated string startup_log = 7;
+}
+
+// InstanceReport describes an instance container found on the node.
+message InstanceReport {
+  string instance_id = 1;
+  string container_id = 2;
+  bool running = 3;
+  int32 host_port = 4;
+  int32 restart_count = 5;
+  // Whether the agent is currently stopping the container.
+  bool stopping = 6;
+}
+
+// AppLog carries container output for a log stream.
+message AppLog {
+  string stream_id = 1;
+  repeated LogLine lines = 2;
+  // The stream ended; message says why if it was not the end of output.
+  bool end = 3;
+  string message = 4;
+}
+
+message LogLine {
+  google.protobuf.Timestamp time = 1;
+  // "stdout" or "stderr".
+  string stream = 2;
+  string text = 3;
 }

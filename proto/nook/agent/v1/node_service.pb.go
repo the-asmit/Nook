@@ -151,6 +151,74 @@ func (BuildResult) EnumDescriptor() ([]byte, []int) {
 	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{1}
 }
 
+type InstanceState int32
+
+const (
+	InstanceState_INSTANCE_STATE_UNSPECIFIED InstanceState = 0
+	// The container was created and is starting; its health check has not
+	// passed yet.
+	InstanceState_INSTANCE_STATE_STARTING InstanceState = 1
+	// Running and its health check passed.
+	InstanceState_INSTANCE_STATE_HEALTHY InstanceState = 2
+	// The container crashed; the agent restarts it after a backoff.
+	InstanceState_INSTANCE_STATE_UNHEALTHY InstanceState = 3
+	// The container was stopped and removed as asked.
+	InstanceState_INSTANCE_STATE_STOPPED InstanceState = 4
+	// The container crashed too often; the agent no longer restarts it.
+	InstanceState_INSTANCE_STATE_CRASHED InstanceState = 5
+	// The instance never became healthy; its container was removed.
+	InstanceState_INSTANCE_STATE_FAILED InstanceState = 6
+)
+
+// Enum value maps for InstanceState.
+var (
+	InstanceState_name = map[int32]string{
+		0: "INSTANCE_STATE_UNSPECIFIED",
+		1: "INSTANCE_STATE_STARTING",
+		2: "INSTANCE_STATE_HEALTHY",
+		3: "INSTANCE_STATE_UNHEALTHY",
+		4: "INSTANCE_STATE_STOPPED",
+		5: "INSTANCE_STATE_CRASHED",
+		6: "INSTANCE_STATE_FAILED",
+	}
+	InstanceState_value = map[string]int32{
+		"INSTANCE_STATE_UNSPECIFIED": 0,
+		"INSTANCE_STATE_STARTING":    1,
+		"INSTANCE_STATE_HEALTHY":     2,
+		"INSTANCE_STATE_UNHEALTHY":   3,
+		"INSTANCE_STATE_STOPPED":     4,
+		"INSTANCE_STATE_CRASHED":     5,
+		"INSTANCE_STATE_FAILED":      6,
+	}
+)
+
+func (x InstanceState) Enum() *InstanceState {
+	p := new(InstanceState)
+	*p = x
+	return p
+}
+
+func (x InstanceState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (InstanceState) Descriptor() protoreflect.EnumDescriptor {
+	return file_nook_agent_v1_node_service_proto_enumTypes[2].Descriptor()
+}
+
+func (InstanceState) Type() protoreflect.EnumType {
+	return &file_nook_agent_v1_node_service_proto_enumTypes[2]
+}
+
+func (x InstanceState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use InstanceState.Descriptor instead.
+func (InstanceState) EnumDescriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{2}
+}
+
 // NodeInfo describes a node's fixed properties, reported at join and on
 // every connection.
 type NodeInfo struct {
@@ -168,9 +236,15 @@ type NodeInfo struct {
 	Os   string `protobuf:"bytes,8,opt,name=os,proto3" json:"os,omitempty"`
 	Arch string `protobuf:"bytes,9,opt,name=arch,proto3" json:"arch,omitempty"`
 	// How many builds the agent runs at once; 0 means it does not build.
-	BuildSlots    int32 `protobuf:"varint,10,opt,name=build_slots,json=buildSlots,proto3" json:"build_slots,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	BuildSlots int32 `protobuf:"varint,10,opt,name=build_slots,json=buildSlots,proto3" json:"build_slots,omitempty"`
+	// The node's private address that apps are published on (never a
+	// wildcard address); the gateway reaches apps through it.
+	AdvertiseAddress string `protobuf:"bytes,11,opt,name=advertise_address,json=advertiseAddress,proto3" json:"advertise_address,omitempty"`
+	// Why the node cannot run builds even though it has build slots (with
+	// the fix), or empty when it can.
+	BuildsUnavailableReason string `protobuf:"bytes,12,opt,name=builds_unavailable_reason,json=buildsUnavailableReason,proto3" json:"builds_unavailable_reason,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
@@ -271,6 +345,20 @@ func (x *NodeInfo) GetBuildSlots() int32 {
 		return x.BuildSlots
 	}
 	return 0
+}
+
+func (x *NodeInfo) GetAdvertiseAddress() string {
+	if x != nil {
+		return x.AdvertiseAddress
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetBuildsUnavailableReason() string {
+	if x != nil {
+		return x.BuildsUnavailableReason
+	}
+	return ""
 }
 
 type JoinRequest struct {
@@ -531,6 +619,8 @@ type ConnectRequest struct {
 	//	*ConnectRequest_CommandResult
 	//	*ConnectRequest_BuildLog
 	//	*ConnectRequest_BuildFinished
+	//	*ConnectRequest_InstanceStatus
+	//	*ConnectRequest_AppLog
 	Message       isConnectRequest_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -618,6 +708,24 @@ func (x *ConnectRequest) GetBuildFinished() *BuildFinished {
 	return nil
 }
 
+func (x *ConnectRequest) GetInstanceStatus() *InstanceStatus {
+	if x != nil {
+		if x, ok := x.Message.(*ConnectRequest_InstanceStatus); ok {
+			return x.InstanceStatus
+		}
+	}
+	return nil
+}
+
+func (x *ConnectRequest) GetAppLog() *AppLog {
+	if x != nil {
+		if x, ok := x.Message.(*ConnectRequest_AppLog); ok {
+			return x.AppLog
+		}
+	}
+	return nil
+}
+
 type isConnectRequest_Message interface {
 	isConnectRequest_Message()
 }
@@ -645,6 +753,17 @@ type ConnectRequest_BuildFinished struct {
 	BuildFinished *BuildFinished `protobuf:"bytes,5,opt,name=build_finished,json=buildFinished,proto3,oneof"`
 }
 
+type ConnectRequest_InstanceStatus struct {
+	// A change in the state of an app instance on the node.
+	InstanceStatus *InstanceStatus `protobuf:"bytes,6,opt,name=instance_status,json=instanceStatus,proto3,oneof"`
+}
+
+type ConnectRequest_AppLog struct {
+	// Output of an app's container for a log stream the control plane
+	// opened with StreamLogsCommand.
+	AppLog *AppLog `protobuf:"bytes,7,opt,name=app_log,json=appLog,proto3,oneof"`
+}
+
 func (*ConnectRequest_Hello) isConnectRequest_Message() {}
 
 func (*ConnectRequest_Heartbeat) isConnectRequest_Message() {}
@@ -654,6 +773,10 @@ func (*ConnectRequest_CommandResult) isConnectRequest_Message() {}
 func (*ConnectRequest_BuildLog) isConnectRequest_Message() {}
 
 func (*ConnectRequest_BuildFinished) isConnectRequest_Message() {}
+
+func (*ConnectRequest_InstanceStatus) isConnectRequest_Message() {}
+
+func (*ConnectRequest_AppLog) isConnectRequest_Message() {}
 
 // ConnectResponse is one message from the control plane on the Connect stream.
 type ConnectResponse struct {
@@ -745,8 +868,12 @@ type Hello struct {
 	// Builds the agent is still running (or has results for). A build the
 	// control plane assigned to this node that is missing here was lost.
 	ActiveBuildIds []string `protobuf:"bytes,2,rep,name=active_build_ids,json=activeBuildIds,proto3" json:"active_build_ids,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// App instances whose containers exist on the node. The control plane
+	// removes those it no longer wants and restarts those it wants that are
+	// missing or not running.
+	Instances     []*InstanceReport `protobuf:"bytes,3,rep,name=instances,proto3" json:"instances,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Hello) Reset() {
@@ -789,6 +916,13 @@ func (x *Hello) GetInfo() *NodeInfo {
 func (x *Hello) GetActiveBuildIds() []string {
 	if x != nil {
 		return x.ActiveBuildIds
+	}
+	return nil
+}
+
+func (x *Hello) GetInstances() []*InstanceReport {
+	if x != nil {
+		return x.Instances
 	}
 	return nil
 }
@@ -859,8 +993,10 @@ type Heartbeat struct {
 	Uptime            *durationpb.Duration `protobuf:"bytes,6,opt,name=uptime,proto3" json:"uptime,omitempty"`
 	// False when the agent cannot reach its Docker engine.
 	DockerReachable bool `protobuf:"varint,7,opt,name=docker_reachable,json=dockerReachable,proto3" json:"docker_reachable,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Why builds cannot run on the node (with the fix), or empty.
+	BuildsUnavailableReason string `protobuf:"bytes,8,opt,name=builds_unavailable_reason,json=buildsUnavailableReason,proto3" json:"builds_unavailable_reason,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -942,6 +1078,13 @@ func (x *Heartbeat) GetDockerReachable() bool {
 	return false
 }
 
+func (x *Heartbeat) GetBuildsUnavailableReason() string {
+	if x != nil {
+		return x.BuildsUnavailableReason
+	}
+	return ""
+}
+
 // Command asks the agent to do something and answer with exactly one
 // CommandResult carrying the same command_id.
 type Command struct {
@@ -954,6 +1097,10 @@ type Command struct {
 	//	*Command_InspectNode
 	//	*Command_Build
 	//	*Command_CancelBuild
+	//	*Command_StartInstance
+	//	*Command_StopInstance
+	//	*Command_StreamLogs
+	//	*Command_StopLogs
 	Kind          isCommand_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1037,6 +1184,42 @@ func (x *Command) GetCancelBuild() *CancelBuildCommand {
 	return nil
 }
 
+func (x *Command) GetStartInstance() *StartInstanceCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_StartInstance); ok {
+			return x.StartInstance
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetStopInstance() *StopInstanceCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_StopInstance); ok {
+			return x.StopInstance
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetStreamLogs() *StreamLogsCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_StreamLogs); ok {
+			return x.StreamLogs
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetStopLogs() *StopLogsCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_StopLogs); ok {
+			return x.StopLogs
+		}
+	}
+	return nil
+}
+
 type isCommand_Kind interface {
 	isCommand_Kind()
 }
@@ -1053,11 +1236,35 @@ type Command_CancelBuild struct {
 	CancelBuild *CancelBuildCommand `protobuf:"bytes,5,opt,name=cancel_build,json=cancelBuild,proto3,oneof"`
 }
 
+type Command_StartInstance struct {
+	StartInstance *StartInstanceCommand `protobuf:"bytes,6,opt,name=start_instance,json=startInstance,proto3,oneof"`
+}
+
+type Command_StopInstance struct {
+	StopInstance *StopInstanceCommand `protobuf:"bytes,7,opt,name=stop_instance,json=stopInstance,proto3,oneof"`
+}
+
+type Command_StreamLogs struct {
+	StreamLogs *StreamLogsCommand `protobuf:"bytes,8,opt,name=stream_logs,json=streamLogs,proto3,oneof"`
+}
+
+type Command_StopLogs struct {
+	StopLogs *StopLogsCommand `protobuf:"bytes,9,opt,name=stop_logs,json=stopLogs,proto3,oneof"`
+}
+
 func (*Command_InspectNode) isCommand_Kind() {}
 
 func (*Command_Build) isCommand_Kind() {}
 
 func (*Command_CancelBuild) isCommand_Kind() {}
+
+func (*Command_StartInstance) isCommand_Kind() {}
+
+func (*Command_StopInstance) isCommand_Kind() {}
+
+func (*Command_StreamLogs) isCommand_Kind() {}
+
+func (*Command_StopLogs) isCommand_Kind() {}
 
 // InspectNodeCommand asks for live Docker engine information and the
 // containers Nook manages on the node.
@@ -1900,11 +2107,755 @@ func (x *BuildFinished) GetLogBytes() int64 {
 	return 0
 }
 
+// StartInstanceCommand asks the agent to run an app instance: pull the
+// image by digest, create a locked-down container publishing the app's
+// port on the node's advertise address, start it and report HEALTHY once
+// its health check answers 2xx, or FAILED. It is idempotent by
+// instance_id: an instance that exists is started again if it stopped.
+type StartInstanceCommand struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId   string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	DeploymentId string                 `protobuf:"bytes,2,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	AppId        string                 `protobuf:"bytes,3,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	WorkspaceId  string                 `protobuf:"bytes,4,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	// For labels and messages only.
+	AppSlug          string `protobuf:"bytes,5,opt,name=app_slug,json=appSlug,proto3" json:"app_slug,omitempty"`
+	DeploymentNumber int32  `protobuf:"varint,6,opt,name=deployment_number,json=deploymentNumber,proto3" json:"deployment_number,omitempty"`
+	// registry/repository@image_digest is the image; the token grants pull
+	// access to that repository only and expires soon.
+	Registry      string `protobuf:"bytes,7,opt,name=registry,proto3" json:"registry,omitempty"`
+	Repository    string `protobuf:"bytes,8,opt,name=repository,proto3" json:"repository,omitempty"`
+	ImageDigest   string `protobuf:"bytes,9,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
+	RegistryToken string `protobuf:"bytes,10,opt,name=registry_token,json=registryToken,proto3" json:"registry_token,omitempty"`
+	// The port the app listens on inside the container.
+	Port            int32  `protobuf:"varint,11,opt,name=port,proto3" json:"port,omitempty"`
+	HealthCheckPath string `protobuf:"bytes,12,opt,name=health_check_path,json=healthCheckPath,proto3" json:"health_check_path,omitempty"`
+	// How long the instance may take to answer its health check.
+	StartupTimeout *durationpb.Duration `protobuf:"bytes,13,opt,name=startup_timeout,json=startupTimeout,proto3" json:"startup_timeout,omitempty"`
+	MemoryBytes    int64                `protobuf:"varint,14,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
+	CpuMillicores  int64                `protobuf:"varint,15,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
+	ReadOnlyRootfs bool                 `protobuf:"varint,16,opt,name=read_only_rootfs,json=readOnlyRootfs,proto3" json:"read_only_rootfs,omitempty"`
+	// The environment, decrypted by the control plane for this command
+	// only. Never logged by either side.
+	Env           []*EnvVar `protobuf:"bytes,17,rep,name=env,proto3" json:"env,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartInstanceCommand) Reset() {
+	*x = StartInstanceCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartInstanceCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartInstanceCommand) ProtoMessage() {}
+
+func (x *StartInstanceCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartInstanceCommand.ProtoReflect.Descriptor instead.
+func (*StartInstanceCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *StartInstanceCommand) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetAppSlug() string {
+	if x != nil {
+		return x.AppSlug
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetDeploymentNumber() int32 {
+	if x != nil {
+		return x.DeploymentNumber
+	}
+	return 0
+}
+
+func (x *StartInstanceCommand) GetRegistry() string {
+	if x != nil {
+		return x.Registry
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetRepository() string {
+	if x != nil {
+		return x.Repository
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetImageDigest() string {
+	if x != nil {
+		return x.ImageDigest
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetRegistryToken() string {
+	if x != nil {
+		return x.RegistryToken
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *StartInstanceCommand) GetHealthCheckPath() string {
+	if x != nil {
+		return x.HealthCheckPath
+	}
+	return ""
+}
+
+func (x *StartInstanceCommand) GetStartupTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.StartupTimeout
+	}
+	return nil
+}
+
+func (x *StartInstanceCommand) GetMemoryBytes() int64 {
+	if x != nil {
+		return x.MemoryBytes
+	}
+	return 0
+}
+
+func (x *StartInstanceCommand) GetCpuMillicores() int64 {
+	if x != nil {
+		return x.CpuMillicores
+	}
+	return 0
+}
+
+func (x *StartInstanceCommand) GetReadOnlyRootfs() bool {
+	if x != nil {
+		return x.ReadOnlyRootfs
+	}
+	return false
+}
+
+func (x *StartInstanceCommand) GetEnv() []*EnvVar {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+type EnvVar struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EnvVar) Reset() {
+	*x = EnvVar{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EnvVar) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EnvVar) ProtoMessage() {}
+
+func (x *EnvVar) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EnvVar.ProtoReflect.Descriptor instead.
+func (*EnvVar) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *EnvVar) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *EnvVar) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+// StopInstanceCommand stops and removes an instance's container after
+// letting it serve for drain (zero: at once). The agent reports STOPPED.
+type StopInstanceCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	Drain         *durationpb.Duration   `protobuf:"bytes,2,opt,name=drain,proto3" json:"drain,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopInstanceCommand) Reset() {
+	*x = StopInstanceCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopInstanceCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopInstanceCommand) ProtoMessage() {}
+
+func (x *StopInstanceCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopInstanceCommand.ProtoReflect.Descriptor instead.
+func (*StopInstanceCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *StopInstanceCommand) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *StopInstanceCommand) GetDrain() *durationpb.Duration {
+	if x != nil {
+		return x.Drain
+	}
+	return nil
+}
+
+// StreamLogsCommand asks for an instance's container output, sent as
+// AppLog messages with stream_id until the output ends (follow false),
+// max_bytes were sent, max_duration passed or StopLogsCommand arrives.
+type StreamLogsCommand struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	StreamId   string                 `protobuf:"bytes,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	InstanceId string                 `protobuf:"bytes,2,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	Follow     bool                   `protobuf:"varint,3,opt,name=follow,proto3" json:"follow,omitempty"`
+	// Lines from the end to start with (0: all retained output).
+	Tail int32 `protobuf:"varint,4,opt,name=tail,proto3" json:"tail,omitempty"`
+	// Only output after this time.
+	Since         *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=since,proto3" json:"since,omitempty"`
+	MaxBytes      int64                  `protobuf:"varint,6,opt,name=max_bytes,json=maxBytes,proto3" json:"max_bytes,omitempty"`
+	MaxDuration   *durationpb.Duration   `protobuf:"bytes,7,opt,name=max_duration,json=maxDuration,proto3" json:"max_duration,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StreamLogsCommand) Reset() {
+	*x = StreamLogsCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StreamLogsCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StreamLogsCommand) ProtoMessage() {}
+
+func (x *StreamLogsCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StreamLogsCommand.ProtoReflect.Descriptor instead.
+func (*StreamLogsCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *StreamLogsCommand) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
+	}
+	return ""
+}
+
+func (x *StreamLogsCommand) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *StreamLogsCommand) GetFollow() bool {
+	if x != nil {
+		return x.Follow
+	}
+	return false
+}
+
+func (x *StreamLogsCommand) GetTail() int32 {
+	if x != nil {
+		return x.Tail
+	}
+	return 0
+}
+
+func (x *StreamLogsCommand) GetSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Since
+	}
+	return nil
+}
+
+func (x *StreamLogsCommand) GetMaxBytes() int64 {
+	if x != nil {
+		return x.MaxBytes
+	}
+	return 0
+}
+
+func (x *StreamLogsCommand) GetMaxDuration() *durationpb.Duration {
+	if x != nil {
+		return x.MaxDuration
+	}
+	return nil
+}
+
+type StopLogsCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	StreamId      string                 `protobuf:"bytes,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopLogsCommand) Reset() {
+	*x = StopLogsCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopLogsCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopLogsCommand) ProtoMessage() {}
+
+func (x *StopLogsCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopLogsCommand.ProtoReflect.Descriptor instead.
+func (*StopLogsCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *StopLogsCommand) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
+	}
+	return ""
+}
+
+// InstanceStatus reports a change of an instance's state.
+type InstanceStatus struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId  string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	State       InstanceState          `protobuf:"varint,2,opt,name=state,proto3,enum=nook.agent.v1.InstanceState" json:"state,omitempty"`
+	ContainerId string                 `protobuf:"bytes,3,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	// The port published on the advertise address.
+	HostPort     int32 `protobuf:"varint,4,opt,name=host_port,json=hostPort,proto3" json:"host_port,omitempty"`
+	RestartCount int32 `protobuf:"varint,5,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
+	// Why the instance is unhealthy, crashed or failed (user-facing).
+	Message string `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
+	// For FAILED: the container's last output before it was removed.
+	StartupLog    []string `protobuf:"bytes,7,rep,name=startup_log,json=startupLog,proto3" json:"startup_log,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstanceStatus) Reset() {
+	*x = InstanceStatus{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceStatus) ProtoMessage() {}
+
+func (x *InstanceStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceStatus.ProtoReflect.Descriptor instead.
+func (*InstanceStatus) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *InstanceStatus) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *InstanceStatus) GetState() InstanceState {
+	if x != nil {
+		return x.State
+	}
+	return InstanceState_INSTANCE_STATE_UNSPECIFIED
+}
+
+func (x *InstanceStatus) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *InstanceStatus) GetHostPort() int32 {
+	if x != nil {
+		return x.HostPort
+	}
+	return 0
+}
+
+func (x *InstanceStatus) GetRestartCount() int32 {
+	if x != nil {
+		return x.RestartCount
+	}
+	return 0
+}
+
+func (x *InstanceStatus) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *InstanceStatus) GetStartupLog() []string {
+	if x != nil {
+		return x.StartupLog
+	}
+	return nil
+}
+
+// InstanceReport describes an instance container found on the node.
+type InstanceReport struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId   string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	ContainerId  string                 `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	Running      bool                   `protobuf:"varint,3,opt,name=running,proto3" json:"running,omitempty"`
+	HostPort     int32                  `protobuf:"varint,4,opt,name=host_port,json=hostPort,proto3" json:"host_port,omitempty"`
+	RestartCount int32                  `protobuf:"varint,5,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`
+	// Whether the agent is currently stopping the container.
+	Stopping      bool `protobuf:"varint,6,opt,name=stopping,proto3" json:"stopping,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InstanceReport) Reset() {
+	*x = InstanceReport{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InstanceReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InstanceReport) ProtoMessage() {}
+
+func (x *InstanceReport) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InstanceReport.ProtoReflect.Descriptor instead.
+func (*InstanceReport) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *InstanceReport) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *InstanceReport) GetContainerId() string {
+	if x != nil {
+		return x.ContainerId
+	}
+	return ""
+}
+
+func (x *InstanceReport) GetRunning() bool {
+	if x != nil {
+		return x.Running
+	}
+	return false
+}
+
+func (x *InstanceReport) GetHostPort() int32 {
+	if x != nil {
+		return x.HostPort
+	}
+	return 0
+}
+
+func (x *InstanceReport) GetRestartCount() int32 {
+	if x != nil {
+		return x.RestartCount
+	}
+	return 0
+}
+
+func (x *InstanceReport) GetStopping() bool {
+	if x != nil {
+		return x.Stopping
+	}
+	return false
+}
+
+// AppLog carries container output for a log stream.
+type AppLog struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	StreamId string                 `protobuf:"bytes,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	Lines    []*LogLine             `protobuf:"bytes,2,rep,name=lines,proto3" json:"lines,omitempty"`
+	// The stream ended; message says why if it was not the end of output.
+	End           bool   `protobuf:"varint,3,opt,name=end,proto3" json:"end,omitempty"`
+	Message       string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AppLog) Reset() {
+	*x = AppLog{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AppLog) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AppLog) ProtoMessage() {}
+
+func (x *AppLog) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AppLog.ProtoReflect.Descriptor instead.
+func (*AppLog) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *AppLog) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
+	}
+	return ""
+}
+
+func (x *AppLog) GetLines() []*LogLine {
+	if x != nil {
+		return x.Lines
+	}
+	return nil
+}
+
+func (x *AppLog) GetEnd() bool {
+	if x != nil {
+		return x.End
+	}
+	return false
+}
+
+func (x *AppLog) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type LogLine struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Time  *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=time,proto3" json:"time,omitempty"`
+	// "stdout" or "stderr".
+	Stream        string `protobuf:"bytes,2,opt,name=stream,proto3" json:"stream,omitempty"`
+	Text          string `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *LogLine) Reset() {
+	*x = LogLine{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LogLine) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LogLine) ProtoMessage() {}
+
+func (x *LogLine) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
+func (*LogLine) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *LogLine) GetTime() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Time
+	}
+	return nil
+}
+
+func (x *LogLine) GetStream() string {
+	if x != nil {
+		return x.Stream
+	}
+	return ""
+}
+
+func (x *LogLine) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
 var File_nook_agent_v1_node_service_proto protoreflect.FileDescriptor
 
 const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\n" +
-	" nook/agent/v1/node_service.proto\x12\rnook.agent.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xca\x02\n" +
+	" nook/agent/v1/node_service.proto\x12\rnook.agent.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb3\x03\n" +
 	"\bNodeInfo\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1c\n" +
 	"\taddresses\x18\x02 \x03(\tR\taddresses\x12\x1b\n" +
@@ -1917,7 +2868,9 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\x04arch\x18\t \x01(\tR\x04arch\x12\x1f\n" +
 	"\vbuild_slots\x18\n" +
 	" \x01(\x05R\n" +
-	"buildSlots\"\x81\x02\n" +
+	"buildSlots\x12+\n" +
+	"\x11advertise_address\x18\v \x01(\tR\x10advertiseAddress\x12:\n" +
+	"\x19builds_unavailable_reason\x18\f \x01(\tR\x17buildsUnavailableReason\"\x81\x02\n" +
 	"\vJoinRequest\x12\x1d\n" +
 	"\n" +
 	"join_token\x18\x01 \x01(\tR\tjoinToken\x12\x17\n" +
@@ -1937,24 +2890,27 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\"q\n" +
 	"\x18RenewCertificateResponse\x12'\n" +
 	"\x0fcertificate_der\x18\x01 \x01(\fR\x0ecertificateDer\x12,\n" +
-	"\x12ca_certificate_der\x18\x02 \x01(\fR\x10caCertificateDer\"\xc9\x02\n" +
+	"\x12ca_certificate_der\x18\x02 \x01(\fR\x10caCertificateDer\"\xc5\x03\n" +
 	"\x0eConnectRequest\x12,\n" +
 	"\x05hello\x18\x01 \x01(\v2\x14.nook.agent.v1.HelloH\x00R\x05hello\x128\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x18.nook.agent.v1.HeartbeatH\x00R\theartbeat\x12E\n" +
 	"\x0ecommand_result\x18\x03 \x01(\v2\x1c.nook.agent.v1.CommandResultH\x00R\rcommandResult\x126\n" +
 	"\tbuild_log\x18\x04 \x01(\v2\x17.nook.agent.v1.BuildLogH\x00R\bbuildLog\x12E\n" +
-	"\x0ebuild_finished\x18\x05 \x01(\v2\x1c.nook.agent.v1.BuildFinishedH\x00R\rbuildFinishedB\t\n" +
+	"\x0ebuild_finished\x18\x05 \x01(\v2\x1c.nook.agent.v1.BuildFinishedH\x00R\rbuildFinished\x12H\n" +
+	"\x0finstance_status\x18\x06 \x01(\v2\x1d.nook.agent.v1.InstanceStatusH\x00R\x0einstanceStatus\x120\n" +
+	"\aapp_log\x18\a \x01(\v2\x15.nook.agent.v1.AppLogH\x00R\x06appLogB\t\n" +
 	"\amessage\"\x8e\x01\n" +
 	"\x0fConnectResponse\x12<\n" +
 	"\baccepted\x18\x01 \x01(\v2\x1e.nook.agent.v1.ConnectAcceptedH\x00R\baccepted\x122\n" +
 	"\acommand\x18\x02 \x01(\v2\x16.nook.agent.v1.CommandH\x00R\acommandB\t\n" +
-	"\amessage\"^\n" +
+	"\amessage\"\x9b\x01\n" +
 	"\x05Hello\x12+\n" +
 	"\x04info\x18\x01 \x01(\v2\x17.nook.agent.v1.NodeInfoR\x04info\x12(\n" +
-	"\x10active_build_ids\x18\x02 \x03(\tR\x0eactiveBuildIds\"t\n" +
+	"\x10active_build_ids\x18\x02 \x03(\tR\x0eactiveBuildIds\x12;\n" +
+	"\tinstances\x18\x03 \x03(\v2\x1d.nook.agent.v1.InstanceReportR\tinstances\"t\n" +
 	"\x0fConnectAccepted\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12H\n" +
-	"\x12heartbeat_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x11heartbeatInterval\"\xbb\x02\n" +
+	"\x12heartbeat_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x11heartbeatInterval\"\xf7\x02\n" +
 	"\tHeartbeat\x124\n" +
 	"\x16memory_available_bytes\x18\x01 \x01(\x03R\x14memoryAvailableBytes\x12\x1e\n" +
 	"\vcpu_load_1m\x18\x02 \x01(\x01R\tcpuLoad1m\x12&\n" +
@@ -1962,14 +2918,20 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\x12running_containers\x18\x04 \x01(\x05R\x11runningContainers\x12#\n" +
 	"\ragent_version\x18\x05 \x01(\tR\fagentVersion\x121\n" +
 	"\x06uptime\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\x06uptime\x12)\n" +
-	"\x10docker_reachable\x18\a \x01(\bR\x0fdockerReachable\"\xaa\x02\n" +
+	"\x10docker_reachable\x18\a \x01(\bR\x0fdockerReachable\x12:\n" +
+	"\x19builds_unavailable_reason\x18\b \x01(\tR\x17buildsUnavailableReason\"\xc7\x04\n" +
 	"\aCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x123\n" +
 	"\atimeout\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12F\n" +
 	"\finspect_node\x18\x03 \x01(\v2!.nook.agent.v1.InspectNodeCommandH\x00R\vinspectNode\x123\n" +
 	"\x05build\x18\x04 \x01(\v2\x1b.nook.agent.v1.BuildCommandH\x00R\x05build\x12F\n" +
-	"\fcancel_build\x18\x05 \x01(\v2!.nook.agent.v1.CancelBuildCommandH\x00R\vcancelBuildB\x06\n" +
+	"\fcancel_build\x18\x05 \x01(\v2!.nook.agent.v1.CancelBuildCommandH\x00R\vcancelBuild\x12L\n" +
+	"\x0estart_instance\x18\x06 \x01(\v2#.nook.agent.v1.StartInstanceCommandH\x00R\rstartInstance\x12I\n" +
+	"\rstop_instance\x18\a \x01(\v2\".nook.agent.v1.StopInstanceCommandH\x00R\fstopInstance\x12C\n" +
+	"\vstream_logs\x18\b \x01(\v2 .nook.agent.v1.StreamLogsCommandH\x00R\n" +
+	"streamLogs\x12=\n" +
+	"\tstop_logs\x18\t \x01(\v2\x1e.nook.agent.v1.StopLogsCommandH\x00R\bstopLogsB\x06\n" +
 	"\x04kind\"\x14\n" +
 	"\x12InspectNodeCommand\"\xeb\x01\n" +
 	"\rCommandResult\x12\x1d\n" +
@@ -2046,7 +3008,74 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\x06result\x18\x02 \x01(\x0e2\x1a.nook.agent.v1.BuildResultR\x06result\x12!\n" +
 	"\fimage_digest\x18\x03 \x01(\tR\vimageDigest\x12\x18\n" +
 	"\amessage\x18\x04 \x01(\tR\amessage\x12\x1b\n" +
-	"\tlog_bytes\x18\x05 \x01(\x03R\blogBytes*\xe1\x01\n" +
+	"\tlog_bytes\x18\x05 \x01(\x03R\blogBytes\"\x85\x05\n" +
+	"\x14StartInstanceCommand\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12#\n" +
+	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x15\n" +
+	"\x06app_id\x18\x03 \x01(\tR\x05appId\x12!\n" +
+	"\fworkspace_id\x18\x04 \x01(\tR\vworkspaceId\x12\x19\n" +
+	"\bapp_slug\x18\x05 \x01(\tR\aappSlug\x12+\n" +
+	"\x11deployment_number\x18\x06 \x01(\x05R\x10deploymentNumber\x12\x1a\n" +
+	"\bregistry\x18\a \x01(\tR\bregistry\x12\x1e\n" +
+	"\n" +
+	"repository\x18\b \x01(\tR\n" +
+	"repository\x12!\n" +
+	"\fimage_digest\x18\t \x01(\tR\vimageDigest\x12%\n" +
+	"\x0eregistry_token\x18\n" +
+	" \x01(\tR\rregistryToken\x12\x12\n" +
+	"\x04port\x18\v \x01(\x05R\x04port\x12*\n" +
+	"\x11health_check_path\x18\f \x01(\tR\x0fhealthCheckPath\x12B\n" +
+	"\x0fstartup_timeout\x18\r \x01(\v2\x19.google.protobuf.DurationR\x0estartupTimeout\x12!\n" +
+	"\fmemory_bytes\x18\x0e \x01(\x03R\vmemoryBytes\x12%\n" +
+	"\x0ecpu_millicores\x18\x0f \x01(\x03R\rcpuMillicores\x12(\n" +
+	"\x10read_only_rootfs\x18\x10 \x01(\bR\x0ereadOnlyRootfs\x12'\n" +
+	"\x03env\x18\x11 \x03(\v2\x15.nook.agent.v1.EnvVarR\x03env\"2\n" +
+	"\x06EnvVar\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"g\n" +
+	"\x13StopInstanceCommand\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12/\n" +
+	"\x05drain\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05drain\"\x8a\x02\n" +
+	"\x11StreamLogsCommand\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x12\x1f\n" +
+	"\vinstance_id\x18\x02 \x01(\tR\n" +
+	"instanceId\x12\x16\n" +
+	"\x06follow\x18\x03 \x01(\bR\x06follow\x12\x12\n" +
+	"\x04tail\x18\x04 \x01(\x05R\x04tail\x120\n" +
+	"\x05since\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12\x1b\n" +
+	"\tmax_bytes\x18\x06 \x01(\x03R\bmaxBytes\x12<\n" +
+	"\fmax_duration\x18\a \x01(\v2\x19.google.protobuf.DurationR\vmaxDuration\".\n" +
+	"\x0fStopLogsCommand\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\tR\bstreamId\"\x85\x02\n" +
+	"\x0eInstanceStatus\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x122\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x1c.nook.agent.v1.InstanceStateR\x05state\x12!\n" +
+	"\fcontainer_id\x18\x03 \x01(\tR\vcontainerId\x12\x1b\n" +
+	"\thost_port\x18\x04 \x01(\x05R\bhostPort\x12#\n" +
+	"\rrestart_count\x18\x05 \x01(\x05R\frestartCount\x12\x18\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage\x12\x1f\n" +
+	"\vstartup_log\x18\a \x03(\tR\n" +
+	"startupLog\"\xcc\x01\n" +
+	"\x0eInstanceReport\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12!\n" +
+	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x18\n" +
+	"\arunning\x18\x03 \x01(\bR\arunning\x12\x1b\n" +
+	"\thost_port\x18\x04 \x01(\x05R\bhostPort\x12#\n" +
+	"\rrestart_count\x18\x05 \x01(\x05R\frestartCount\x12\x1a\n" +
+	"\bstopping\x18\x06 \x01(\bR\bstopping\"\x7f\n" +
+	"\x06AppLog\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x12,\n" +
+	"\x05lines\x18\x02 \x03(\v2\x16.nook.agent.v1.LogLineR\x05lines\x12\x10\n" +
+	"\x03end\x18\x03 \x01(\bR\x03end\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"e\n" +
+	"\aLogLine\x12.\n" +
+	"\x04time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04time\x12\x16\n" +
+	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text*\xe1\x01\n" +
 	"\x10CommandErrorCode\x12\"\n" +
 	"\x1eCOMMAND_ERROR_CODE_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eCOMMAND_ERROR_CODE_UNSUPPORTED\x10\x01\x12)\n" +
@@ -2060,7 +3089,15 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\x13BUILD_RESULT_FAILED\x10\x02\x12\x1a\n" +
 	"\x16BUILD_RESULT_TIMED_OUT\x10\x03\x12\x19\n" +
 	"\x15BUILD_RESULT_CANCELED\x10\x04\x12\x1c\n" +
-	"\x18BUILD_RESULT_INFRA_ERROR\x10\x052\x81\x02\n" +
+	"\x18BUILD_RESULT_INFRA_ERROR\x10\x05*\xd9\x01\n" +
+	"\rInstanceState\x12\x1e\n" +
+	"\x1aINSTANCE_STATE_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17INSTANCE_STATE_STARTING\x10\x01\x12\x1a\n" +
+	"\x16INSTANCE_STATE_HEALTHY\x10\x02\x12\x1c\n" +
+	"\x18INSTANCE_STATE_UNHEALTHY\x10\x03\x12\x1a\n" +
+	"\x16INSTANCE_STATE_STOPPED\x10\x04\x12\x1a\n" +
+	"\x16INSTANCE_STATE_CRASHED\x10\x05\x12\x19\n" +
+	"\x15INSTANCE_STATE_FAILED\x10\x062\x81\x02\n" +
 	"\vNodeService\x12?\n" +
 	"\x04Join\x12\x1a.nook.agent.v1.JoinRequest\x1a\x1b.nook.agent.v1.JoinResponse\x12L\n" +
 	"\aConnect\x12\x1d.nook.agent.v1.ConnectRequest\x1a\x1e.nook.agent.v1.ConnectResponse(\x010\x01\x12c\n" +
@@ -2079,76 +3116,101 @@ func file_nook_agent_v1_node_service_proto_rawDescGZIP() []byte {
 	return file_nook_agent_v1_node_service_proto_rawDescData
 }
 
-var file_nook_agent_v1_node_service_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_nook_agent_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_nook_agent_v1_node_service_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_nook_agent_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
 var file_nook_agent_v1_node_service_proto_goTypes = []any{
 	(CommandErrorCode)(0),            // 0: nook.agent.v1.CommandErrorCode
 	(BuildResult)(0),                 // 1: nook.agent.v1.BuildResult
-	(*NodeInfo)(nil),                 // 2: nook.agent.v1.NodeInfo
-	(*JoinRequest)(nil),              // 3: nook.agent.v1.JoinRequest
-	(*JoinResponse)(nil),             // 4: nook.agent.v1.JoinResponse
-	(*RenewCertificateRequest)(nil),  // 5: nook.agent.v1.RenewCertificateRequest
-	(*RenewCertificateResponse)(nil), // 6: nook.agent.v1.RenewCertificateResponse
-	(*ConnectRequest)(nil),           // 7: nook.agent.v1.ConnectRequest
-	(*ConnectResponse)(nil),          // 8: nook.agent.v1.ConnectResponse
-	(*Hello)(nil),                    // 9: nook.agent.v1.Hello
-	(*ConnectAccepted)(nil),          // 10: nook.agent.v1.ConnectAccepted
-	(*Heartbeat)(nil),                // 11: nook.agent.v1.Heartbeat
-	(*Command)(nil),                  // 12: nook.agent.v1.Command
-	(*InspectNodeCommand)(nil),       // 13: nook.agent.v1.InspectNodeCommand
-	(*CommandResult)(nil),            // 14: nook.agent.v1.CommandResult
-	(*Accepted)(nil),                 // 15: nook.agent.v1.Accepted
-	(*CommandError)(nil),             // 16: nook.agent.v1.CommandError
-	(*InspectNodeResult)(nil),        // 17: nook.agent.v1.InspectNodeResult
-	(*DockerInfo)(nil),               // 18: nook.agent.v1.DockerInfo
-	(*ManagedContainer)(nil),         // 19: nook.agent.v1.ManagedContainer
-	(*BuildCommand)(nil),             // 20: nook.agent.v1.BuildCommand
-	(*CancelBuildCommand)(nil),       // 21: nook.agent.v1.CancelBuildCommand
-	(*BuildLog)(nil),                 // 22: nook.agent.v1.BuildLog
-	(*BuildFinished)(nil),            // 23: nook.agent.v1.BuildFinished
-	nil,                              // 24: nook.agent.v1.JoinRequest.LabelsEntry
-	nil,                              // 25: nook.agent.v1.ManagedContainer.LabelsEntry
-	(*durationpb.Duration)(nil),      // 26: google.protobuf.Duration
-	(*timestamppb.Timestamp)(nil),    // 27: google.protobuf.Timestamp
+	(InstanceState)(0),               // 2: nook.agent.v1.InstanceState
+	(*NodeInfo)(nil),                 // 3: nook.agent.v1.NodeInfo
+	(*JoinRequest)(nil),              // 4: nook.agent.v1.JoinRequest
+	(*JoinResponse)(nil),             // 5: nook.agent.v1.JoinResponse
+	(*RenewCertificateRequest)(nil),  // 6: nook.agent.v1.RenewCertificateRequest
+	(*RenewCertificateResponse)(nil), // 7: nook.agent.v1.RenewCertificateResponse
+	(*ConnectRequest)(nil),           // 8: nook.agent.v1.ConnectRequest
+	(*ConnectResponse)(nil),          // 9: nook.agent.v1.ConnectResponse
+	(*Hello)(nil),                    // 10: nook.agent.v1.Hello
+	(*ConnectAccepted)(nil),          // 11: nook.agent.v1.ConnectAccepted
+	(*Heartbeat)(nil),                // 12: nook.agent.v1.Heartbeat
+	(*Command)(nil),                  // 13: nook.agent.v1.Command
+	(*InspectNodeCommand)(nil),       // 14: nook.agent.v1.InspectNodeCommand
+	(*CommandResult)(nil),            // 15: nook.agent.v1.CommandResult
+	(*Accepted)(nil),                 // 16: nook.agent.v1.Accepted
+	(*CommandError)(nil),             // 17: nook.agent.v1.CommandError
+	(*InspectNodeResult)(nil),        // 18: nook.agent.v1.InspectNodeResult
+	(*DockerInfo)(nil),               // 19: nook.agent.v1.DockerInfo
+	(*ManagedContainer)(nil),         // 20: nook.agent.v1.ManagedContainer
+	(*BuildCommand)(nil),             // 21: nook.agent.v1.BuildCommand
+	(*CancelBuildCommand)(nil),       // 22: nook.agent.v1.CancelBuildCommand
+	(*BuildLog)(nil),                 // 23: nook.agent.v1.BuildLog
+	(*BuildFinished)(nil),            // 24: nook.agent.v1.BuildFinished
+	(*StartInstanceCommand)(nil),     // 25: nook.agent.v1.StartInstanceCommand
+	(*EnvVar)(nil),                   // 26: nook.agent.v1.EnvVar
+	(*StopInstanceCommand)(nil),      // 27: nook.agent.v1.StopInstanceCommand
+	(*StreamLogsCommand)(nil),        // 28: nook.agent.v1.StreamLogsCommand
+	(*StopLogsCommand)(nil),          // 29: nook.agent.v1.StopLogsCommand
+	(*InstanceStatus)(nil),           // 30: nook.agent.v1.InstanceStatus
+	(*InstanceReport)(nil),           // 31: nook.agent.v1.InstanceReport
+	(*AppLog)(nil),                   // 32: nook.agent.v1.AppLog
+	(*LogLine)(nil),                  // 33: nook.agent.v1.LogLine
+	nil,                              // 34: nook.agent.v1.JoinRequest.LabelsEntry
+	nil,                              // 35: nook.agent.v1.ManagedContainer.LabelsEntry
+	(*durationpb.Duration)(nil),      // 36: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil),    // 37: google.protobuf.Timestamp
 }
 var file_nook_agent_v1_node_service_proto_depIdxs = []int32{
-	24, // 0: nook.agent.v1.JoinRequest.labels:type_name -> nook.agent.v1.JoinRequest.LabelsEntry
-	2,  // 1: nook.agent.v1.JoinRequest.info:type_name -> nook.agent.v1.NodeInfo
-	9,  // 2: nook.agent.v1.ConnectRequest.hello:type_name -> nook.agent.v1.Hello
-	11, // 3: nook.agent.v1.ConnectRequest.heartbeat:type_name -> nook.agent.v1.Heartbeat
-	14, // 4: nook.agent.v1.ConnectRequest.command_result:type_name -> nook.agent.v1.CommandResult
-	22, // 5: nook.agent.v1.ConnectRequest.build_log:type_name -> nook.agent.v1.BuildLog
-	23, // 6: nook.agent.v1.ConnectRequest.build_finished:type_name -> nook.agent.v1.BuildFinished
-	10, // 7: nook.agent.v1.ConnectResponse.accepted:type_name -> nook.agent.v1.ConnectAccepted
-	12, // 8: nook.agent.v1.ConnectResponse.command:type_name -> nook.agent.v1.Command
-	2,  // 9: nook.agent.v1.Hello.info:type_name -> nook.agent.v1.NodeInfo
-	26, // 10: nook.agent.v1.ConnectAccepted.heartbeat_interval:type_name -> google.protobuf.Duration
-	26, // 11: nook.agent.v1.Heartbeat.uptime:type_name -> google.protobuf.Duration
-	26, // 12: nook.agent.v1.Command.timeout:type_name -> google.protobuf.Duration
-	13, // 13: nook.agent.v1.Command.inspect_node:type_name -> nook.agent.v1.InspectNodeCommand
-	20, // 14: nook.agent.v1.Command.build:type_name -> nook.agent.v1.BuildCommand
-	21, // 15: nook.agent.v1.Command.cancel_build:type_name -> nook.agent.v1.CancelBuildCommand
-	16, // 16: nook.agent.v1.CommandResult.error:type_name -> nook.agent.v1.CommandError
-	17, // 17: nook.agent.v1.CommandResult.inspect_node:type_name -> nook.agent.v1.InspectNodeResult
-	15, // 18: nook.agent.v1.CommandResult.accepted:type_name -> nook.agent.v1.Accepted
-	0,  // 19: nook.agent.v1.CommandError.code:type_name -> nook.agent.v1.CommandErrorCode
-	18, // 20: nook.agent.v1.InspectNodeResult.docker:type_name -> nook.agent.v1.DockerInfo
-	19, // 21: nook.agent.v1.InspectNodeResult.containers:type_name -> nook.agent.v1.ManagedContainer
-	25, // 22: nook.agent.v1.ManagedContainer.labels:type_name -> nook.agent.v1.ManagedContainer.LabelsEntry
-	27, // 23: nook.agent.v1.ManagedContainer.created_at:type_name -> google.protobuf.Timestamp
-	26, // 24: nook.agent.v1.BuildCommand.timeout:type_name -> google.protobuf.Duration
-	1,  // 25: nook.agent.v1.BuildFinished.result:type_name -> nook.agent.v1.BuildResult
-	3,  // 26: nook.agent.v1.NodeService.Join:input_type -> nook.agent.v1.JoinRequest
-	7,  // 27: nook.agent.v1.NodeService.Connect:input_type -> nook.agent.v1.ConnectRequest
-	5,  // 28: nook.agent.v1.NodeService.RenewCertificate:input_type -> nook.agent.v1.RenewCertificateRequest
-	4,  // 29: nook.agent.v1.NodeService.Join:output_type -> nook.agent.v1.JoinResponse
-	8,  // 30: nook.agent.v1.NodeService.Connect:output_type -> nook.agent.v1.ConnectResponse
-	6,  // 31: nook.agent.v1.NodeService.RenewCertificate:output_type -> nook.agent.v1.RenewCertificateResponse
-	29, // [29:32] is the sub-list for method output_type
-	26, // [26:29] is the sub-list for method input_type
-	26, // [26:26] is the sub-list for extension type_name
-	26, // [26:26] is the sub-list for extension extendee
-	0,  // [0:26] is the sub-list for field type_name
+	34, // 0: nook.agent.v1.JoinRequest.labels:type_name -> nook.agent.v1.JoinRequest.LabelsEntry
+	3,  // 1: nook.agent.v1.JoinRequest.info:type_name -> nook.agent.v1.NodeInfo
+	10, // 2: nook.agent.v1.ConnectRequest.hello:type_name -> nook.agent.v1.Hello
+	12, // 3: nook.agent.v1.ConnectRequest.heartbeat:type_name -> nook.agent.v1.Heartbeat
+	15, // 4: nook.agent.v1.ConnectRequest.command_result:type_name -> nook.agent.v1.CommandResult
+	23, // 5: nook.agent.v1.ConnectRequest.build_log:type_name -> nook.agent.v1.BuildLog
+	24, // 6: nook.agent.v1.ConnectRequest.build_finished:type_name -> nook.agent.v1.BuildFinished
+	30, // 7: nook.agent.v1.ConnectRequest.instance_status:type_name -> nook.agent.v1.InstanceStatus
+	32, // 8: nook.agent.v1.ConnectRequest.app_log:type_name -> nook.agent.v1.AppLog
+	11, // 9: nook.agent.v1.ConnectResponse.accepted:type_name -> nook.agent.v1.ConnectAccepted
+	13, // 10: nook.agent.v1.ConnectResponse.command:type_name -> nook.agent.v1.Command
+	3,  // 11: nook.agent.v1.Hello.info:type_name -> nook.agent.v1.NodeInfo
+	31, // 12: nook.agent.v1.Hello.instances:type_name -> nook.agent.v1.InstanceReport
+	36, // 13: nook.agent.v1.ConnectAccepted.heartbeat_interval:type_name -> google.protobuf.Duration
+	36, // 14: nook.agent.v1.Heartbeat.uptime:type_name -> google.protobuf.Duration
+	36, // 15: nook.agent.v1.Command.timeout:type_name -> google.protobuf.Duration
+	14, // 16: nook.agent.v1.Command.inspect_node:type_name -> nook.agent.v1.InspectNodeCommand
+	21, // 17: nook.agent.v1.Command.build:type_name -> nook.agent.v1.BuildCommand
+	22, // 18: nook.agent.v1.Command.cancel_build:type_name -> nook.agent.v1.CancelBuildCommand
+	25, // 19: nook.agent.v1.Command.start_instance:type_name -> nook.agent.v1.StartInstanceCommand
+	27, // 20: nook.agent.v1.Command.stop_instance:type_name -> nook.agent.v1.StopInstanceCommand
+	28, // 21: nook.agent.v1.Command.stream_logs:type_name -> nook.agent.v1.StreamLogsCommand
+	29, // 22: nook.agent.v1.Command.stop_logs:type_name -> nook.agent.v1.StopLogsCommand
+	17, // 23: nook.agent.v1.CommandResult.error:type_name -> nook.agent.v1.CommandError
+	18, // 24: nook.agent.v1.CommandResult.inspect_node:type_name -> nook.agent.v1.InspectNodeResult
+	16, // 25: nook.agent.v1.CommandResult.accepted:type_name -> nook.agent.v1.Accepted
+	0,  // 26: nook.agent.v1.CommandError.code:type_name -> nook.agent.v1.CommandErrorCode
+	19, // 27: nook.agent.v1.InspectNodeResult.docker:type_name -> nook.agent.v1.DockerInfo
+	20, // 28: nook.agent.v1.InspectNodeResult.containers:type_name -> nook.agent.v1.ManagedContainer
+	35, // 29: nook.agent.v1.ManagedContainer.labels:type_name -> nook.agent.v1.ManagedContainer.LabelsEntry
+	37, // 30: nook.agent.v1.ManagedContainer.created_at:type_name -> google.protobuf.Timestamp
+	36, // 31: nook.agent.v1.BuildCommand.timeout:type_name -> google.protobuf.Duration
+	1,  // 32: nook.agent.v1.BuildFinished.result:type_name -> nook.agent.v1.BuildResult
+	36, // 33: nook.agent.v1.StartInstanceCommand.startup_timeout:type_name -> google.protobuf.Duration
+	26, // 34: nook.agent.v1.StartInstanceCommand.env:type_name -> nook.agent.v1.EnvVar
+	36, // 35: nook.agent.v1.StopInstanceCommand.drain:type_name -> google.protobuf.Duration
+	37, // 36: nook.agent.v1.StreamLogsCommand.since:type_name -> google.protobuf.Timestamp
+	36, // 37: nook.agent.v1.StreamLogsCommand.max_duration:type_name -> google.protobuf.Duration
+	2,  // 38: nook.agent.v1.InstanceStatus.state:type_name -> nook.agent.v1.InstanceState
+	33, // 39: nook.agent.v1.AppLog.lines:type_name -> nook.agent.v1.LogLine
+	37, // 40: nook.agent.v1.LogLine.time:type_name -> google.protobuf.Timestamp
+	4,  // 41: nook.agent.v1.NodeService.Join:input_type -> nook.agent.v1.JoinRequest
+	8,  // 42: nook.agent.v1.NodeService.Connect:input_type -> nook.agent.v1.ConnectRequest
+	6,  // 43: nook.agent.v1.NodeService.RenewCertificate:input_type -> nook.agent.v1.RenewCertificateRequest
+	5,  // 44: nook.agent.v1.NodeService.Join:output_type -> nook.agent.v1.JoinResponse
+	9,  // 45: nook.agent.v1.NodeService.Connect:output_type -> nook.agent.v1.ConnectResponse
+	7,  // 46: nook.agent.v1.NodeService.RenewCertificate:output_type -> nook.agent.v1.RenewCertificateResponse
+	44, // [44:47] is the sub-list for method output_type
+	41, // [41:44] is the sub-list for method input_type
+	41, // [41:41] is the sub-list for extension type_name
+	41, // [41:41] is the sub-list for extension extendee
+	0,  // [0:41] is the sub-list for field type_name
 }
 
 func init() { file_nook_agent_v1_node_service_proto_init() }
@@ -2162,6 +3224,8 @@ func file_nook_agent_v1_node_service_proto_init() {
 		(*ConnectRequest_CommandResult)(nil),
 		(*ConnectRequest_BuildLog)(nil),
 		(*ConnectRequest_BuildFinished)(nil),
+		(*ConnectRequest_InstanceStatus)(nil),
+		(*ConnectRequest_AppLog)(nil),
 	}
 	file_nook_agent_v1_node_service_proto_msgTypes[6].OneofWrappers = []any{
 		(*ConnectResponse_Accepted)(nil),
@@ -2171,6 +3235,10 @@ func file_nook_agent_v1_node_service_proto_init() {
 		(*Command_InspectNode)(nil),
 		(*Command_Build)(nil),
 		(*Command_CancelBuild)(nil),
+		(*Command_StartInstance)(nil),
+		(*Command_StopInstance)(nil),
+		(*Command_StreamLogs)(nil),
+		(*Command_StopLogs)(nil),
 	}
 	file_nook_agent_v1_node_service_proto_msgTypes[12].OneofWrappers = []any{
 		(*CommandResult_Error)(nil),
@@ -2182,8 +3250,8 @@ func file_nook_agent_v1_node_service_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nook_agent_v1_node_service_proto_rawDesc), len(file_nook_agent_v1_node_service_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   24,
+			NumEnums:      3,
+			NumMessages:   33,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

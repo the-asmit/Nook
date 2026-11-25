@@ -41,7 +41,7 @@ func run(ctx context.Context, args []string, environ map[string]string, stdout, 
 		}
 		return cmd.Help()
 	}
-	root.AddCommand(joinCommand(environ, stdout), runCommand(environ, stdout), &cobra.Command{ //nolint:contextcheck // Cobra hands ctx to every command through ExecuteContext/cmd.Context().
+	root.AddCommand(joinCommand(environ, stdout), runCommand(environ, stdout), firewallCommand(environ, stdout), &cobra.Command{ //nolint:contextcheck // Cobra hands ctx to every command through ExecuteContext/cmd.Context().
 		Use: "version", Short: "Print version information", Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			_, _ = fmt.Fprintf(stdout, "nook-agent %s\n", version.Get())
@@ -155,4 +155,49 @@ func runCommand(environ map[string]string, stdout io.Writer) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// firewallCommand shows or removes the egress firewall the agent installs.
+func firewallCommand(environ map[string]string, stdout io.Writer) *cobra.Command {
+	fw := &cobra.Command{Use: "firewall", Short: "Show or remove the egress firewall for app and build containers"}
+	load := func() (agent.Config, error) {
+		cfg, err := config.Load[agent.Config](environ)
+		if err != nil {
+			return cfg, usageError{fmt.Errorf("invalid configuration: %w", err)}
+		}
+		return cfg, nil
+	}
+	fw.AddCommand(&cobra.Command{
+		Use: "rules", Short: "Print the iptables rules the agent installs", Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			rules, err := agent.FirewallRules(&cfg)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprint(stdout, rules)
+			return nil
+		},
+	}, &cobra.Command{
+		Use: "remove", Short: "Remove the egress rules from this node (when it leaves Nook)", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := load()
+			if err != nil {
+				return err
+			}
+			logger, err := logging.New(stdout, cfg.Log, slog.String("service", "nook-agent"), slog.String("version", version.Get().Version))
+			if err != nil {
+				return usageError{err}
+			}
+			if err := agent.RemoveFirewall(cmd.Context(), &cfg, logger); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(stdout, "egress firewall removed")
+			return nil
+		},
+	})
+	return fw
 }

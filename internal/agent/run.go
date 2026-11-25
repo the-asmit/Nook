@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"net/netip"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,10 +44,65 @@ type Config struct {
 	// BuildImage is the rootless BuildKit image builds run in, pinned by digest.
 	BuildImage string `env:"NOOK_AGENT_BUILDKIT_IMAGE" envDefault:"moby/buildkit:v0.34.2-rootless@sha256:c8252268760e1baba80780d63d738ef9f260fb7c7c0973c78494cb9ddd99eda1"`
 	// BuildNetwork is the Docker network of build containers; it must
-	// reach the registry.
-	BuildNetwork string `env:"NOOK_AGENT_BUILD_NETWORK" envDefault:"bridge"`
+	// reach the registry. The default, nook-builds, is created by the agent
+	// and covered by the egress firewall; any other network is used as it
+	// is and its egress is not filtered (it may carry other services).
+	BuildNetwork string `env:"NOOK_AGENT_BUILD_NETWORK" envDefault:"nook-builds"`
 	// BuildMaxContextBytes limits the extracted size of a build context.
 	BuildMaxContextBytes int64 `env:"NOOK_AGENT_BUILD_MAX_CONTEXT_BYTES" envDefault:"2147483648"`
+	// AdvertiseAddr is the node's private IP address that app ports are
+	// published on (never a wildcard address).
+	AdvertiseAddr string `env:"NOOK_AGENT_ADVERTISE_ADDR"`
+	// RegistryPullAddr is the registry's host:port as the agent itself
+	// reaches it, when that differs from the address the control plane
+	// names (build containers and the agent on different networks).
+	RegistryPullAddr string `env:"NOOK_AGENT_REGISTRY_PULL_ADDR"`
+	// CrashLimit crashes within CrashWindow make an instance crashed (no
+	// more restarts).
+	CrashLimit  int           `env:"NOOK_AGENT_CRASH_LIMIT" envDefault:"5"`
+	CrashWindow time.Duration `env:"NOOK_AGENT_CRASH_WINDOW" envDefault:"10m"`
+	// RestartBackoffMin and RestartBackoffMax bound the delay before a
+	// crashed container is started again (doubling per crash).
+	RestartBackoffMin time.Duration `env:"NOOK_AGENT_RESTART_BACKOFF_MIN" envDefault:"1s"`
+	RestartBackoffMax time.Duration `env:"NOOK_AGENT_RESTART_BACKOFF_MAX" envDefault:"5m"`
+	// EgressFilter installs the egress firewall for app and build
+	// containers. Turning it off leaves cloud metadata and private
+	// networks reachable from apps.
+	EgressFilter bool `env:"NOOK_AGENT_EGRESS_FILTER" envDefault:"true"`
+	// FirewallImage ships iptables; it runs briefly to install the rules.
+	FirewallImage string `env:"NOOK_AGENT_FIREWALL_IMAGE" envDefault:"registry.k8s.io/build-image/distroless-iptables:v0.9.6@sha256:33f27a340efd1f0a0341bd85755f1752af00b27debaf2f2876a3ef5dcc07f84a"`
+	// FirewallChain prefixes the agent's iptables chains.
+	FirewallChain string `env:"NOOK_AGENT_FIREWALL_CHAIN" envDefault:"NOOK"`
+	// BuildEgressAllow lists addresses (IPs or CIDRs) build containers may
+	// reach although private: the registry.
+	BuildEgressAllow []string `env:"NOOK_AGENT_BUILD_EGRESS_ALLOW" envSeparator:","`
+	// EgressBlock lists more blocked destinations (IPs or CIDRs), such as
+	// other nodes' public addresses.
+	EgressBlock []string `env:"NOOK_AGENT_EGRESS_BLOCK" envSeparator:","`
+}
+
+// managedBuildNetwork is the build network the agent creates and filters.
+const managedBuildNetwork = "nook-builds"
+
+// parsePrefixes reads IPs and CIDRs.
+func parsePrefixes(name string, list []string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, s := range list {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(s); err == nil {
+			out = append(out, p.Masked())
+			continue
+		}
+		a, err := netip.ParseAddr(s)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %q is not an IP address or CIDR", name, s)
+		}
+		out = append(out, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+	}
+	return out, nil
 }
 
 // Validate checks the configuration.
@@ -68,6 +125,29 @@ func (c *Config) Validate() error {
 	}
 	if c.BuildNetwork == "" {
 		errs = append(errs, errors.New("NOOK_AGENT_BUILD_NETWORK must not be empty"))
+	}
+	if a, err := netip.ParseAddr(c.AdvertiseAddr); err != nil || a.IsUnspecified() || a.IsMulticast() {
+		errs = append(errs, errors.New("NOOK_AGENT_ADVERTISE_ADDR must be the node's private IP address (not 0.0.0.0 or ::)"))
+	}
+	if c.RegistryPullAddr != "" && !registryPattern.MatchString(c.RegistryPullAddr) {
+		errs = append(errs, errors.New("NOOK_AGENT_REGISTRY_PULL_ADDR must be host:port"))
+	}
+	errs = append(errs,
+		config.CheckRange("NOOK_AGENT_CRASH_LIMIT", c.CrashLimit, 1, 1000),
+		config.CheckDuration("NOOK_AGENT_CRASH_WINDOW", c.CrashWindow, time.Second, 24*time.Hour),
+		config.CheckDuration("NOOK_AGENT_RESTART_BACKOFF_MIN", c.RestartBackoffMin, 10*time.Millisecond, time.Hour),
+		config.CheckDuration("NOOK_AGENT_RESTART_BACKOFF_MAX", c.RestartBackoffMax, c.RestartBackoffMin, 24*time.Hour))
+	if !strings.Contains(c.FirewallImage, "@sha256:") {
+		errs = append(errs, errors.New("NOOK_AGENT_FIREWALL_IMAGE must be pinned by digest (name:tag@sha256:...)"))
+	}
+	if !chainPattern.MatchString(c.FirewallChain) {
+		errs = append(errs, errors.New("NOOK_AGENT_FIREWALL_CHAIN must be 1 to 20 upper-case letters, digits or hyphens, starting with a letter"))
+	}
+	if _, err := parsePrefixes("NOOK_AGENT_BUILD_EGRESS_ALLOW", c.BuildEgressAllow); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := parsePrefixes("NOOK_AGENT_EGRESS_BLOCK", c.EgressBlock); err != nil {
+		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
 }
@@ -93,6 +173,12 @@ type Agent struct {
 	reconnect chan struct{}
 	outbox    *outbox
 	builder   *builder
+	instances *instances
+	// firewallReady is set once the egress firewall is installed (or
+	// disabled); app and build containers wait for it.
+	firewallReady atomic.Bool
+	// buildsUnavailable says why builds cannot run on this node, or is "".
+	buildsUnavailable atomic.Pointer[string]
 }
 
 // New loads the node identity and prepares the agent.
@@ -113,9 +199,24 @@ func New(cfg *Config, logger *slog.Logger) (*Agent, error) {
 	}
 	a := &Agent{cfg: *cfg, dir: dir, docker: d, collector: newCollector(d), metrics: m, logger: logger, reconnect: make(chan struct{}, 1), outbox: newOutbox()}
 	a.id.Store(id)
-	a.builder = newBuilder(&a.cfg, d, a.outbox, logger, a.NodeID, func() []byte {
+	caPEM := func() []byte {
 		return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: a.id.Load().ca.Raw})
-	})
+	}
+	a.builder = newBuilder(&a.cfg, d, a.outbox, logger, a.NodeID, caPEM)
+	a.builder.ready = a.buildsReady
+	advertise, err := netip.ParseAddr(cfg.AdvertiseAddr)
+	if err != nil {
+		_ = d.close()
+		return nil, fmt.Errorf("NOOK_AGENT_ADVERTISE_ADDR: %w", err)
+	}
+	a.instances = &instances{
+		docker: d, outbox: a.outbox, logger: logger, nodeID: a.NodeID, advertise: advertise.Unmap(), clock: realClock{},
+		puller: &puller{docker: d, caPEM: caPEM, override: cfg.RegistryPullAddr, tmpDir: filepath.Join(cfg.StateDir, "pulls")},
+		policy: crashPolicy{Limit: cfg.CrashLimit, Window: cfg.CrashWindow, MinBackoff: cfg.RestartBackoffMin, MaxBackoff: cfg.RestartBackoffMax},
+		m:      map[string]*instance{}, logs: map[string]context.CancelFunc{},
+	}
+	empty := ""
+	a.buildsUnavailable.Store(&empty)
 	m.certExpiry.Set(float64(id.cert.NotAfter.Unix()))
 	return a, nil
 }
@@ -136,9 +237,10 @@ func (a *Agent) Run(ctx context.Context) error {
 	if _, err := a.docker.version(ctx); err != nil {
 		a.logger.WarnContext(ctx, "docker engine not reachable; heartbeats will report it", "error", err.Error())
 	}
-	if a.cfg.BuildSlots > 0 {
-		a.builder.removeOrphans(ctx)
+	if err := a.prepare(ctx); err != nil {
+		return err
 	}
+	defer a.instances.close()
 	// Builds still running when the agent stops report an infrastructure
 	// error (delivered by the last session if it is still open), so the
 	// control plane retries them on another node.
@@ -250,7 +352,9 @@ func (a *Agent) connectOnce(ctx context.Context) error {
 	}
 	info := a.collector.nodeInfo(ctx)
 	info.BuildSlots = int32(a.cfg.BuildSlots) //nolint:gosec // G115: validated to be at most 64.
-	hello := &agentv1.Hello{Info: info, ActiveBuildIds: a.builder.activeIDs()}
+	info.AdvertiseAddress = a.cfg.AdvertiseAddr
+	info.BuildsUnavailableReason = *a.buildsUnavailable.Load()
+	hello := &agentv1.Hello{Info: info, ActiveBuildIds: a.builder.activeIDs(), Instances: a.instances.reports(ctx)}
 	if err = stream.Send(&agentv1.ConnectRequest{Message: &agentv1.ConnectRequest_Hello{Hello: hello}}); err != nil {
 		return streamStatus(stream, err)
 	}
@@ -398,6 +502,7 @@ func (a *Agent) flushOutbox(stream agentv1.NodeService_ConnectClient) {
 
 func (a *Agent) sendHeartbeat(ctx context.Context, stream agentv1.NodeService_ConnectClient) error {
 	hb, dockerErr := a.collector.heartbeat(ctx)
+	hb.BuildsUnavailableReason = *a.buildsUnavailable.Load()
 	if dockerErr != nil {
 		a.logger.WarnContext(ctx, "heartbeat without docker data", "error", dockerErr.Error())
 	}
