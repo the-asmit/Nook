@@ -63,7 +63,7 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Task | Command |
 |------|---------|
 | Create/update `.env` | `make env` (adds new variables, never changes existing values) |
-| Start Postgres/Redis/MinIO/Dex | `make dev-up` (runs `make env` first) |
+| Start Postgres/Redis/MinIO/registry/Dex | `make dev-up` (runs `make env`, issues the registry certificate) |
 | Run the control plane | `make run-server` |
 | Unit tests (race) | `make test` |
 | Unit + integration tests | `make test-integration` (needs Docker) |
@@ -136,6 +136,20 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
   `node_events` row, a `nook:events:nodes` message); never update
   `nodes.status` directly. Times come from the control plane's clock
   (Redis `TIME`), never from agents.
+- **Builds and images**: images are always referenced by digest
+  (`<registry>/<workspace-id>/<app-id>@sha256:...`); tags are per build
+  (`b-<build-id>`) and never trusted. Deployment and build state changes
+  are compare-and-set updates in Postgres; the Redis Streams queue only
+  carries hints (jobs are idempotent by deployment ID). Singleton cleanup
+  belongs to `builds.Janitor` (leader only, idempotent tasks).
+- **Credentials we hand out** (presigned storage URLs, registry tokens)
+  are never logged or put into errors; strip `*url.Error` before wrapping.
+  Registry tokens are scoped to one repository and expire.
+- **Untrusted code**: Dockerfiles and source archives are hostile input.
+  Extract only through `archive.Extract`; run builds only in the locked-down
+  container `internal/agent` creates.
+- **Spelling**: code and prose use US English (`canceled`); the API and
+  database status value is `cancelled`, as specified.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
   channels. Integration tests in `internal/server` share one Postgres,
   Redis and Dex (`harness_integration_test.go`) and get a fresh database per
@@ -163,7 +177,7 @@ nook/
 │   ├── openapi.yaml           # OpenAPI 3.1 contract for every HTTP endpoint (tested against the router)
 │   └── redocly.yaml           # lint rules for the spec (make openapi-lint)
 ├── cmd/                       # one folder per binary; main.go only wires dependencies
-│   ├── nook-server/           # control plane entry point
+│   ├── nook-server/           # control plane entry point (+ `registry-cert` subcommand)
 │   ├── nook/                  # CLI entry point
 │   ├── nook-agent/            # worker agent entry point: `join`, `run`, `version`
 │   └── nook-gateway/          # (planned) gateway
@@ -191,12 +205,17 @@ nook/
 │   ├── nodes/                 # node registry: join tokens, joining, renewal, heartbeats (Redis), states, events, failure detector
 │   ├── leader/                # leader election with a Postgres session advisory lock, fenced sessions
 │   ├── agentlink/             # control-plane gRPC server for agents (TLS 1.3, mTLS auth) + cross-instance command hub
+│   ├── objstore/              # S3-compatible storage (SigV4): presigned upload/download URLs, verified HEAD, small objects
+│   ├── registry/              # private registry: repository-scoped ES256 tokens (x5c chain to the CA) + registry API client
+│   ├── archive/               # reproducible source archives (ignore files) and hostile-archive-safe extraction (os.Root)
+│   ├── apps/                  # apps, quotas, deployments and verified source uploads (tenant-scoped)
+│   ├── builds/                # build queue (Redis Streams), dispatcher, agent results, live logs, janitor, registry GC windows
 │   ├── cli/                   # Cobra commands, API client, config file (0600) for the nook CLI
 │   ├── version/               # build info set via ldflags
-│   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex (integration build tag only)
-│   ├── queue/                 # (planned) Redis-backed job queue
+│   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex, MinIO, registry (integration build tag only)
 │   ├── scheduler/             # (planned) placement + failover
-│   ├── agent/                 # worker agent: state dir, join, mTLS stream, heartbeats, Docker client, renewal, local health
+│   ├── agent/                 # worker agent: state dir, join, mTLS stream, heartbeats, Docker client, renewal, local health,
+│   │                          #   builds in locked-down rootless BuildKit containers
 │   └── gateway/               # (planned) gateway logic
 ├── migrations/                # goose SQL migrations, embedded into the binary by migrations.go
 ├── tools/
@@ -206,8 +225,11 @@ nook/
 ├── deploy/
 │   ├── compose/docker-compose.dev.yml   # Postgres, Redis, MinIO, Dex for development
 │   ├── compose/dex/config.yaml          # Dex dev/test IdP config (static users; shared with integration tests)
+│   ├── compose/registry/config.yml      # CNCF Distribution config (S3 storage, TLS, token auth; shared with integration tests)
+│   ├── compose/registry/gc.sh           # registry blob GC inside a control-plane maintenance window
 │   ├── docker/nook-server.Dockerfile    # multi-stage, distroless, non-root
 │   └── docker/nook-agent.Dockerfile     # multi-arch, distroless, non-root; Docker socket = root on the host (dedicated workers only)
+├── examples/                  # hello-go and hello-node: tiny apps with Dockerfile + nook.toml (used by tests and the README)
 ├── test/e2e/                  # (planned) end-to-end tests
 └── docs/
     ├── architecture.md        # the full system map

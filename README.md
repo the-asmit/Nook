@@ -23,9 +23,14 @@ Nook is built in stages. So far:
    and live node inspection; failure detection (ready → suspect → dead)
    runs on one elected leader among control-plane instances; admins manage
    nodes, join tokens and users from the CLI.
+4. **Apps and builds**: `nook deploy` packs a project folder (honoring
+   `.dockerignore` and `.nookignore`), uploads it straight to S3-compatible
+   storage with a presigned URL, and follows the live build log while a
+   worker node builds the image with rootless BuildKit in a locked-down
+   container and pushes it to Nook's private registry, where it is stored
+   by digest.
 
-The gateway, deployments and dashboard come later; see
-[docs/architecture.md](docs/architecture.md) for the full design.
+Running the built images, the gateway and the dashboard come later.
 
 ## Prerequisites
 
@@ -90,9 +95,24 @@ bin/nook node list                       # ready, with CPU, memory, disk and con
 bin/nook node inspect <name>             # live Docker information from the agent
 ```
 
+Then deploy an example app (run the agent with `NOOK_AGENT_BUILD_NETWORK=nook-dev`
+so build containers can reach the development registry):
+
+```sh
+cd examples/hello-go
+../../bin/nook deploy                     # pack, upload, follow the build, print the image digest
+../../bin/nook deployments list hello-go
+../../bin/nook build-logs hello-go
+```
+
+`nook init` writes a `nook.toml` for your own project; `nook apps`,
+`nook deployments cancel` and `nook build-logs --follow` cover the rest.
+
 Stop the server with Ctrl-C (it drains in-flight requests), and the stack with
-`make dev-down` (data volumes are kept). To use Google instead of Dex, see
-[docs/learn/01-identity.md](docs/learn/01-identity.md#switching-from-dex-to-google).
+`make dev-down` (data volumes are kept). To use Google instead of Dex,
+register a web OAuth client whose redirect URI is `NOOK_PUBLIC_URL` +
+`/auth/callback`, then set `NOOK_OIDC_ISSUER_URL=https://accounts.google.com`
+and the client ID and secret (see `.env.example`).
 
 Run `make help` for every target. The common ones:
 
@@ -133,10 +153,3 @@ as files: `NOOK_POSTGRES_URL_FILE=/run/secrets/pg-url`.
   *Settings → Resources → WSL integration* for your distro, and make sure
   `docker ps` works without `sudo`. testcontainers-go uses the default socket
   `/var/run/docker.sock`; no extra configuration is needed.
-
-## Documentation
-
-- [docs/architecture.md](docs/architecture.md): components, data stores, request flows
-- [docs/decisions/](docs/decisions/): architecture decision records
-- [docs/learn/](docs/learn/): plain-English notes for each stage
-- [CLAUDE.md](CLAUDE.md): engineering rules and repository layout
