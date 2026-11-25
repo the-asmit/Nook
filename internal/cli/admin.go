@@ -63,6 +63,7 @@ func (r *runner) adminCommand() *cobra.Command {
 type quotaInfo struct {
 	MaxApps             int32 `json:"max_apps"`
 	MaxConcurrentBuilds int32 `json:"max_concurrent_builds"`
+	MaxMemoryMB         int32 `json:"max_memory_mb"`
 	Default             bool  `json:"default"`
 }
 
@@ -73,7 +74,8 @@ func (r *runner) quotaCommand() *cobra.Command {
 		if q.Default {
 			src = "instance default"
 		}
-		r.printf("Workspace %s: at most %d apps and %d concurrent builds (%s).\n", ws, q.MaxApps, q.MaxConcurrentBuilds, src)
+		r.printf("Workspace %s: at most %d apps, %d concurrent builds and %d MB of running apps (%s).\n",
+			ws, q.MaxApps, q.MaxConcurrentBuilds, q.MaxMemoryMB, src)
 	}
 	get := &cobra.Command{
 		Use: "get <workspace>", Short: "Show a workspace's quota", Args: cobra.ExactArgs(1),
@@ -89,9 +91,9 @@ func (r *runner) quotaCommand() *cobra.Command {
 			return r.emit(q, func() { show(args[0], &q) })
 		},
 	}
-	var maxApps, maxBuilds int32
+	var maxApps, maxBuilds, maxMemory int32
 	set := &cobra.Command{
-		Use: "set <workspace> --max-apps N --max-builds N", Short: "Override a workspace's quota", Args: cobra.ExactArgs(1),
+		Use: "set <workspace> --max-apps N --max-builds N [--max-memory MB]", Short: "Override a workspace's quota", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if maxApps < 0 || maxBuilds < 0 {
 				return &usageError{errors.New("--max-apps and --max-builds are required")}
@@ -102,6 +104,9 @@ func (r *runner) quotaCommand() *cobra.Command {
 			}
 			var q quotaInfo
 			body := map[string]int32{"max_apps": maxApps, "max_concurrent_builds": maxBuilds}
+			if maxMemory >= 0 {
+				body["max_memory_mb"] = maxMemory
+			}
 			if err := c.do(cmd.Context(), http.MethodPut, "/api/v1/admin/workspaces/"+url.PathEscape(args[0])+"/quota", body, &q); err != nil {
 				return err
 			}
@@ -110,6 +115,7 @@ func (r *runner) quotaCommand() *cobra.Command {
 	}
 	set.Flags().Int32Var(&maxApps, "max-apps", -1, "maximum number of apps")
 	set.Flags().Int32Var(&maxBuilds, "max-builds", -1, "maximum concurrent builds")
+	set.Flags().Int32Var(&maxMemory, "max-memory", -1, "memory (MB) the workspace's running apps may reserve (default: keep)")
 	cmd.AddCommand(get, set)
 	return cmd
 }

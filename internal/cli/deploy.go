@@ -40,6 +40,11 @@ type deploymentInfo struct {
 	BuiltAt         *time.Time  `json:"built_at"`
 	ImageDeleted    bool        `json:"image_deleted"`
 	Builds          []buildInfo `json:"builds"`
+	// Kind is build, config (new environment) or rollback.
+	Kind       string        `json:"kind"`
+	RollbackTo *int32        `json:"rollback_to"`
+	LiveAt     *time.Time    `json:"live_at"`
+	Instance   *instanceInfo `json:"instance"`
 }
 
 type createDeploymentResult struct {
@@ -57,8 +62,8 @@ type createDeploymentResult struct {
 // its own, configurable limit too).
 const defaultMaxSource = 200 << 20
 
-// errBuildFailed makes `nook deploy` exit non-zero after printing why.
-var errBuildFailed = errors.New("the build did not succeed")
+// errDeployFailed makes `nook deploy` exit non-zero after printing why.
+var errDeployFailed = errors.New("the deployment did not go live")
 
 func (r *runner) deployCommand() *cobra.Command {
 	var appFlag, dir string
@@ -66,9 +71,11 @@ func (r *runner) deployCommand() *cobra.Command {
 	var maxSize int64
 	cmd := &cobra.Command{
 		Use:   "deploy",
-		Short: "Package the project, upload it and build its image",
+		Short: "Package the project, build its image and release it",
 		Long: "Packages the folder (honoring .dockerignore and .nookignore), uploads it straight to storage,\n" +
-			"queues a build and follows its log until the image is built. Exits non-zero if the build fails.",
+			"queues a build, then follows the build and the rollout until the new version is live (it passes\n" +
+			"its health check and replaces the previous one). Exits non-zero if the build or the release fails;\n" +
+			"a failed release leaves the previous version serving.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			s, c, err := r.authed()
@@ -98,7 +105,7 @@ func (r *runner) deployCommand() *cobra.Command {
 					r.printf("Deployment #%d of %s is %s. Follow it with: nook build-logs %s %d --follow\n", d.Number, p.App, d.Status, p.App, d.Number)
 				})
 			}
-			return r.followBuild(cmd.Context(), c, ws, p.App, d.Number)
+			return r.followDeployment(cmd.Context(), c, ws, p.App, d.Number)
 		},
 	}
 	f := cmd.Flags()
@@ -109,9 +116,14 @@ func (r *runner) deployCommand() *cobra.Command {
 	return cmd
 }
 
-// ensureApp creates the app on first deploy when nook.toml describes it.
+// ensureApp creates the app on first deploy when nook.toml describes it,
+// and otherwise brings its settings in line with nook.toml.
 func (r *runner) ensureApp(cmd *cobra.Command, c *client, ws string, p *Project) error {
-	err := c.do(cmd.Context(), http.MethodGet, appPath(ws, p.App), nil, nil)
+	var app appInfo
+	err := c.do(cmd.Context(), http.MethodGet, appPath(ws, p.App), nil, &app)
+	if err == nil {
+		return r.syncSettings(cmd, c, ws, p, &app)
+	}
 	if !isAPIError(err, "not_found") {
 		return err
 	}
@@ -122,6 +134,40 @@ func (r *runner) ensureApp(cmd *cobra.Command, c *client, ws string, p *Project)
 		return err
 	}
 	r.status("Created app %s in workspace %s.", p.App, ws)
+	return nil
+}
+
+// syncSettings updates the app's settings that nook.toml changed.
+func (r *runner) syncSettings(cmd *cobra.Command, c *client, ws string, p *Project, app *appInfo) error {
+	if p.Port == 0 { // no nook.toml (deploy --app)
+		return nil
+	}
+	changes := map[string]any{}
+	if p.Port != app.Port {
+		changes["port"] = p.Port
+	}
+	if p.HealthCheckPath != app.HealthCheckPath {
+		changes["health_check_path"] = p.HealthCheckPath
+	}
+	if p.MemoryMB != app.MemoryMB {
+		changes["memory_mb"] = p.MemoryMB
+	}
+	if p.CPUMillicores != app.CPUMillicores {
+		changes["cpu_millicores"] = p.CPUMillicores
+	}
+	if p.StartupTimeout != app.StartupTimeoutSeconds {
+		changes["startup_timeout_seconds"] = p.StartupTimeout
+	}
+	if p.ReadOnlyRootfs != app.ReadOnlyRootfs {
+		changes["read_only_rootfs"] = p.ReadOnlyRootfs
+	}
+	if len(changes) == 0 {
+		return nil
+	}
+	if err := c.do(cmd.Context(), http.MethodPatch, appPath(ws, p.App), changes, nil); err != nil {
+		return err
+	}
+	r.status("Updated the settings of %s from %s.", p.App, ProjectFile)
 	return nil
 }
 
@@ -206,9 +252,9 @@ func (r *runner) put(ctx context.Context, created *createDeploymentResult, body 
 	return nil
 }
 
-// followBuild streams the build log and returns errBuildFailed unless the
-// deployment ends built.
-func (r *runner) followBuild(ctx context.Context, c *client, ws, app string, n int32) error {
+// followDeployment streams the deployment's log (build, then rollout) and
+// returns errDeployFailed unless the deployment goes live.
+func (r *runner) followDeployment(ctx context.Context, c *client, ws, app string, n int32) error {
 	path := appPath(ws, app) + "/deployments/" + strconv.Itoa(int(n)) + "/build-log?follow=1"
 	var final deploymentInfo
 	err := c.stream(ctx, path, func(event string, data []byte) error {
@@ -236,23 +282,36 @@ func (r *runner) followBuild(ctx context.Context, c *client, ws, app string, n i
 		return nil
 	})
 	if errors.Is(err, context.Canceled) {
-		r.status("Stopped following; the build continues. Cancel it with: nook deployments cancel %s %d", app, n)
+		r.status("Stopped following; the deployment continues. Check it with: nook apps info %s", app)
 		return err
 	}
 	if err != nil {
 		return err
 	}
 	if err := r.emit(final, func() {
-		if final.Status == "built" && final.Image != nil {
-			r.printf("\nBuilt deployment #%d of %s.\nImage: %s\n", final.Number, app, *final.Image)
-			return
+		switch final.Status {
+		case "live":
+			r.printf("\nDeployment #%d of %s is live.\n", final.Number, app)
+			if final.Image != nil {
+				r.printf("Image: %s\n", *final.Image)
+			}
+			if u := final.Instance.URL(); u != "" {
+				r.printf("Node:  %s, serving at %s (reachable on the node's network)\n", final.Instance.Node, u)
+			}
+		case "built":
+			r.printf("\nBuilt deployment #%d of %s; the app is stopped, so it is released when you run 'nook apps start %s'.\n",
+				final.Number, app, app)
+		default:
+			r.printf("\nDeployment #%d %s: %s\n", final.Number, final.Status, dash(final.FailureReason))
+			if final.Image != nil && final.Status == "failed" {
+				r.printf("The previous version keeps serving. Logs of the failed start are above.\n")
+			}
 		}
-		r.printf("\nDeployment #%d %s: %s\n", final.Number, final.Status, dash(final.FailureReason))
 	}); err != nil {
 		return err
 	}
-	if final.Status != "built" {
-		return errBuildFailed
+	if final.Status != "live" && final.Status != "built" {
+		return errDeployFailed
 	}
 	return nil
 }
@@ -341,7 +400,7 @@ func (r *runner) buildLogsCommand() *cobra.Command {
 				n = int(app.Deployments)
 			}
 			if follow {
-				return r.followBuild(cmd.Context(), c, ws, args[0], int32(n)) //nolint:gosec // G115: parsed as a small positive integer.
+				return r.followDeployment(cmd.Context(), c, ws, args[0], int32(n)) //nolint:gosec // G115: parsed as a small positive integer.
 			}
 			text, err := c.text(cmd.Context(), appPath(ws, args[0])+"/deployments/"+strconv.Itoa(n)+"/build-log")
 			if err != nil {

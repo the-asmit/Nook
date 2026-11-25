@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"text/tabwriter"
 	"time"
 
@@ -14,15 +13,19 @@ import (
 )
 
 type appInfo struct {
-	ID              string    `json:"id"`
-	Slug            string    `json:"slug"`
-	Name            string    `json:"name"`
-	Port            int32     `json:"port"`
-	HealthCheckPath string    `json:"health_check_path"`
-	MemoryMB        int32     `json:"memory_mb"`
-	CPUMillicores   int32     `json:"cpu_millicores"`
-	Deployments     int32     `json:"deployments"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID              string `json:"id"`
+	Slug            string `json:"slug"`
+	Name            string `json:"name"`
+	Port            int32  `json:"port"`
+	HealthCheckPath string `json:"health_check_path"`
+	MemoryMB        int32  `json:"memory_mb"`
+	CPUMillicores   int32  `json:"cpu_millicores"`
+	// StartupTimeoutSeconds and ReadOnlyRootfs come from nook.toml.
+	StartupTimeoutSeconds int32     `json:"startup_timeout_seconds"`
+	ReadOnlyRootfs        bool      `json:"read_only_rootfs"`
+	DesiredState          string    `json:"desired_state"`
+	Deployments           int32     `json:"deployments"`
+	CreatedAt             time.Time `json:"created_at"`
 }
 
 // workspaceFor picks the workspace: --workspace, then NOOK_WORKSPACE, then
@@ -92,7 +95,7 @@ func (r *runner) initCommand() *cobra.Command {
 }
 
 func (r *runner) appsCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "apps", Short: "Create, list, inspect and delete apps"}
+	cmd := &cobra.Command{Use: "apps", Short: "Create, list, inspect, stop, start and delete apps"}
 
 	create := &cobra.Command{
 		Use: "create [slug]", Short: "Create an app (settings from nook.toml when present)", Args: cobra.MaximumNArgs(1),
@@ -148,7 +151,8 @@ func (r *runner) appsCommand() *cobra.Command {
 			}
 			return r.emit(items, func() {
 				r.table("APP\tNAME\tPORT\tMEMORY\tCPU\tDEPLOYMENTS\tCREATED", func(w *tabwriter.Writer) {
-					for _, a := range items {
+					for i := range items {
+						a := &items[i]
 						_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d MB\t%dm\t%d\t%s\n", a.Slug, a.Name, a.Port, a.MemoryMB, a.CPUMillicores,
 							a.Deployments, a.CreatedAt.Local().Format("2006-01-02 15:04"))
 					}
@@ -157,48 +161,7 @@ func (r *runner) appsCommand() *cobra.Command {
 		},
 	}
 
-	info := &cobra.Command{
-		Use: "info <slug>", Short: "Show an app and its latest deployment", Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			s, c, err := r.authed()
-			if err != nil {
-				return err
-			}
-			p, err := optionalProject()
-			if err != nil {
-				return err
-			}
-			ws, err := r.workspaceFor(s, p)
-			if err != nil {
-				return err
-			}
-			var app appInfo
-			if err := c.do(cmd.Context(), http.MethodGet, appPath(ws, args[0]), nil, &app); err != nil {
-				return err
-			}
-			var latest *deploymentInfo
-			if app.Deployments > 0 {
-				var d deploymentInfo
-				if err := c.do(cmd.Context(), http.MethodGet, appPath(ws, app.Slug)+"/deployments/"+strconv.Itoa(int(app.Deployments)), nil, &d); err != nil {
-					return err
-				}
-				latest = &d
-			}
-			return r.emit(map[string]any{"app": app, "latest_deployment": latest}, func() {
-				r.printf("App:          %s (%s)\nWorkspace:    %s\nPort:         %d\nHealth check: %s\nLimits:       %d MB, %d millicores\nCreated:      %s\n",
-					app.Slug, app.Name, ws, app.Port, app.HealthCheckPath, app.MemoryMB, app.CPUMillicores, app.CreatedAt.Local().Format(time.RFC1123))
-				if latest == nil {
-					r.printf("Deployments:  none yet (run 'nook deploy')\n")
-					return
-				}
-				r.printf("Latest:       #%d %s", latest.Number, latest.Status)
-				if latest.Image != nil {
-					r.printf(" %s", *latest.Image)
-				}
-				r.printf("\n")
-			})
-		},
-	}
+	info := r.appsInfoCommand()
 
 	var yes bool
 	del := &cobra.Command{
@@ -227,7 +190,9 @@ func (r *runner) appsCommand() *cobra.Command {
 	}
 	del.Flags().BoolVar(&yes, "yes", false, "confirm the deletion")
 
-	cmd.AddCommand(create, list, info, del)
+	cmd.AddCommand(create, list, info, del,
+		r.lifecycleCommand("stop", "Stop an app (it stays stopped until started)"),
+		r.lifecycleCommand("start", "Start a stopped or crashed app"))
 	return cmd
 }
 
@@ -236,6 +201,7 @@ func createApp(cmd *cobra.Command, c *client, ws string, p *Project) (appInfo, e
 	err := c.do(cmd.Context(), http.MethodPost, appsPath(ws), map[string]any{
 		"slug": p.App, "port": p.Port, "health_check_path": p.HealthCheckPath,
 		"memory_mb": p.MemoryMB, "cpu_millicores": p.CPUMillicores,
+		"startup_timeout_seconds": p.StartupTimeout, "read_only_rootfs": p.ReadOnlyRootfs,
 	}, &app)
 	return app, err
 }

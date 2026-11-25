@@ -19,6 +19,8 @@ import (
 // App carries the CLI's input/output and environment, so commands can be
 // run in tests without touching the real terminal or home directory.
 type App struct {
+	// Stdin supplies values given as "-" (nil: none).
+	Stdin  io.Reader
 	Stdout io.Writer
 	Stderr io.Writer
 	Getenv func(string) string
@@ -94,6 +96,7 @@ func (r *runner) rootCommand() *cobra.Command {
 		r.workspaceCommand(), r.tokenCommand(), r.versionCommand(),
 		r.nodeCommand(), r.adminCommand(),
 		r.initCommand(), r.appsCommand(), r.deployCommand(), r.deploymentsCommand(), r.buildLogsCommand(),
+		r.envCommand(), r.logsCommand(), r.rollbackCommand(),
 	)
 	return root
 }

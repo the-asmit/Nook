@@ -13,6 +13,7 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := cli.Execute(ctx, &cli.App{
+		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
 		Getenv:      os.Getenv,

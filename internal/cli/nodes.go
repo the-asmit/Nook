@@ -39,9 +39,13 @@ type nodeInfo struct {
 	AgentVersion     string            `json:"agent_version"`
 	OS               string            `json:"os"`
 	Arch             string            `json:"arch"`
-	JoinedAt         time.Time         `json:"joined_at"`
-	LastHeartbeatAt  *time.Time        `json:"last_heartbeat_at"`
-	Heartbeat        *heartbeatInfo    `json:"heartbeat"`
+	AdvertiseAddress string            `json:"advertise_address"`
+	BuildSlots       int32             `json:"build_slots"`
+	// BuildsUnavailableReason says why the node cannot build, with the fix.
+	BuildsUnavailableReason string         `json:"builds_unavailable_reason"`
+	JoinedAt                time.Time      `json:"joined_at"`
+	LastHeartbeatAt         *time.Time     `json:"last_heartbeat_at"`
+	Heartbeat               *heartbeatInfo `json:"heartbeat"`
 }
 
 type inspectInfo struct {
@@ -173,6 +177,15 @@ func (r *runner) printInspect(n *nodeInfo, live *inspectInfo) {
 		map[bool]string{true: " (draining)", false: ""}[n.Draining], n.Hostname, n.OS, n.Arch, strings.Join(n.Addresses, ", "))
 	r.printf("Resources: %d CPUs, %s memory, %s disk\nAgent:     %s, last heartbeat %s\n", n.CPUCount,
 		bytesHuman(n.MemoryTotalBytes), bytesHuman(n.DiskTotalBytes), dash(n.AgentVersion), ago(n.LastHeartbeatAt))
+	r.printf("Apps on:   %s\n", dash(n.AdvertiseAddress))
+	switch {
+	case n.BuildSlots == 0:
+		r.printf("Builds:    off (0 build slots)\n")
+	case n.BuildsUnavailableReason != "":
+		r.printf("Builds:    UNAVAILABLE: %s\n", n.BuildsUnavailableReason)
+	default:
+		r.printf("Builds:    %d slots\n", n.BuildSlots)
+	}
 	if len(n.Labels) > 0 {
 		keys := make([]string, 0, len(n.Labels))
 		for k := range n.Labels {

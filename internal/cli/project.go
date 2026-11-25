@@ -29,6 +29,12 @@ type Project struct {
 	HealthCheckPath string `toml:"health_check_path"`
 	MemoryMB        int32  `toml:"memory_mb"`
 	CPUMillicores   int32  `toml:"cpu_millicores"`
+	// StartupTimeout is how many seconds a new version may take to answer
+	// its health check (default 60; the server caps it).
+	StartupTimeout int32 `toml:"startup_timeout,omitempty"`
+	// ReadOnlyRootfs runs the container with a read-only root file system
+	// (writable /tmp only).
+	ReadOnlyRootfs bool `toml:"read_only_rootfs,omitempty"`
 }
 
 var slugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
@@ -54,12 +60,15 @@ func (p *Project) Validate() error {
 	if p.CPUMillicores < 10 {
 		errs = append(errs, fmt.Errorf("cpu_millicores = %d: must be at least 10 (1000 = one CPU)", p.CPUMillicores))
 	}
+	if p.StartupTimeout < 1 || p.StartupTimeout > 3600 {
+		errs = append(errs, fmt.Errorf("startup_timeout = %d: must be between 1 and 3600 seconds", p.StartupTimeout))
+	}
 	return errors.Join(errs...)
 }
 
 // defaultProject is what `nook init` starts from.
 func defaultProject(app string) Project {
-	return Project{App: app, Port: 8080, HealthCheckPath: "/", MemoryMB: 256, CPUMillicores: 500}
+	return Project{App: app, Port: 8080, HealthCheckPath: "/", MemoryMB: 256, CPUMillicores: 500, StartupTimeout: 60}
 }
 
 // errNoProject means the folder has no nook.toml.
@@ -114,6 +123,10 @@ func writeProject(dir string, p *Project) error {
 	fmt.Fprintf(&b, "# The port your app listens on inside its container.\nport = %d\n", p.Port)
 	fmt.Fprintf(&b, "# Path that answers 2xx when the app is healthy.\nhealth_check_path = %q\n", p.HealthCheckPath)
 	fmt.Fprintf(&b, "# Resource limits: memory in MB, CPU in millicores (1000 = one CPU).\nmemory_mb = %d\ncpu_millicores = %d\n", p.MemoryMB, p.CPUMillicores)
+	fmt.Fprintf(&b, "# Seconds a new version may take to pass its health check before the\n# deploy fails (the previous version keeps serving).\nstartup_timeout = %d\n", p.StartupTimeout)
+	if p.ReadOnlyRootfs {
+		b.WriteString("# Run with a read-only root file system (only /tmp is writable).\nread_only_rootfs = true\n")
+	}
 	path := filepath.Join(dir, ProjectFile)
 	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil { //nolint:gosec // G306: project config holds no secrets and is meant to be committed.
 		return fmt.Errorf("write %s: %w", path, err)

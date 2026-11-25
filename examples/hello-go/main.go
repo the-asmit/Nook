@@ -1,5 +1,7 @@
 // Command hello-go is a minimal web app for trying out Nook: it answers
-// "/" with a greeting and "/healthz" with "ok".
+// "/" with a greeting (the GREETING environment variable, if set),
+// "/healthz" with "ok", and "/env" with the names of the environment
+// variables it received (never their values). It logs every request.
 package main
 
 import (
@@ -10,6 +12,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -24,9 +28,26 @@ func main() {
 		_, _ = fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintln(w, "Hello from a Nook app written in Go!")
+		greeting := os.Getenv("GREETING")
+		if greeting == "" {
+			greeting = "Hello from a Nook app written in Go!"
+		}
+		_, _ = fmt.Fprintln(w, greeting)
 	})
-	srv := &http.Server{Addr: ":" + port, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	mux.HandleFunc("GET /env", func(w http.ResponseWriter, _ *http.Request) {
+		names := make([]string, 0)
+		for _, kv := range os.Environ() {
+			name, _, _ := strings.Cut(kv, "=")
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		_, _ = fmt.Fprintln(w, strings.Join(names, "\n"))
+	})
+	logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s", r.Method, r.URL.Path)
+		mux.ServeHTTP(w, r)
+	})
+	srv := &http.Server{Addr: ":" + port, Handler: logged, ReadHeaderTimeout: 5 * time.Second}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
