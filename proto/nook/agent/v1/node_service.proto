@@ -44,6 +44,8 @@ message NodeInfo {
   // GOOS and GOARCH of the agent, e.g. "linux" and "arm64".
   string os = 8;
   string arch = 9;
+  // How many builds the agent runs at once; 0 means it does not build.
+  int32 build_slots = 10;
 }
 
 message JoinRequest {
@@ -85,6 +87,10 @@ message ConnectRequest {
     Hello hello = 1;
     Heartbeat heartbeat = 2;
     CommandResult command_result = 3;
+    // Output of a running build, in order.
+    BuildLog build_log = 4;
+    // How a build ended; sent once per build, after its last BuildLog.
+    BuildFinished build_finished = 5;
   }
 }
 
@@ -99,6 +105,9 @@ message ConnectResponse {
 
 message Hello {
   NodeInfo info = 1;
+  // Builds the agent is still running (or has results for). A build the
+  // control plane assigned to this node that is missing here was lost.
+  repeated string active_build_ids = 2;
 }
 
 message ConnectAccepted {
@@ -129,6 +138,8 @@ message Command {
   google.protobuf.Duration timeout = 2;
   oneof kind {
     InspectNodeCommand inspect_node = 3;
+    BuildCommand build = 4;
+    CancelBuildCommand cancel_build = 5;
   }
 }
 
@@ -141,8 +152,13 @@ message CommandResult {
   oneof result {
     CommandError error = 2;
     InspectNodeResult inspect_node = 3;
+    // The command was accepted; its outcome is reported separately (for a
+    // build: BuildLog and BuildFinished messages).
+    Accepted accepted = 4;
   }
 }
+
+message Accepted {}
 
 message CommandError {
   CommandErrorCode code = 1;
@@ -159,6 +175,8 @@ enum CommandErrorCode {
   // The command ran out of time on the agent.
   COMMAND_ERROR_CODE_TIMEOUT = 3;
   COMMAND_ERROR_CODE_FAILED = 4;
+  // The agent has no free build slot.
+  COMMAND_ERROR_CODE_BUSY = 5;
 }
 
 message InspectNodeResult {
@@ -191,4 +209,65 @@ message ManagedContainer {
   string status = 5;
   map<string, string> labels = 6;
   google.protobuf.Timestamp created_at = 7;
+}
+
+// BuildCommand asks the agent to build an image from uploaded source and
+// push it to Nook's registry. The agent answers with Accepted at once and
+// reports progress with BuildLog and BuildFinished.
+message BuildCommand {
+  string build_id = 1;
+  string deployment_id = 2;
+  int32 attempt = 3;
+  // Presigned GET URL of the source archive (tar.gz); short-lived, secret.
+  string source_url = 4;
+  // Expected SHA-256 (hex) and size of the archive.
+  string source_sha256 = 5;
+  int64 source_size = 6;
+  // Registry host:port as reachable from the node.
+  string registry = 7;
+  // Repository and tag to push, e.g. "<workspace-id>/<app-id>" and "b-<build-id>".
+  string repository = 8;
+  string tag = 9;
+  // Short-lived registry bearer token allowing push and pull on repository only; secret.
+  string registry_token = 10;
+  // Limits for the build container.
+  google.protobuf.Duration timeout = 11;
+  int64 memory_bytes = 12;
+  int64 cpu_millicores = 13;
+  int64 max_log_bytes = 14;
+}
+
+// CancelBuildCommand stops a running build; the agent answers with
+// Accepted and then reports BuildFinished with result CANCELED.
+message CancelBuildCommand {
+  string build_id = 1;
+}
+
+message BuildLog {
+  string build_id = 1;
+  // Complete lines of output, without trailing newlines.
+  repeated string lines = 2;
+}
+
+message BuildFinished {
+  string build_id = 1;
+  BuildResult result = 2;
+  // Digest of the pushed image manifest ("sha256:..."), for SUCCEEDED.
+  string image_digest = 3;
+  // Short explanation shown to the user; never contains secrets.
+  string message = 4;
+  // Bytes of log output produced (counting what was dropped beyond the limit).
+  int64 log_bytes = 5;
+}
+
+enum BuildResult {
+  BUILD_RESULT_UNSPECIFIED = 0;
+  BUILD_RESULT_SUCCEEDED = 1;
+  // The user's build failed (a Dockerfile step, a missing base image, ...).
+  BUILD_RESULT_FAILED = 2;
+  BUILD_RESULT_TIMED_OUT = 3;
+  BUILD_RESULT_CANCELED = 4;
+  // Something outside the user's control failed (download, Docker, push);
+  // the control plane retries on another node.
+  BUILD_RESULT_INFRA_ERROR = 5;
 }
