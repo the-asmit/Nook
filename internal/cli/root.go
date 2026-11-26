@@ -96,7 +96,7 @@ func (r *runner) rootCommand() *cobra.Command {
 		r.workspaceCommand(), r.tokenCommand(), r.versionCommand(),
 		r.nodeCommand(), r.adminCommand(),
 		r.initCommand(), r.appsCommand(), r.deployCommand(), r.deploymentsCommand(), r.buildLogsCommand(),
-		r.envCommand(), r.logsCommand(), r.rollbackCommand(),
+		r.envCommand(), r.logsCommand(), r.rollbackCommand(), r.accessCommand(), r.openCommand(),
 	)
 	return root
 }

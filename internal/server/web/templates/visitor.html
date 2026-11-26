@@ -1,0 +1,7 @@
+{{define "content"}}
+<h1>{{.Heading}}</h1>
+<p>{{.Message}}</p>
+{{with .Email}}<p class="who">Signed in as {{.}}.</p>{{end}}
+{{if .Retry}}<p><a class="button" href="{{.Retry}}">Try again</a></p>{{end}}
+{{if .SignOut}}<p><a href="/sign-out">Sign out</a></p>{{end}}
+{{end}}

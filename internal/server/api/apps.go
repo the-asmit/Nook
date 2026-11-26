@@ -27,13 +27,18 @@ type AppView struct {
 	ReadOnlyRootfs        bool  `json:"read_only_rootfs"`
 	// DesiredState is "running" or "stopped".
 	DesiredState string `json:"desired_state"`
+	// URL is where visitors open the app (through the gateway).
+	URL string `json:"url"`
+	// AccessMode is workspace, restricted or public.
+	AccessMode string `json:"access_mode"`
 	// Deployments is how many deployments the app has had.
 	Deployments int32     `json:"deployments"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-func appView(a *store.App) AppView {
+func (h *V1) appView(ws string, a *store.App) AppView {
 	return AppView{
+		URL: h.AppsBase.URL(ws, a.Slug), AccessMode: string(a.AccessMode),
 		ID: a.ID, Slug: a.Slug, Name: a.Name, Port: a.Port, HealthCheckPath: a.HealthCheckPath,
 		MemoryMB: a.MemoryMb, CPUMillicores: a.CpuMillicores, StartupTimeoutSeconds: a.StartupTimeoutSeconds,
 		ReadOnlyRootfs: a.ReadOnlyRootfs, DesiredState: string(a.DesiredState),
@@ -52,8 +57,8 @@ type AppDetailView struct {
 	Instance *InstanceView `json:"instance"`
 }
 
-func appDetailView(rt *apps.Runtime) AppDetailView {
-	v := AppDetailView{AppView: appView(&rt.App), Instance: instanceView(rt.Instance), Health: "not_deployed"}
+func (h *V1) appDetailView(ws string, rt *apps.Runtime) AppDetailView {
+	v := AppDetailView{AppView: h.appView(ws, &rt.App), Instance: instanceView(rt.Instance), Health: "not_deployed"}
 	if rt.Live != nil {
 		v.LiveDeployment = &rt.Live.Number
 	}
@@ -119,7 +124,7 @@ func (h *V1) listApps(c *gin.Context) {
 		writeError(c, h.Logger, err)
 		return
 	}
-	c.JSON(http.StatusOK, page(list, limit, appView, func(a *store.App) any { return slugCursor{Slug: a.Slug} }))
+	c.JSON(http.StatusOK, page(list, limit, func(a *store.App) AppView { return h.appView(c.Param("slug"), a) }, func(a *store.App) any { return slugCursor{Slug: a.Slug} }))
 }
 
 func (h *V1) createApp(c *gin.Context) {
@@ -136,7 +141,7 @@ func (h *V1) createApp(c *gin.Context) {
 		writeError(c, h.Logger, err)
 		return
 	}
-	c.JSON(http.StatusCreated, appView(&app))
+	c.JSON(http.StatusCreated, h.appView(c.Param("slug"), &app))
 }
 
 func (h *V1) getApp(c *gin.Context) {
@@ -145,7 +150,7 @@ func (h *V1) getApp(c *gin.Context) {
 		writeError(c, h.Logger, err)
 		return
 	}
-	c.JSON(http.StatusOK, appDetailView(&rt))
+	c.JSON(http.StatusOK, h.appDetailView(c.Param("slug"), &rt))
 }
 
 func (h *V1) updateApp(c *gin.Context) {

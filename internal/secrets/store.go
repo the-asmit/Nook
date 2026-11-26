@@ -65,7 +65,7 @@ func Rotate(ctx context.Context, st *store.Store, k *Keyring) (int, error) {
 		return 0, err
 	}
 	total := 0
-	for _, batch := range []func(context.Context, *store.Store, *Keyring) (int, int, error){rotateEnv, rotateSnapshots} {
+	for _, batch := range []func(context.Context, *store.Store, *Keyring) (int, int, error){rotateEnv, rotateSnapshots, rotateCerts} {
 		for {
 			seen, n, err := batch(ctx, st, k)
 			total += n
@@ -178,4 +178,41 @@ func AddKey(current string) (string, int, error) {
 		out += "\n"
 	}
 	return out + line + "\n", next, nil
+}
+
+func rotateCerts(ctx context.Context, st *store.Store, k *Keyring) (seen, n int, err error) {
+	err = st.InTx(ctx, func(q *store.Queries) error {
+		rows, listErr := q.ListGatewayCertificatesNotOnVersion(ctx, store.ListGatewayCertificatesNotOnVersionParams{Version: int32(k.active), RowLimit: rotateBatch}) //nolint:gosec // G115: versions are at most 1e6.
+		if listErr != nil {
+			return fmt.Errorf("list gateway certificates: %w", listErr)
+		}
+		if len(rows) == 0 {
+			return errNothing
+		}
+		seen = len(rows)
+		for _, r := range rows {
+			aad := CertAAD(r.Name)
+			plain, openErr := k.Open(int(r.KeyVersion), aad, r.Data)
+			if openErr != nil {
+				return fmt.Errorf("gateway certificate %s (key version %d): %w", r.Name, r.KeyVersion, openErr)
+			}
+			sealed, v, sealErr := k.Seal(aad, plain)
+			clear(plain)
+			if sealErr != nil {
+				return sealErr
+			}
+			c, updErr := q.ReencryptGatewayCertificate(ctx, store.ReencryptGatewayCertificateParams{
+				Name: r.Name, Data: sealed, KeyVersion: int32(v), OldVersion: r.KeyVersion, //nolint:gosec // G115: versions are at most 1e6.
+			})
+			if updErr != nil {
+				return fmt.Errorf("store gateway certificate: %w", updErr)
+			}
+			n += int(c)
+		}
+		return nil
+	})
+	if errors.Is(err, errNothing) {
+		return 0, 0, nil
+	}
+	return seen, n, err
 }

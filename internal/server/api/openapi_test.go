@@ -62,7 +62,7 @@ func specRoutes(t *testing.T) []string {
 var ginParam = regexp.MustCompile(`:([a-z_]+)`)
 
 // apiRoutes returns "METHOD /path" for every JSON route the server
-// registers, with Gin's :param written the OpenAPI way as {param}.
+// registers (the public API and the gateways' internal API), with Gin's :param written the OpenAPI way as {param}.
 func apiRoutes(t *testing.T) []string {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -75,6 +75,7 @@ func apiRoutes(t *testing.T) []string {
 	}
 	site := auth.NewSite(&url.URL{Scheme: "http", Host: "localhost:8080"})
 	RegisterV1(r, &V1Deps{Logger: logger, Auth: auth.NewAuthenticator(nil, nil, site, logger)})
+	RegisterInternal(r, &InternalDeps{Logger: logger})
 
 	var routes []string
 	for _, rt := range r.Routes() {

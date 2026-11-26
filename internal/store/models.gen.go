@@ -13,6 +13,67 @@ import (
 	"uuid"
 )
 
+type AppAccessMode string
+
+const (
+	AppAccessModeWorkspace  AppAccessMode = "workspace"
+	AppAccessModeRestricted AppAccessMode = "restricted"
+	AppAccessModePublic     AppAccessMode = "public"
+)
+
+func (e *AppAccessMode) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppAccessMode(s)
+	case string:
+		*e = AppAccessMode(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppAccessMode: %T", src)
+	}
+	return nil
+}
+
+type NullAppAccessMode struct {
+	AppAccessMode AppAccessMode
+	Valid         bool // Valid is true if AppAccessMode is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppAccessMode) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppAccessMode, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppAccessMode.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppAccessMode) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppAccessMode), nil
+}
+
+func (e AppAccessMode) Valid() bool {
+	switch e {
+	case AppAccessModeWorkspace,
+		AppAccessModeRestricted,
+		AppAccessModePublic:
+		return true
+	}
+	return false
+}
+
+func AllAppAccessModeValues() []AppAccessMode {
+	return []AppAccessMode{
+		AppAccessModeWorkspace,
+		AppAccessModeRestricted,
+		AppAccessModePublic,
+	}
+}
+
 type AppDesiredState string
 
 const (
@@ -588,6 +649,14 @@ type App struct {
 	CurrentDeploymentID   *uuid.UUID
 	StartupTimeoutSeconds int32
 	ReadOnlyRootfs        bool
+	AccessMode            AppAccessMode
+}
+
+type AppAccessGrant struct {
+	AppID     uuid.UUID
+	Email     string
+	GrantedBy *uuid.UUID
+	CreatedAt time.Time
 }
 
 type AppEnv struct {
@@ -719,6 +788,13 @@ type EnvSnapshotVar struct {
 	IsSecret   bool
 }
 
+type GatewayCertificate struct {
+	Name       string
+	Data       []byte
+	KeyVersion int32
+	UpdatedAt  time.Time
+}
+
 type Invitation struct {
 	ID          uuid.UUID
 	WorkspaceID uuid.UUID
@@ -827,6 +903,36 @@ type User struct {
 	CreatedAt       time.Time
 	LastLoginAt     *time.Time
 	DisabledAt      *time.Time
+}
+
+type VisitorCode struct {
+	CodeHash   []byte
+	Host       string
+	AppID      uuid.UUID
+	Email      string
+	Name       string
+	Issuer     string
+	Subject    string
+	ReturnPath string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time
+	UsedAt     *time.Time
+}
+
+type VisitorSession struct {
+	ID                uuid.UUID
+	TokenHash         []byte
+	Host              string
+	AppID             *uuid.UUID
+	Email             string
+	Name              string
+	Issuer            string
+	Subject           string
+	CreatedAt         time.Time
+	LastSeenAt        time.Time
+	IdleExpiresAt     time.Time
+	AbsoluteExpiresAt time.Time
+	RevokedAt         *time.Time
 }
 
 type Workspace struct {

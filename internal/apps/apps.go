@@ -12,6 +12,7 @@ import (
 	"github.com/the-asmit/nook/internal/apperr"
 	"github.com/the-asmit/nook/internal/audit"
 	"github.com/the-asmit/nook/internal/objstore"
+	"github.com/the-asmit/nook/internal/routes"
 	"github.com/the-asmit/nook/internal/secrets"
 	"github.com/the-asmit/nook/internal/store"
 	"github.com/the-asmit/nook/internal/workspace"
@@ -32,13 +33,15 @@ type Service struct {
 	objects *objstore.Client
 	queue   Queue
 	keyring *secrets.Keyring
+	events  RouteEvents
 	cfg     Config
 	now     func() time.Time
 }
 
-// NewService returns the service. The keyring encrypts environment values.
-func NewService(st *store.Store, objects *objstore.Client, queue Queue, keyring *secrets.Keyring, cfg Config) *Service {
-	return &Service{store: st, objects: objects, queue: queue, keyring: keyring, cfg: cfg, now: time.Now}
+// NewService returns the service. The keyring encrypts environment values;
+// events announces route changes to gateways.
+func NewService(st *store.Store, objects *objstore.Client, queue Queue, keyring *secrets.Keyring, events RouteEvents, cfg Config) *Service {
+	return &Service{store: st, objects: objects, queue: queue, keyring: keyring, events: events, cfg: cfg, now: time.Now}
 }
 
 // RepositoryName is the registry repository of an app's images. IDs, not
@@ -49,9 +52,10 @@ func RepositoryName(workspaceID, appID uuid.UUID) string {
 
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 
-// ValidSlug reports whether s can name an app: a DNS label of at most 40
-// lower-case letters, digits and inner hyphens (it becomes a host name).
-func ValidSlug(s string) bool { return slugPattern.MatchString(s) }
+// ValidSlug reports whether s can name an app: at most 40 lower-case
+// letters, digits and inner hyphens, without "--" (which separates app and
+// workspace in the app's host name <app>--<workspace>.<apps domain>).
+func ValidSlug(s string) bool { return slugPattern.MatchString(s) && !strings.Contains(s, "--") }
 
 // Spec is what a caller sets when creating an app; zero values take the
 // defaults.
@@ -71,7 +75,7 @@ type Spec struct {
 
 func (s *Service) normalize(spec Spec) (Spec, error) {
 	if !ValidSlug(spec.Slug) {
-		return spec, apperr.Invalid("invalid_slug", "app slug must be 1 to 40 lower-case letters, digits or inner hyphens")
+		return spec, apperr.Invalid("invalid_slug", "app slug must be 1 to 40 lower-case letters, digits or inner hyphens, without \"--\"")
 	}
 	spec.Name = strings.TrimSpace(spec.Name)
 	if spec.Name == "" {
@@ -192,6 +196,10 @@ func (s *Service) Create(ctx context.Context, actor workspace.Actor, wsSlug stri
 		if err != nil {
 			return err
 		}
+		if !routes.ValidLabel(v.Workspace.Slug, spec.Slug) {
+			return apperr.Invalid("invalid_slug", "the app's host name %s--%s must be at most 63 characters; choose a shorter slug",
+				spec.Slug, v.Workspace.Slug)
+		}
 		if _, err = q.LockWorkspace(ctx, v.Workspace.ID); err != nil {
 			return fmt.Errorf("lock workspace: %w", err)
 		}
@@ -250,6 +258,7 @@ func (s *Service) Get(ctx context.Context, actor workspace.Actor, wsSlug, appSlu
 // and logs are purged in the background.
 func (s *Service) Delete(ctx context.Context, actor workspace.Actor, wsSlug, appSlug string) error {
 	var building, releasing []uuid.UUID
+	var deleted uuid.UUID
 	err := s.store.InTx(ctx, func(q *store.Queries) error {
 		v, app, err := resolve(ctx, q, actor, wsSlug, appSlug)
 		if err != nil {
@@ -261,6 +270,7 @@ func (s *Service) Delete(ctx context.Context, actor workspace.Actor, wsSlug, app
 		if _, err = q.SoftDeleteApp(ctx, app.ID); err != nil {
 			return fmt.Errorf("delete app: %w", err)
 		}
+		deleted = app.ID
 		deps, err := q.ListDeployments(ctx, store.ListDeploymentsParams{AppID: app.ID, BeforeNumber: app.NextDeploymentNumber, RowLimit: 1000})
 		if err != nil {
 			return fmt.Errorf("list deployments: %w", err)
@@ -299,6 +309,7 @@ func (s *Service) Delete(ctx context.Context, actor workspace.Actor, wsSlug, app
 	for _, id := range releasing {
 		s.release(ctx, id)
 	}
+	s.events.Changed(ctx, deleted)
 	return nil
 }
 

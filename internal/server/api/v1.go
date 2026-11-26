@@ -21,6 +21,7 @@ import (
 	"github.com/the-asmit/nook/internal/platform/config"
 	"github.com/the-asmit/nook/internal/ratelimit"
 	"github.com/the-asmit/nook/internal/rollout"
+	"github.com/the-asmit/nook/internal/routes"
 	"github.com/the-asmit/nook/internal/store"
 	"github.com/the-asmit/nook/internal/workspace"
 )
@@ -61,6 +62,8 @@ type V1Deps struct {
 	// RegistryAddr is the registry host:port images are referenced by.
 	RegistryAddr   string
 	MaxSourceBytes int64
+	// AppsBase builds app URLs.
+	AppsBase routes.Base
 }
 
 // RouteBuildLog streams build logs; it is exempt from the request timeout.
@@ -109,6 +112,10 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	appRoutes.GET("/:app/env", h.listEnv)
 	appRoutes.PUT("/:app/env", h.setEnv)
 	appRoutes.DELETE("/:app/env/:key", h.unsetEnv)
+	appRoutes.GET("/:app/access", h.getAccess)
+	appRoutes.PUT("/:app/access", h.setAccess)
+	appRoutes.POST("/:app/access/grants", h.grantAccess)
+	appRoutes.DELETE("/:app/access/grants/:email", h.revokeAccess)
 	appRoutes.GET("/:app/deployments", h.listDeployments)
 	appRoutes.POST("/:app/deployments", h.createDeployment)
 	appRoutes.GET("/:app/deployments/:number", h.getDeployment)

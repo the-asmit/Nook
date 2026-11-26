@@ -625,6 +625,8 @@ const keyVersionsInUse = `-- name: KeyVersionsInUse :many
 SELECT key_version FROM app_env
 UNION
 SELECT key_version FROM env_snapshot_vars
+UNION
+SELECT key_version FROM gateway_certificates
 ORDER BY 1
 `
 

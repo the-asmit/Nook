@@ -35,6 +35,8 @@ type Config struct {
 	// Upper bounds for an app's resource limits.
 	MaxAppMemoryMB      int32 `env:"NOOK_APP_MAX_MEMORY_MB" envDefault:"4096"`
 	MaxAppCPUMillicores int32 `env:"NOOK_APP_MAX_CPU_MILLICORES" envDefault:"4000"`
+	// AllowPublicApps lets admins open apps to anyone without sign-in.
+	AllowPublicApps bool `env:"NOOK_ALLOW_PUBLIC_APPS" envDefault:"false"`
 }
 
 // Validate checks the configuration.

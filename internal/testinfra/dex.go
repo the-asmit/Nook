@@ -65,8 +65,9 @@ func FreePort() (int, error) {
 }
 
 // StartDex runs Dex with the repository's development configuration,
-// accepting redirectURI for Nook. Callers must terminate the container.
-func StartDex(ctx context.Context, port int, redirectURI string) (*Dex, testcontainers.Container, error) {
+// accepting redirectURI for Nook's sign-in and visitorRedirectURI for the
+// gateway's auth host. Callers must terminate the container.
+func StartDex(ctx context.Context, port int, redirectURI, visitorRedirectURI string) (*Dex, testcontainers.Container, error) {
 	d := &Dex{
 		IssuerURL:    fmt.Sprintf("http://127.0.0.1:%d/dex", port),
 		ClientID:     "nook-test",
@@ -74,10 +75,11 @@ func StartDex(ctx context.Context, port int, redirectURI string) (*Dex, testcont
 		Passwords:    map[string]string{DexAlice: rand.Text(), DexBob: rand.Text(), DexMallory: rand.Text()},
 	}
 	env := map[string]string{
-		"DEX_ISSUER":             d.IssuerURL,
-		"DEX_NOOK_CLIENT_ID":     d.ClientID,
-		"DEX_NOOK_CLIENT_SECRET": d.ClientSecret,
-		"DEX_NOOK_REDIRECT_URI":  redirectURI,
+		"DEX_ISSUER":                    d.IssuerURL,
+		"DEX_NOOK_CLIENT_ID":            d.ClientID,
+		"DEX_NOOK_CLIENT_SECRET":        d.ClientSecret,
+		"DEX_NOOK_REDIRECT_URI":         redirectURI,
+		"DEX_NOOK_VISITOR_REDIRECT_URI": visitorRedirectURI,
 	}
 	for email, envName := range map[string]string{
 		DexAlice: "DEX_ALICE_PASSWORD_HASH", DexBob: "DEX_BOB_PASSWORD_HASH", DexMallory: "DEX_MALLORY_PASSWORD_HASH",

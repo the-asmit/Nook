@@ -12,8 +12,10 @@ import (
 	"github.com/the-asmit/nook/internal/objstore"
 	"github.com/the-asmit/nook/internal/registry"
 	"github.com/the-asmit/nook/internal/rollout"
+	"github.com/the-asmit/nook/internal/routes"
 	"github.com/the-asmit/nook/internal/secrets"
 	"github.com/the-asmit/nook/internal/store"
+	"github.com/the-asmit/nook/internal/visitor"
 )
 
 // startBuilds builds the app, build and release pipeline: the secrets
@@ -39,11 +41,13 @@ func (s *Server) startBuilds(ctx context.Context, st *store.Store, cfg *Config, 
 	issuer := registry.NewIssuer(s.ca, cfg.Registry.Issuer, cfg.Registry.Service)
 	regClient := registry.NewClient(&cfg.Registry, issuer, s.ca)
 	queue := builds.NewQueue(s.redis)
-	s.apps = apps.NewService(st, objects, queue, keyring, cfg.Apps)
+	s.routes = routes.NewPublisher(s.redis)
+	s.apps = apps.NewService(st, objects, queue, keyring, s.routes, cfg.Apps)
+	s.visitors = visitor.New(st, keyring, cfg.AppsBase(), cfg.Apps.AllowPublicApps, &cfg.Visitor)
 	s.logs = builds.NewLogs(s.redis, objects, st, s.logger)
 	s.rollout = rollout.New(&rollout.Deps{
 		Store: st, Commander: s.hub, Keyring: keyring, Issuer: issuer, RegistryAddr: cfg.Registry.Addr,
-		Notes: s.logs, Quotas: s.apps, Wake: queue.Wake, Scheduler: cfg.Scheduler, Logger: s.logger,
+		Notes: s.logs, Quotas: s.apps, Wake: queue.Wake, Routes: s.routes, Scheduler: cfg.Scheduler, Logger: s.logger,
 	}, &cfg.Rollout)
 	s.appLogs = rollout.NewLogStreams(s.redis, s.hub, &cfg.Rollout, s.logger)
 	deps := &builds.Deps{
@@ -57,6 +61,7 @@ func (s *Server) startBuilds(ctx context.Context, st *store.Store, cfg *Config, 
 	// The janitor is leader-only work; it runs on the instance that holds
 	// the failure detector's lock.
 	s.janitor = builds.NewJanitor(deps, queue, &cfg.Builds, func() bool { return s.elector != nil && s.elector.IsLeader() })
+	s.janitor.Also(s.visitors.Cleanup)
 	s.gcWindow = builds.NewGCWindow(st, s.redis)
 	return nil
 }

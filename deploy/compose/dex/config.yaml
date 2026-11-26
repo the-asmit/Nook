@@ -43,6 +43,8 @@ staticClients:
     secretEnv: DEX_NOOK_CLIENT_SECRET
     redirectURIs:
       - {{ getenv "DEX_NOOK_REDIRECT_URI" | required "DEX_NOOK_REDIRECT_URI must be set" }}
+      # The gateway's auth host (visitor sign-in for apps).
+      - {{ getenv "DEX_NOOK_VISITOR_REDIRECT_URI" | required "DEX_NOOK_VISITOR_REDIRECT_URI must be set" }}
 
 enablePasswordDB: true
 

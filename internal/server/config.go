@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/the-asmit/nook/internal/agentlink"
@@ -24,8 +25,10 @@ import (
 	"github.com/the-asmit/nook/internal/platform/redis"
 	"github.com/the-asmit/nook/internal/registry"
 	"github.com/the-asmit/nook/internal/rollout"
+	"github.com/the-asmit/nook/internal/routes"
 	"github.com/the-asmit/nook/internal/scheduler"
 	"github.com/the-asmit/nook/internal/secrets"
+	"github.com/the-asmit/nook/internal/visitor"
 )
 
 // Config is the complete nook-server configuration.
@@ -56,6 +59,12 @@ type Config struct {
 	Secrets   secrets.Config
 	Scheduler scheduler.Config
 	Rollout   rollout.Config
+	// AppsBaseURL is the apps domain with scheme and port, e.g.
+	// https://apps.example.com; app URLs are <app>--<workspace>.<domain>.
+	AppsBaseURL string `env:"NOOK_APPS_BASE_URL,required,notEmpty"`
+	// GatewaySecret authenticates the gateways on the internal API.
+	GatewaySecret config.Secret `env:"NOOK_GATEWAY_SECRET,required,notEmpty"`
+	Visitor       visitor.Config
 	// LeaderInterval is how often a follower tries to become the leader
 	// that runs the failure detector, and how often the leader verifies
 	// its lock; it bounds how long a failover takes.
@@ -99,6 +108,8 @@ func (c *Config) Validate() error {
 		c.Secrets.Validate(),
 		c.Scheduler.Validate(),
 		c.Rollout.Validate(),
+		c.Visitor.Validate(),
+		c.validateApps(),
 		config.CheckDuration("NOOK_LEADER_RETRY_INTERVAL", c.LeaderInterval, 100*time.Millisecond, time.Minute),
 		config.CheckDuration("NOOK_INVITATION_TTL", c.InvitationTTL, time.Hour, 90*24*time.Hour),
 		config.CheckDuration("NOOK_READINESS_TIMEOUT", c.ReadinessTimeout, 100*time.Millisecond, 30*time.Second),
@@ -146,4 +157,29 @@ func (c *Config) validatePublicURL() error {
 		}
 	}
 	return nil
+}
+
+// AppsBase returns the parsed apps base URL; meaningful on a validated
+// Config.
+func (c *Config) AppsBase() routes.Base {
+	b, _ := routes.ParseBase(c.AppsBaseURL)
+	return b
+}
+
+func (c *Config) validateApps() error {
+	b, err := routes.ParseBase(c.AppsBaseURL)
+	if err != nil {
+		return fmt.Errorf("NOOK_APPS_BASE_URL: %w", err)
+	}
+	var errs []error
+	if b.Scheme == "http" && (!c.Environment.IsDevelopment() || !strings.HasSuffix(b.Domain, ".localhost")) {
+		errs = append(errs, errors.New("NOOK_APPS_BASE_URL: http:// is only allowed for *.localhost in development; use https://"))
+	}
+	if pub, err := url.Parse(c.PublicURL); err == nil && strings.EqualFold(pub.Hostname(), b.Domain) {
+		errs = append(errs, errors.New("NOOK_APPS_BASE_URL: the apps domain must differ from the control plane's host"))
+	}
+	if len(c.GatewaySecret.Reveal()) < 32 {
+		errs = append(errs, errors.New("NOOK_GATEWAY_SECRET: at least 32 characters required"))
+	}
+	return errors.Join(errs...)
 }

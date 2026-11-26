@@ -47,6 +47,7 @@ func TestEveryPageRendersWithCSP(t *testing.T) {
 		"message":        messagePage{pageData: pageData{Title: "Hi"}, Heading: "Hi", Message: "there"},
 		"device":         devicePage{pageData: pageData{Title: "Device", User: user, CSRFToken: "tok"}},
 		"device_confirm": deviceConfirmPage{pageData: pageData{Title: "Approve", User: user, CSRFToken: "tok"}, UserCode: "BCDF-GHJK", ClientName: "cli"},
+		"visitor":        visitorPage{pageData: pageData{Title: "No access"}, Heading: "No access", Message: "m", Email: "a@nook.test", SignOut: true},
 	}
 	if len(pages) != len(h.pages) {
 		t.Fatalf("test covers %d pages, templates define %d", len(pages), len(h.pages))
@@ -59,6 +60,15 @@ func TestEveryPageRendersWithCSP(t *testing.T) {
 		if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") || strings.Contains(csp, "script-src") {
 			t.Errorf("%s: CSP = %q", name, csp)
 		}
+	}
+}
+
+func TestVisitorPageEscapesValues(t *testing.T) {
+	h := newHandlers(t)
+	evil := `<script>alert(1)</script>`
+	rec := render(t, h, "visitor", visitorPage{pageData: pageData{Title: evil}, Heading: evil, Message: evil, Email: evil, SignOut: true})
+	if body := rec.Body.String(); strings.Contains(body, "<script>") || !strings.Contains(body, "&lt;script&gt;") {
+		t.Fatalf("unescaped markup in the visitor page:\n%s", body)
 	}
 }
 

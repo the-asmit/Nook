@@ -73,7 +73,8 @@ func (r *runner) appsInfoCommand() *cobra.Command {
 }
 
 func (r *runner) printAppDetail(ws string, app *appDetail, latest *deploymentInfo) {
-	r.printf("App:          %s (%s)\nWorkspace:    %s\nDesired:      %s\nHealth:       %s\n", app.Slug, app.Name, ws, app.DesiredState, app.Health)
+	r.printf("App:          %s (%s)\nWorkspace:    %s\nURL:          %s (access: %s)\nDesired:      %s\nHealth:       %s\n",
+		app.Slug, app.Name, ws, app.URL, app.AccessMode, app.DesiredState, app.Health)
 	if app.LiveDeployment != nil {
 		r.printf("Live:         #%d\n", *app.LiveDeployment)
 	} else {

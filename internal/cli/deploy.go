@@ -294,6 +294,9 @@ func (r *runner) followDeployment(ctx context.Context, c *client, ws, app string
 		switch final.Status {
 		case "live":
 			r.printf("\nDeployment #%d of %s is live.\n", final.Number, app)
+			if u := r.appURL(ctx, c, ws, app); u != "" {
+				r.printf("URL:   %s\n", u)
+			}
 			if final.Image != nil {
 				r.printf("Image: %s\n", *final.Image)
 			}
@@ -451,4 +454,13 @@ func (p *progressReader) Read(b []byte) (int, error) {
 		p.report(p.done)
 	}
 	return n, err
+}
+
+// appURL is the app's public URL ("" if it cannot be read).
+func (r *runner) appURL(ctx context.Context, c *client, ws, app string) string {
+	var a appInfo
+	if err := c.do(ctx, http.MethodGet, appPath(ws, app), nil, &a); err != nil {
+		return ""
+	}
+	return a.URL
 }

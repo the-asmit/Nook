@@ -51,8 +51,15 @@ tags:
     description: Apps in a workspace (members create; admins and owners delete).
   - name: deployments
     description: Deploys of an app, their uploads, builds and build logs.
+  - name: access
+    description: Who may open an app through the gateway (members view; admins and owners change).
   - name: registry
     description: Endpoints used by Nook's private image registry.
+  - name: internal
+    description: |
+      The control plane's internal API for nook-gateway: routes, visitor
+      sessions and certificate storage. Authenticated with the gateways'
+      shared secret; any other caller gets 404. Do not expose it publicly.
   - name: operations
     description: Health probes and metrics for orchestrators and Prometheus.
 
@@ -1073,6 +1080,117 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/workspaces/{slug}/apps/{app}/access:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    get:
+      tags: [access]
+      operationId: getAccess
+      summary: Who may open the app through the gateway (members)
+      responses:
+        "200":
+          description: The access policy and its grants.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Access" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      tags: [access]
+      operationId: setAccess
+      summary: Set the access mode (admins and owners)
+      description: |
+        `workspace` (default): every member of the workspace. `restricted`:
+        admins, owners and the granted emails. `public`: anyone, without
+        signing in; refused with 403 unless the instance sets
+        `NOOK_ALLOW_PUBLIC_APPS=true`. Grants also apply in `workspace`
+        mode, so outsiders can be let in. Audit-logged as `access.set_mode`.
+        Gateways apply the change within their access cache (30 s by default).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [mode]
+              properties:
+                mode: { type: string, enum: [workspace, restricted, public] }
+      responses:
+        "200":
+          description: The policy after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Access" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/access/grants:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    post:
+      tags: [access]
+      operationId: grantAccess
+      summary: Grant access to emails (admins and owners)
+      description: |
+        Emails need no Nook account: visitors sign in with the identity
+        provider and are matched by verified email (case-insensitive). At
+        most 50 emails per request and 1000 per app. Granting an email
+        twice is not an error. Audit-logged as `access.grant`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [emails]
+              properties:
+                emails:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  items: { type: string, format: email, maxLength: 254 }
+      responses:
+        "200":
+          description: The policy after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Access" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/access/grants/{email}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+      - name: email
+        in: path
+        required: true
+        schema: { type: string, maxLength: 254 }
+    delete:
+      tags: [access]
+      operationId: revokeAccess
+      summary: Revoke an email's access (admins and owners)
+      description: Audit-logged as `access.revoke`. 404 when the email has no grant.
+      responses:
+        "200":
+          description: The policy after the change.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Access" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /api/v1/workspaces/{slug}/apps/{app}/deployments:
     parameters:
       - $ref: "#/components/parameters/Slug"
@@ -1328,8 +1446,193 @@ paths:
         "204": { description: Closed; builds resume. }
         "401": { $ref: "#/components/responses/Unauthenticated" }
 
+  /internal/v1/routes:
+    get:
+      tags: [internal]
+      operationId: listRoutes
+      summary: Every app's route (gateways only)
+      security: [{ gatewaySecret: [] }]
+      responses:
+        "200":
+          description: The route table.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [routes]
+                properties:
+                  routes: { type: array, items: { $ref: "#/components/schemas/Route" } }
+        "404": { description: Not a gateway (the internal API does not reveal itself). }
+
+  /internal/v1/routes/{app_id}:
+    parameters:
+      - name: app_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [internal]
+      operationId: getRoute
+      summary: One app's route, after a route event (gateways only)
+      security: [{ gatewaySecret: [] }]
+      responses:
+        "200":
+          description: The route.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Route" }
+        "404": { description: The app does not exist (or not a gateway). }
+
+  /internal/v1/tls/hosts/{host}:
+    parameters:
+      - name: host
+        in: path
+        required: true
+        schema: { type: string, maxLength: 253 }
+    get:
+      tags: [internal]
+      operationId: knownHost
+      summary: Whether a certificate may be obtained for a host (on-demand TLS "ask" check)
+      security: [{ gatewaySecret: [] }]
+      responses:
+        "204": { description: The auth host or an existing app's host. }
+        "404": { description: Unknown host (or not a gateway). }
+
+  /internal/v1/visitor/exchange:
+    post:
+      tags: [internal]
+      operationId: exchangeVisitorCode
+      summary: Redeem a sign-in code for an app-host session (gateways only)
+      description: |
+        Codes are single-use, expire after a minute and are bound to the
+        app host they were issued for.
+      security: [{ gatewaySecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code, host]
+              properties:
+                code: { type: string, maxLength: 128 }
+                host: { type: string, maxLength: 253 }
+      responses:
+        "200":
+          description: The session token (shown once) for a host-only cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, expires_at, return_path]
+                properties:
+                  token: { type: string }
+                  expires_at: { type: string, format: date-time }
+                  return_path: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { description: Not a gateway. }
+
+  /internal/v1/visitor/check:
+    post:
+      tags: [internal]
+      operationId: checkVisitorSession
+      summary: Validate a visitor session and decide access to its host (gateways only)
+      security: [{ gatewaySecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token, host]
+              properties:
+                token: { type: string, maxLength: 128 }
+                host: { type: string, maxLength: 253 }
+      responses:
+        "200":
+          description: "`ok` (proxy, with the identity), `denied` (403) or `invalid` (sign in again)."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [ok, denied, invalid] }
+                  email: { type: string }
+                  name: { type: string }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { description: Not a gateway. }
+
+  /internal/v1/visitor/sign-out:
+    post:
+      tags: [internal]
+      operationId: signOutVisitor
+      summary: Revoke an app-host session (gateways only)
+      security: [{ gatewaySecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [token]
+              properties:
+                token: { type: string, maxLength: 128 }
+      responses:
+        "204": { description: Revoked (or already gone). }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { description: Not a gateway. }
+
+  /internal/v1/certificates/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9._+-]{0,252}$" }
+    get:
+      tags: [internal]
+      operationId: getCertificate
+      summary: A stored ACME certificate or account key (gateways only)
+      security: [{ gatewaySecret: [] }]
+      responses:
+        "200":
+          description: The data, decrypted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Certificate" }
+        "404": { description: Nothing stored under this name (or not a gateway). }
+    put:
+      tags: [internal]
+      operationId: putCertificate
+      summary: Store an ACME certificate or account key, sealed with the secrets keyring (gateways only)
+      security: [{ gatewaySecret: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Certificate" }
+      responses:
+        "204": { description: Stored. }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "404": { description: Not a gateway. }
+    delete:
+      tags: [internal]
+      operationId: deleteCertificate
+      summary: Remove a stored certificate (gateways only)
+      security: [{ gatewaySecret: [] }]
+      responses:
+        "204": { description: Removed (or already gone). }
+        "404": { description: Not a gateway. }
+
 components:
   securitySchemes:
+    gatewaySecret:
+      type: http
+      scheme: bearer
+      description: The gateways' shared secret (`NOOK_GATEWAY_SECRET`); internal API only.
     bearerToken:
       type: http
       scheme: bearer
@@ -1658,6 +1961,41 @@ components:
     AppSlug:
       type: string
       pattern: "^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$"
+    Access:
+      type: object
+      required: [mode, effective, public_allowed, grants]
+      properties:
+        mode: { type: string, enum: [workspace, restricted, public] }
+        effective:
+          type: string
+          enum: [workspace, restricted, public]
+          description: What applies; `public` falls back to `workspace` where the instance forbids public apps.
+        public_allowed: { type: boolean }
+        grants:
+          type: array
+          items:
+            type: object
+            required: [email, created_at]
+            properties:
+              email: { type: string }
+              created_at: { type: string, format: date-time }
+    Route:
+      type: object
+      required: [app_id, host, workspace, app, access, state]
+      properties:
+        app_id: { type: string, format: uuid }
+        host: { type: string }
+        workspace: { type: string }
+        app: { type: string }
+        access: { type: string, enum: [workspace, restricted, public], description: The effective mode. }
+        state: { type: string, enum: [running, unhealthy, starting, crashed, stopped, not_deployed] }
+        upstream: { type: string, description: "The instance's node address:port, when it is served." }
+    Certificate:
+      type: object
+      additionalProperties: false
+      required: [data]
+      properties:
+        data: { type: string, contentEncoding: base64, maxLength: 87384 }
     App:
       type: object
       required: [id, slug, name, port, health_check_path, memory_mb, cpu_millicores, deployments, created_at]
@@ -1672,6 +2010,8 @@ components:
         startup_timeout_seconds: { type: integer }
         read_only_rootfs: { type: boolean }
         desired_state: { type: string, enum: [running, stopped] }
+        url: { type: string, format: uri, description: "Where visitors open the app: <scheme>://<app>--<workspace>.<apps domain>/" }
+        access_mode: { type: string, enum: [workspace, restricted, public] }
         deployments: { type: integer, description: Number of deployments so far. }
         created_at: { type: string, format: date-time }
     AppDetail:

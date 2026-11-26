@@ -22,9 +22,10 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 // maxNameLength matches the workspaces_name_length constraint.
 const maxNameLength = 100
 
-// ValidSlug reports whether s is an acceptable workspace slug.
+// ValidSlug reports whether s is an acceptable workspace slug. "--" is
+// not allowed: it separates app and workspace in app host names.
 func ValidSlug(s string) bool {
-	return slugPattern.MatchString(s)
+	return slugPattern.MatchString(s) && !strings.Contains(s, "--")
 }
 
 // normalizeName trims a display name and rejects empty, overlong or

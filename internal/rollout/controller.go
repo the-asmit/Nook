@@ -31,6 +31,11 @@ type Notes interface {
 	End(ctx context.Context, deploymentID uuid.UUID, status store.DeploymentStatus)
 }
 
+// RouteEvents announces route changes to gateways (routes.Publisher).
+type RouteEvents interface {
+	Changed(ctx context.Context, appID uuid.UUID)
+}
+
 // Quotas returns a workspace's memory quota in MB (apps.Service).
 type Quotas interface {
 	MemoryQuotaMB(ctx context.Context, q *store.Queries, workspaceID uuid.UUID) (int64, error)
@@ -47,7 +52,9 @@ type Deps struct {
 	Notes        Notes
 	Quotas       Quotas
 	// Wake asks a deployment's owner to look at it again.
-	Wake      func(ctx context.Context, deploymentID uuid.UUID)
+	Wake func(ctx context.Context, deploymentID uuid.UUID)
+	// Routes announces that an app's route (where it is served) changed.
+	Routes    RouteEvents
 	Scheduler scheduler.Config
 	Logger    *slog.Logger
 }
@@ -249,6 +256,7 @@ func (c *Controller) switchOver(ctx context.Context, dep *store.Deployment, app 
 	}
 	c.Notes.Note(ctx, dep.ID, "", fmt.Sprintf("deployment #%d is live on node %s", dep.Number, where))
 	c.Notes.End(ctx, dep.ID, store.DeploymentStatusLive)
+	c.Routes.Changed(ctx, app.ID)
 	c.stopOthers(ctx, app.ID, dep.ID, c.cfg.Drain)
 	return true, nil
 }

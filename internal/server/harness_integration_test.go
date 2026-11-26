@@ -41,6 +41,9 @@ var shared struct {
 	// serverPort is fixed because it is registered with Dex as the
 	// redirect URI before any server starts.
 	serverPort int
+	// gatewayPort is fixed for the same reason: the auth host's callback
+	// (http://auth.apps.localhost:<port>/callback) is registered with Dex.
+	gatewayPort int
 	// caPath is the agent CA shared by every instance in this package.
 	caPath string
 	// storage is MinIO and the image registry (TLS from the shared CA).
@@ -77,7 +80,13 @@ func runIntegration(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	dex, dexC, err := testinfra.StartDex(ctx, dexPort, fmt.Sprintf("http://127.0.0.1:%d/auth/callback", serverPort))
+	gatewayPort, err := testinfra.FreePort()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	dex, dexC, err := testinfra.StartDex(ctx, dexPort, fmt.Sprintf("http://127.0.0.1:%d/auth/callback", serverPort),
+		fmt.Sprintf("http://auth.apps.localhost:%d/callback", gatewayPort))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
@@ -92,6 +101,7 @@ func runIntegration(m *testing.M) int {
 	defer func() { _ = os.RemoveAll(caDir) }()
 
 	shared.pgAdminURL, shared.redisURL, shared.dex, shared.serverPort = pgURL, redisURL, dex, serverPort
+	shared.gatewayPort = gatewayPort
 	shared.caPath = filepath.Join(caDir, "ca.pem")
 
 	// The registry's certificate comes from the same CA the control plane
@@ -199,8 +209,15 @@ func baseEnviron(pgURL string) map[string]string {
 		"NOOK_SECRETS_KEY":          testSecretsKey,
 		"NOOK_ROLLOUT_DRAIN":        "1s",
 		"NOOK_ROLLOUT_PULL_TIMEOUT": "2m",
+		// The gateway's apps domain and shared secret.
+		"NOOK_APPS_BASE_URL":     appsBaseURL(),
+		"NOOK_GATEWAY_SECRET":    testGatewaySecret,
+		"NOOK_ALLOW_PUBLIC_APPS": "true",
 	}
 }
+
+// appsBaseURL is the apps domain the test gateway serves.
+func appsBaseURL() string { return "http://apps.localhost:" + strconv.Itoa(shared.gatewayPort) }
 
 // testGCSecret authenticates the registry GC job in tests.
 const testGCSecret = "test-gc-secret-0123456789"

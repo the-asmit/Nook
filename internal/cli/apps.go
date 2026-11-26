@@ -24,6 +24,8 @@ type appInfo struct {
 	StartupTimeoutSeconds int32     `json:"startup_timeout_seconds"`
 	ReadOnlyRootfs        bool      `json:"read_only_rootfs"`
 	DesiredState          string    `json:"desired_state"`
+	URL                   string    `json:"url"`
+	AccessMode            string    `json:"access_mode"`
 	Deployments           int32     `json:"deployments"`
 	CreatedAt             time.Time `json:"created_at"`
 }

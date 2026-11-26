@@ -27,8 +27,10 @@ import (
 	"github.com/the-asmit/nook/internal/platform/postgres"
 	"github.com/the-asmit/nook/internal/platform/redis"
 	"github.com/the-asmit/nook/internal/rollout"
+	"github.com/the-asmit/nook/internal/routes"
 	"github.com/the-asmit/nook/internal/server/api"
 	"github.com/the-asmit/nook/internal/version"
+	"github.com/the-asmit/nook/internal/visitor"
 	"github.com/the-asmit/nook/migrations"
 )
 
@@ -62,6 +64,8 @@ type Server struct {
 	gcWindow   *builds.GCWindow
 	rollout    *rollout.Controller
 	appLogs    *rollout.LogStreams
+	routes     *routes.Publisher
+	visitors   *visitor.Service
 }
 
 // New connects to every dependency, applies migrations and binds the HTTP

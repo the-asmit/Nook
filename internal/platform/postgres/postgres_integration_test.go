@@ -328,3 +328,36 @@ nook_postgres_pool_max_conns 10
 		t.Fatalf("metric count = %d, err %v; want 9", n, err)
 	}
 }
+
+// TestGatewayMigrationNamesDoubleHyphenSlugs: a database holding a slug
+// with "--" (allowed before app host names joined app and workspace with
+// it) is not migrated; the error names the slug to rename.
+func TestGatewayMigrationNamesDoubleHyphenSlugs(t *testing.T) {
+	pool := newTestPool(t, testinfra.CreateDatabase(t, adminURL))
+	ctx := testCtx(t, time.Minute)
+	db := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() { _ = db.Close() })
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, migrations.FS, goose.WithDisableGlobalRegistry(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.UpTo(ctx, 6); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, "INSERT INTO workspaces (name, slug) VALUES ('Old', 'old--team')"); err != nil {
+		t.Fatal(err)
+	}
+	err = Migrate(ctx, pool, migrations.FS, quiet)
+	if err == nil || !strings.Contains(err.Error(), "workspace old--team") {
+		t.Fatalf("Migrate() = %v, want a refusal naming workspace old--team", err)
+	}
+	if _, err := pool.Exec(ctx, "UPDATE workspaces SET slug = 'old-team'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, pool, migrations.FS, quiet); err != nil {
+		t.Fatalf("Migrate() after the rename = %v", err)
+	}
+	if _, err := pool.Exec(ctx, "INSERT INTO workspaces (name, slug) VALUES ('New', 'new--team')"); err == nil {
+		t.Fatal("a new slug with -- was accepted")
+	}
+}

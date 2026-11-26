@@ -53,6 +53,10 @@ const (
 	ActionEnvUnset           = "env.unset"
 	ActionDeploymentRollback = "deployment.rollback"
 	ActionSecretsRotate      = "secrets.rotate_key"
+	ActionAccessSetMode      = "access.set_mode"
+	ActionAccessGrant        = "access.grant"
+	ActionAccessRevoke       = "access.revoke"
+	ActionVisitorSignIn      = "visitor.sign_in"
 )
 
 // Target types.

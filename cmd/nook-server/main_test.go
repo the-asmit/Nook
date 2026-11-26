@@ -61,6 +61,8 @@ func TestInvalidConfigFailsFastWithStructuredProblems(t *testing.T) {
 		"NOOK_REGISTRY_ADDR":         "registry:5000",
 		"NOOK_REGISTRY_GC_SECRET":    "0123456789abcdef",
 		"NOOK_SECRETS_KEY":           "1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+		"NOOK_APPS_BASE_URL":         "http://apps.localhost:8090",
+		"NOOK_GATEWAY_SECRET":        "gateway-secret-0123456789abcdef0123",
 	}
 	if code := run(nil, environ, &stdout, &stderr); code != 2 {
 		t.Fatalf("exit code = %d, want 2", code)

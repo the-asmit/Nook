@@ -121,6 +121,7 @@ func (c *Controller) stopInstance(ctx context.Context, inst *store.AppInstance, 
 			}
 			return
 		}
+		c.Routes.Changed(ctx, inst.AppID)
 	}
 	if inst.NodeID == nil || c.nodeRemoved(ctx, *inst.NodeID) {
 		// Nothing can confirm the stop of an instance on a removed node; it
@@ -198,6 +199,7 @@ func (c *Controller) InstanceStatus(ctx context.Context, nodeID uuid.UUID, m *ag
 		return fmt.Errorf("record instance state: %w", err)
 	}
 	c.Wake(ctx, inst.DeploymentID)
+	c.Routes.Changed(ctx, inst.AppID)
 	return nil
 }
 

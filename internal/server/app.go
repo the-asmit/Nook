@@ -47,8 +47,9 @@ func (s *Server) mountApplication(ctx context.Context, router gin.IRouter, cfg *
 		Admin:           identity.NewAdmin(st), Nodes: registry, Hub: s.hub,
 		AgentServer: cfg.GRPC.ResolvePublicAddr(publicHost), CAHash: s.ca.Fingerprint(),
 		Apps: s.apps, Logs: s.logs, AppLogs: s.appLogs, GCWindow: s.gcWindow, RegistryGCSecret: cfg.Registry.GCSecret,
-		RegistryAddr: cfg.Registry.Addr, MaxSourceBytes: cfg.Apps.MaxSourceBytes,
+		RegistryAddr: cfg.Registry.Addr, MaxSourceBytes: cfg.Apps.MaxSourceBytes, AppsBase: cfg.AppsBase(),
 	})
+	api.RegisterInternal(router, &api.InternalDeps{Logger: s.logger, Visitors: s.visitors, GatewaySecret: cfg.GatewaySecret})
 	pages, err := web.New(&web.Deps{
 		Logger: s.logger, Store: st, Auth: authenticator,
 		Flows: identity.NewFlows(s.redis), Provider: s.provider,
@@ -60,6 +61,13 @@ func (s *Server) mountApplication(ctx context.Context, router gin.IRouter, cfg *
 		return err
 	}
 	pages.Register(router)
+	base := cfg.AppsBase()
+	// The auth host has its own redirect URL, registered with the
+	// identity provider next to the control plane's.
+	visitorProvider := identity.NewProvider(&cfg.Identity, base.Origin(base.AuthHost())+"/callback")
+	pages.RegisterVisitor(router, &web.VisitorDeps{
+		Visitors: s.visitors, Provider: visitorProvider, Flows: identity.NewFlows(s.redis), GatewaySecret: cfg.GatewaySecret,
+	})
 	return nil
 }
 

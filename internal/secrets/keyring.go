@@ -162,6 +162,12 @@ func EnvAAD(appID uuid.UUID, key string) []byte {
 	return []byte("nook/env/v1\x00" + appID.String() + "\x00" + key)
 }
 
+// CertAAD binds a stored gateway certificate (or ACME account key) to its
+// name.
+func CertAAD(name string) []byte {
+	return []byte("nook/gateway-cert/v1\x00" + name)
+}
+
 // checkAAD and checkPlaintext make the key-check value of a version.
 var (
 	checkAAD       = []byte("nook/key-check/v1")

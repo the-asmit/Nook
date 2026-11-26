@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -72,6 +73,50 @@ func main() {
 	mux.HandleFunc("GET /write", func(w http.ResponseWriter, r *http.Request) {
 		err := os.WriteFile(r.URL.Query().Get("path"), []byte("x"), 0o600)
 		_, _ = fmt.Fprint(w, strconv.FormatBool(err == nil))
+	})
+	// /headers answers the request's host and headers as JSON (gateway
+	// tests check what reaches the app).
+	mux.HandleFunc("GET /headers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"host": r.Host, "headers": r.Header})
+	})
+	// /sse sends two events, the second after the client's next request
+	// to /sse/release (proves the gateway streams instead of buffering).
+	release := make(chan struct{}, 1)
+	mux.HandleFunc("GET /sse", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: first\n\n")
+		_ = http.NewResponseController(w).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
+		_, _ = io.WriteString(w, "data: second\n\n")
+	})
+	mux.HandleFunc("GET /sse/release", func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case release <- struct{}{}:
+		default:
+		}
+		_, _ = io.WriteString(w, "released")
+	})
+	// /ws accepts an upgrade and echoes raw bytes (enough to prove that
+	// upgraded connections pass through the gateway).
+	mux.HandleFunc("GET /ws", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Upgrade") != "websocket" {
+			http.Error(w, "upgrade required", http.StatusBadRequest)
+			return
+		}
+		conn, rw, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		_ = rw.Flush()
+		_, _ = io.Copy(conn, rw)
 	})
 	logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("request %s %s", r.Method, r.URL.Path)

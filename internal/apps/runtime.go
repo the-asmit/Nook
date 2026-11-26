@@ -124,6 +124,7 @@ func (s *Service) setDesired(ctx context.Context, actor workspace.Actor, wsSlug,
 	for _, id := range wake {
 		s.release(ctx, id)
 	}
+	s.events.Changed(ctx, out.ID)
 	return out, nil
 }
 

@@ -42,8 +42,8 @@ var slugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 // Validate checks the values with messages that name the offending key.
 func (p *Project) Validate() error {
 	var errs []error
-	if !slugRE.MatchString(p.App) {
-		errs = append(errs, fmt.Errorf("app = %q: must be 1 to 40 lower-case letters, digits or inner hyphens", p.App))
+	if !slugRE.MatchString(p.App) || strings.Contains(p.App, "--") {
+		errs = append(errs, fmt.Errorf("app = %q: must be 1 to 40 lower-case letters, digits or inner hyphens, without \"--\"", p.App))
 	}
 	if p.Workspace != "" && !slugRE.MatchString(p.Workspace) {
 		errs = append(errs, fmt.Errorf("workspace = %q: not a valid workspace slug", p.Workspace))

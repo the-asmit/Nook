@@ -97,7 +97,7 @@ func (s *Service) Create(ctx context.Context, actor Actor, name, slug string) (V
 	}
 	if !ValidSlug(slug) {
 		return View{}, apperr.Invalid("invalid_slug",
-			"slug must be 1 to 40 lower-case letters, digits or inner hyphens")
+			"slug must be 1 to 40 lower-case letters, digits or inner hyphens, without \"--\"")
 	}
 	var view View
 	txErr := s.store.InTx(ctx, func(q *store.Queries) error {

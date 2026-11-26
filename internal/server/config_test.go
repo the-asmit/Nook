@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,8 +29,13 @@ func devEnviron() map[string]string {
 		"NOOK_REGISTRY_ADDR":         "registry:5000",
 		"NOOK_REGISTRY_GC_SECRET":    "0123456789abcdef",
 		"NOOK_SECRETS_KEY":           testSecretsKey,
+		"NOOK_APPS_BASE_URL":         "http://apps.localhost:8090",
+		"NOOK_GATEWAY_SECRET":        testGatewaySecret,
 	}
 }
+
+// testGatewaySecret authenticates gateways in configuration tests.
+const testGatewaySecret = "gateway-secret-0123456789abcdef0123"
 
 // testSecretsKey is a keyring for configuration tests only.
 const testSecretsKey = "1:AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="
@@ -56,6 +62,8 @@ func prodEnviron(t *testing.T) map[string]string {
 		"NOOK_REGISTRY_ADDR":          "registry.internal:5000",
 		"NOOK_REGISTRY_GC_SECRET":     "0123456789abcdef",
 		"NOOK_SECRETS_KEY":            testSecretsKey,
+		"NOOK_APPS_BASE_URL":          "https://apps.example-apps.com",
+		"NOOK_GATEWAY_SECRET":         testGatewaySecret,
 	}
 }
 
@@ -284,5 +292,27 @@ func TestProductionRequiresTLSStorage(t *testing.T) {
 	_, err := config.Load[Config](env)
 	if err == nil || !strings.Contains(err.Error(), "NOOK_S3_PRESIGN_ENDPOINT") {
 		t.Fatalf("plain-HTTP presign endpoint accepted in production: %v", err)
+	}
+}
+
+func TestAppsDomainRules(t *testing.T) {
+	for name, tc := range map[string]struct {
+		prod   bool
+		change map[string]string
+	}{
+		"http outside development":       {prod: true, change: map[string]string{"NOOK_APPS_BASE_URL": "http://apps.example-apps.com"}},
+		"http on a real domain":          {change: map[string]string{"NOOK_APPS_BASE_URL": "http://apps.example.com"}},
+		"same host as the control plane": {prod: true, change: map[string]string{"NOOK_APPS_BASE_URL": "https://nook.example.com"}},
+		"a path":                         {change: map[string]string{"NOOK_APPS_BASE_URL": "http://apps.localhost:8090/x"}},
+		"short gateway secret":           {change: map[string]string{"NOOK_GATEWAY_SECRET": "short"}},
+	} {
+		environ := devEnviron()
+		if tc.prod {
+			environ = prodEnviron(t)
+		}
+		maps.Copy(environ, tc.change)
+		if _, err := config.Load[Config](environ); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
 	}
 }

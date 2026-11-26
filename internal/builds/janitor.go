@@ -26,7 +26,12 @@ type Janitor struct {
 	cfg      Config
 	isLeader func() bool
 	logger   *slog.Logger
+	// extra are more leader-only cleanup tasks run on every tick.
+	extra []func(context.Context) error
 }
+
+// Also adds a cleanup task run on every tick (by the leader).
+func (j *Janitor) Also(task func(context.Context) error) { j.extra = append(j.extra, task) }
 
 // NewJanitor returns the janitor.
 func NewJanitor(d *Deps, queue *Queue, cfg *Config, isLeader func() bool) *Janitor {
@@ -56,14 +61,18 @@ func (j *Janitor) Run(ctx context.Context) {
 
 // Tick runs every task once.
 func (j *Janitor) Tick(ctx context.Context) error {
-	return errors.Join(
+	errs := []error{
 		j.requeueOrphans(ctx),
 		j.expireUploads(ctx),
 		j.enforceImageRetention(ctx),
 		j.purgeDeletedApps(ctx),
 		j.removeStrayImages(ctx),
 		j.expireArtifacts(ctx),
-	)
+	}
+	for _, task := range j.extra {
+		errs = append(errs, task(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 // requeueOrphans re-adds jobs for active deployments nobody owns (their
