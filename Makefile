@@ -121,24 +121,16 @@ run-server: build env ## Build and run nook-server against the dev stack
 	set -a; source ./.env; set +a; exec $(BIN_DIR)/nook-server
 
 .PHONY: docker-run
-docker-run: env ## Run the nook-server image against the dev stack on 127.0.0.1:$(DOCKER_RUN_PORT)
-	@# Inside the container "localhost" is the container itself, so Dex at
-	@# localhost:$${DEX_PORT} is unreachable: the API, health and metrics work,
-	@# while browser sign-in needs `make run-server`.
-	set -a; source ./.env; set +a; \
-	export NOOK_HTTP_ADDR=":8080" \
-		NOOK_PUBLIC_URL="http://localhost:$(DOCKER_RUN_PORT)" \
-		NOOK_POSTGRES_URL="postgres://$${POSTGRES_USER}:$${POSTGRES_PASSWORD}@postgres:5432/$${POSTGRES_DB}?sslmode=disable" \
-		NOOK_REDIS_URL="redis://:$${REDIS_PASSWORD}@redis:6379/0"; \
-	exec docker run --rm --name nook-server --network nook-dev \
-		--publish 127.0.0.1:$(DOCKER_RUN_PORT):8080 \
-		--read-only --cap-drop=ALL --security-opt=no-new-privileges \
-		--env NOOK_ENV --env NOOK_LOG_LEVEL --env NOOK_HTTP_ADDR --env NOOK_PUBLIC_URL \
-		--env NOOK_POSTGRES_URL --env NOOK_REDIS_URL \
-		--env NOOK_OIDC_ISSUER_URL --env NOOK_OIDC_CLIENT_ID --env NOOK_OIDC_CLIENT_SECRET \
-		--env NOOK_ALLOWED_EMAIL_DOMAINS --env NOOK_BOOTSTRAP_ADMIN_EMAILS \
-		--env NOOK_APPS_BASE_URL --env NOOK_GATEWAY_SECRET \
-		$(IMAGE):$(VERSION)
+docker-run: env ## Run the server, agent and gateway images (make docker-build) against the dev stack; stop with make docker-stop
+	@# Settings come from .env, rewritten per container into env files under
+	@# .nook-dev/docker/; see deploy/docker/dev-run.sh for the layout and limits.
+	IMAGE=$(IMAGE) AGENT_IMAGE=$(AGENT_IMAGE) GATEWAY_IMAGE=$(GATEWAY_IMAGE) VERSION=$(VERSION) \
+		DOCKER_RUN_PORT=$(DOCKER_RUN_PORT) deploy/docker/dev-run.sh up
+
+.PHONY: docker-stop
+docker-stop: ## Remove the containers make docker-run started
+	IMAGE=$(IMAGE) AGENT_IMAGE=$(AGENT_IMAGE) GATEWAY_IMAGE=$(GATEWAY_IMAGE) VERSION=$(VERSION) \
+		DOCKER_RUN_PORT=$(DOCKER_RUN_PORT) deploy/docker/dev-run.sh down
 
 .PHONY: migrate-new
 migrate-new: $(GOOSE) ## Create a new SQL migration: make migrate-new name=add_users
