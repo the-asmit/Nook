@@ -45,6 +45,12 @@ type instance struct {
 	// returned (a stop waits for it before touching the container).
 	cancel context.CancelFunc
 	done   chan struct{}
+	// next is a start that arrived while the instance was stopping (an
+	// app woken while going to sleep); it runs once the stop is done.
+	next *agentv1.StartInstanceCommand
+	// keep is whether the stop in progress keeps the container; a later
+	// stop that removes it (the app woke elsewhere) clears it.
+	keep bool
 }
 
 // instances runs app containers and keeps them up: it starts them behind
@@ -73,14 +79,13 @@ type instances struct {
 	logs map[string]context.CancelFunc
 }
 
-var errStopping = errors.New("the instance is stopping")
-
 func (m *instances) report(s *agentv1.InstanceStatus) {
 	m.outbox.push(&agentv1.ConnectRequest{Message: &agentv1.ConnectRequest_InstanceStatus{InstanceStatus: s}})
 }
 
-// start runs an instance, or does nothing if it already runs. The outcome
-// is reported later (HEALTHY or FAILED).
+// start runs an instance, or does nothing if it already runs; a start for
+// an instance being stopped runs once the stop is done. The outcome is
+// reported later (HEALTHY or FAILED).
 func (m *instances) start(cmd *agentv1.StartInstanceCommand) error {
 	if err := validateStart(cmd); err != nil {
 		return err
@@ -96,7 +101,8 @@ func (m *instances) start(cmd *agentv1.StartInstanceCommand) error {
 		case phaseStarting, phaseRunning, phaseRestarting:
 			return nil
 		case phaseStopping:
-			return errStopping
+			inst.next = cmd
+			return nil
 		default: // crashed: started again on request
 		}
 	} else {
@@ -325,86 +331,6 @@ func (m *instances) restart(inst *instance) {
 				ContainerId: inst.containerID, HostPort: int32(port), RestartCount: restarts}) //nolint:gosec // G115: a TCP port.
 		}
 	})
-}
-
-// stop stops and removes an instance's container after drain; the result
-// is reported as STOPPED. Unknown instances (strays) are removed too.
-func (m *instances) stop(id string, drain time.Duration) error {
-	if !buildIDPattern.MatchString(id) {
-		return errors.New("invalid instance id")
-	}
-	m.mu.Lock()
-	if m.ctx == nil {
-		m.mu.Unlock()
-		return errShuttingDown
-	}
-	inst := m.m[id]
-	var wait chan struct{}
-	var cancelRun context.CancelFunc
-	if inst != nil {
-		if inst.phase == phaseStopping {
-			m.mu.Unlock()
-			return nil
-		}
-		inst.phase = phaseStopping
-		inst.sched.cancel()
-		wait, cancelRun = inst.done, inst.cancel
-	}
-	ctx := m.ctx
-	m.mu.Unlock()
-	m.wg.Go(func() {
-		select {
-		case <-ctx.Done():
-			return // the control plane asks again once the agent is back
-		case <-time.After(min(max(drain, 0), 10*time.Minute)):
-		}
-		if cancelRun != nil {
-			cancelRun()
-		}
-		if wait != nil {
-			<-wait
-		}
-		m.removeByName(context.WithoutCancel(ctx), id)
-		m.mu.Lock()
-		delete(m.m, id)
-		m.mu.Unlock()
-		m.report(&agentv1.InstanceStatus{InstanceId: id, State: agentv1.InstanceState_INSTANCE_STATE_STOPPED})
-		m.logger.Info("app instance stopped", "instance", id)
-	})
-	return nil
-}
-
-// removeByName stops and removes an instance's container, if it exists,
-// and the app's network once unused.
-func (m *instances) removeByName(ctx context.Context, instanceID string) {
-	inspectCtx, cancel := context.WithTimeout(ctx, dockerTimeout)
-	info, err := m.docker.client.ContainerInspect(inspectCtx, containerName(instanceID), client.ContainerInspectOptions{})
-	cancel()
-	if err != nil {
-		return
-	}
-	appID := ""
-	if info.Container.Config != nil {
-		appID = info.Container.Config.Labels[appLabel]
-	}
-	m.removeContainer(ctx, info.Container.ID, appID)
-}
-
-func (m *instances) removeContainer(ctx context.Context, id, appID string) {
-	stopCtx, cancel := context.WithTimeout(ctx, dockerTimeout+appStopGrace*time.Second)
-	grace := appStopGrace
-	_, _ = m.docker.client.ContainerStop(stopCtx, id, client.ContainerStopOptions{Timeout: &grace})
-	cancel()
-	rmCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	m.netMu.Lock()
-	defer m.netMu.Unlock()
-	if _, err := m.docker.client.ContainerRemove(rmCtx, id, client.ContainerRemoveOptions{Force: true}); err != nil {
-		m.logger.Warn("could not remove an app container", "container", id, "error", err.Error())
-	}
-	if appID != "" {
-		m.removeAppNetwork(ctx, appID)
-	}
 }
 
 // listOwn lists this node's app containers.

@@ -349,6 +349,10 @@ message EnvVar {
 message StopInstanceCommand {
   string instance_id = 1;
   google.protobuf.Duration drain = 2;
+  // Stop the container but keep it (an app going to sleep): a later
+  // StartInstance for the same instance starts it again, image and all,
+  // without creating anything.
+  bool keep_container = 3;
 }
 
 // StreamLogsCommand asks for an instance's container output, sent as

@@ -58,7 +58,7 @@ func (a *Agent) execute(ctx context.Context, cmd *agentv1.Command) *agentv1.Comm
 		}
 		// The instance outlives the command: the manager owns its context.
 		switch err := a.instances.start(kind.StartInstance); { //nolint:contextcheck // see above
-		case errors.Is(err, errShuttingDown), errors.Is(err, errStopping):
+		case errors.Is(err, errShuttingDown):
 			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_BUSY, err.Error())
 		case err != nil:
 			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, "invalid start command: "+err.Error())
@@ -67,7 +67,7 @@ func (a *Agent) execute(ctx context.Context, cmd *agentv1.Command) *agentv1.Comm
 		res.Result = accepted
 	case *agentv1.Command_StopInstance:
 		// The stop outlives the command (drain): the manager owns its context.
-		if err := a.instances.stop(kind.StopInstance.GetInstanceId(), kind.StopInstance.GetDrain().AsDuration()); err != nil { //nolint:contextcheck // see above
+		if err := a.instances.stop(kind.StopInstance.GetInstanceId(), kind.StopInstance.GetDrain().AsDuration(), kind.StopInstance.GetKeepContainer()); err != nil { //nolint:contextcheck // see above
 			return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, err.Error())
 		}
 		res.Result = accepted

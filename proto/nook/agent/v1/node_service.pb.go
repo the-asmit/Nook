@@ -2421,9 +2421,13 @@ func (x *EnvVar) GetValue() string {
 // StopInstanceCommand stops and removes an instance's container after
 // letting it serve for drain (zero: at once). The agent reports STOPPED.
 type StopInstanceCommand struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
-	Drain         *durationpb.Duration   `protobuf:"bytes,2,opt,name=drain,proto3" json:"drain,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	Drain      *durationpb.Duration   `protobuf:"bytes,2,opt,name=drain,proto3" json:"drain,omitempty"`
+	// Stop the container but keep it (an app going to sleep): a later
+	// StartInstance for the same instance starts it again, image and all,
+	// without creating anything.
+	KeepContainer bool `protobuf:"varint,3,opt,name=keep_container,json=keepContainer,proto3" json:"keep_container,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2470,6 +2474,13 @@ func (x *StopInstanceCommand) GetDrain() *durationpb.Duration {
 		return x.Drain
 	}
 	return nil
+}
+
+func (x *StopInstanceCommand) GetKeepContainer() bool {
+	if x != nil {
+		return x.KeepContainer
+	}
+	return false
 }
 
 // StreamLogsCommand asks for an instance's container output, sent as
@@ -3114,11 +3125,12 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\x03env\x18\x11 \x03(\v2\x15.nook.agent.v1.EnvVarR\x03env\"2\n" +
 	"\x06EnvVar\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value\"g\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\x8e\x01\n" +
 	"\x13StopInstanceCommand\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12/\n" +
-	"\x05drain\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05drain\"\x8a\x02\n" +
+	"\x05drain\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x05drain\x12%\n" +
+	"\x0ekeep_container\x18\x03 \x01(\bR\rkeepContainer\"\x8a\x02\n" +
 	"\x11StreamLogsCommand\x12\x1b\n" +
 	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x12\x1f\n" +
 	"\vinstance_id\x18\x02 \x01(\tR\n" +
