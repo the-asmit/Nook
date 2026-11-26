@@ -162,11 +162,12 @@ Run `make help` for every target. The common ones:
 
 ```sh
 make test               # unit tests with the race detector
-make test-integration   # + integration tests against real Postgres/Redis (Docker)
+make test-integration   # + integration tests against real Postgres/Redis (Docker; no internet needed)
+make test-e2e-internet  # end-to-end tests that need the internet (CI: nightly and on version tags)
 make lint               # golangci-lint
 make vuln               # govulncheck
-make docker-build       # nook-server and nook-agent images for linux/amd64 and linux/arm64
-make docker-run         # run that image against the dev stack on 127.0.0.1:8081
+make docker-build       # nook-server, nook-agent and nook-gateway images for linux/amd64 and linux/arm64
+make docker-run         # run all three images against the dev stack (API on 127.0.0.1:8081); make docker-stop
 make sqlc               # regenerate internal/store after changing SQL
 make proto              # regenerate proto/ after changing a .proto file
 make openapi-lint       # validate api/openapi.yaml
@@ -183,6 +184,45 @@ and, when the example gains variables, appends them to your existing
 refused) or, for CI, `NOOK_SERVER` and `NOOK_TOKEN`. Invalid configuration stops the
 process at startup with a list of every problem. Secrets can also be supplied
 as files: `NOOK_POSTGRES_URL_FILE=/run/secrets/pg-url`.
+
+### Networks between nodes
+
+The gateway forwards visitors' requests to app containers over plain HTTP
+(the identity headers it adds and the cookies apps set travel in clear
+text on that hop). **Multi-node installations must therefore connect the
+gateways, control planes and worker nodes over a private network** — a
+cloud VPC, or WireGuard tunnels between the machines — and set on every
+worker:
+
+- `NOOK_AGENT_ADVERTISE_ADDR` to the node's address on that network. The
+  agent refuses a public address (anything but loopback, RFC 1918, IPv6
+  ULA or 100.64.0.0/10, the range WireGuard meshes such as Tailscale use)
+  unless `NOOK_AGENT_ALLOW_PUBLIC_ADVERTISE_ADDR=true`, and warns at every
+  start when that override lets one through.
+- `NOOK_AGENT_GATEWAY_ADDRS` to the gateways' addresses, so app ports
+  accept connections from the gateways only.
+
+TLS on this hop (terminated by the agent with its node certificate) is
+possible future work.
+
+### Running the images
+
+`make docker-run` starts the three images built by `make docker-build`
+(for this machine only: `make docker-build PLATFORMS=linux/amd64`)
+against the dev stack, with the settings from `.env` rewritten per
+container into env files under `.nook-dev/docker/` (mode 0600). Stop
+`make run-server`, `make run-agent` and `make run-gateway` first: the
+agent container runs this machine's dev node and the gateway takes its
+ports. The API is on 127.0.0.1:8081 (use `NOOK_SERVER` and `NOOK_TOKEN`),
+apps on the usual `*.apps.localhost:8090` URLs; apps placed before need a
+new deployment (`nook env set`) to move to the containers' address.
+Limits of this setup: browser sign-in through Dex needs `make run-server`
+(Dex is `localhost:5556` to the browser but not to the container), and
+builds need `make run-agent` (presigned storage URLs must be reachable by
+both the CLI and the agent). On Docker Desktop, published ports are
+forwarded by Docker Desktop's own proxy, which the agent's gateway-only
+rule cannot see, so other containers can reach app ports there; on Linux
+servers the rule applies.
 
 ## Troubleshooting
 

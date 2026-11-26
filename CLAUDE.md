@@ -29,7 +29,10 @@ Read, in order: this file, `docs/architecture.md`, and the latest file in
    localhost. Pin dependency and image versions. Run govulncheck.
 6. **Testing:** every behavior has tests. Integration tests use real
    Postgres/Redis via testcontainers-go and carry the `//go:build integration`
-   tag. `go test -race` must pass. No sleep-based timing in tests; poll with
+   tag; they must not need the public internet (base images come from the
+   test registry). Tests that do (Docker Hub, public DNS) carry
+   `//go:build integration && internet`, are named `TestE2E*` and run with
+   `make test-e2e-internet`. `go test -race` must pass. No sleep-based timing in tests; poll with
    deadlines.
 7. **Observability:** structured JSON logs via `log/slog` with a `request_id`
    on every request; Prometheus metrics for every component; liveness and
@@ -68,7 +71,8 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Run a dev worker agent (after `nook-agent join --state-dir .nook-dev/agent`) | `make run-agent` |
 | Run the dev gateway (apps at `http://<app>--<ws>.apps.localhost:8090`) | `make run-gateway` |
 | Unit tests (race) | `make test` |
-| Unit + integration tests | `make test-integration` (needs Docker) |
+| Unit + integration tests | `make test-integration` (needs Docker, no internet) |
+| End-to-end tests that need the internet | `make test-e2e-internet` (CI: nightly and on version tags) |
 | Lint / format | `make lint` / `make fmt` |
 | Vulnerability scan | `make vuln` |
 | New migration | `make migrate-new name=add_users` |
@@ -77,7 +81,7 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Lint protobuf / breaking changes | `make proto-lint` / `make proto-breaking` (against `main`) |
 | Validate the OpenAPI spec | `make openapi-lint` |
 | CLI release archives | `make release-snapshot` (into `dist/`) |
-| Multi-arch images (server, agent, gateway) | `make docker-build`, then `make docker-run` |
+| Multi-arch images (server, agent, gateway) | `make docker-build`, then `make docker-run` (all three against the dev stack) / `make docker-stop` |
 | Master key for app environment variables | `go run ./cmd/nook-server secrets init --out FILE` (`make dev-up` does it) |
 | Show the agent's egress rules | `go run ./cmd/nook-agent firewall rules` |
 
@@ -142,7 +146,9 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
   (Redis `TIME`), never from agents.
 - **Builds and images**: images are always referenced by digest
   (`<registry>/<workspace-id>/<app-id>@sha256:...`); tags are per build
-  (`b-<build-id>`) and never trusted. Deployment and build state changes
+  (`b-<build-id>`) and never trusted. Each app's BuildKit cache lives in
+  `<workspace-id>/<app-id>/cache:buildcache`, reachable only with that
+  app's build token; purges and stray cleanup cover it. Deployment and build state changes
   are compare-and-set updates in Postgres; the Redis Streams queue only
   carries hints (jobs are idempotent by deployment ID). Singleton cleanup
   belongs to `builds.Janitor` (leader only, idempotent tasks).
@@ -168,7 +174,8 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 - **App containers** keep the hardening in `appContainerSpec`: all
   capabilities dropped, no-new-privileges, limits, no host mounts or
   Docker socket, own network, port published only on the advertise
-  address. Container egress is filtered by the agent's firewall; any new
+  address. Container egress is filtered by the agent's firewall (DNS only
+  to the resolvers it reads from the node, port 53 only); any new
   container kind joins a filtered bridge.
 - **The gateway** holds no database credentials or OIDC secret: it uses
   the control plane's `/internal/v1` API (shared `NOOK_GATEWAY_SECRET`,
@@ -185,8 +192,10 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
   are always stripped before proxying. Return paths go through
   `auth.SafeReturnPath`; redirect targets never come from request hosts.
 - **Gateway → app** traffic is plain HTTP on the private network, guarded
-  by the agent firewall (`NOOK_AGENT_GATEWAY_ADDRS`); this is the one
-  documented exception to TLS outside localhost (ADR 0028).
+  by the agent firewall (`NOOK_AGENT_GATEWAY_ADDRS`) and by the agent
+  refusing a public advertise/publish address without
+  `NOOK_AGENT_ALLOW_PUBLIC_ADVERTISE_ADDR`; this is the one documented
+  exception to TLS outside localhost (ADR 0028). Keep both guards.
 - **Spelling**: code and prose use US English (`canceled`); the API and
   database status value is `cancelled`, as specified.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
