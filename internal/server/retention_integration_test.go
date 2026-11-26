@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 	"uuid"
 
+	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/objstore"
 	"github.com/the-asmit/nook/internal/pki"
 	"github.com/the-asmit/nook/internal/platform/config"
@@ -125,8 +127,15 @@ func TestDeletedAppIsPurged(t *testing.T) {
 			WHERE d.app_id = $1`, appID).Scan(&sourceKey, &logKey)
 		return err == nil && logKey != nil
 	})
+	reg := registryClient(t)
+	if tags, err := reg.Tags(context.Background(), repo+"/cache"); err != nil || !slices.Contains(tags, apps.CacheTag) {
+		t.Fatalf("no build cache before the purge: %v %v", tags, err)
+	}
 	expectStatus(t, b.as(b.alice, http.MethodDelete, appURL(b.ws, "doomed"), nil), http.StatusNoContent, "delete")
 	b.janitorTick()
+	if tags, err := reg.Tags(context.Background(), repo+"/cache"); err != nil || len(tags) != 0 {
+		t.Fatalf("build cache survived the purge: %v %v", tags, err)
+	}
 
 	if b.count("SELECT count(*) FROM apps WHERE id = $1", appID) != 0 {
 		t.Fatal("app row not purged")
@@ -165,6 +174,10 @@ func TestStrayImagesAreRemoved(t *testing.T) {
 	d := b.waitStatus(b.alice, b.ws, "web", n, 3*time.Minute, "built")
 	_, repo := b.appRepo(b.ws, "web")
 	stray := pushTestImage(t, repo, "b-"+uuid.NewV7().String(), []byte("stray layer"))
+	// The build cache of an app that does not exist (any more) goes too;
+	// the live app's stays.
+	strayCache := uuid.NewV7().String() + "/" + uuid.NewV7().String() + "/cache"
+	pushTestImage(t, strayCache, apps.CacheTag, []byte("stray cache"))
 
 	b.janitorTick()
 	reg := registryClient(t)
@@ -173,6 +186,12 @@ func TestStrayImagesAreRemoved(t *testing.T) {
 	}
 	if ok, _ := reg.ManifestExists(context.Background(), repo, *d.ImageDigest); !ok {
 		t.Fatal("recorded image removed")
+	}
+	if tags, err := reg.Tags(context.Background(), strayCache); err != nil || len(tags) != 0 {
+		t.Fatalf("stray build cache kept: %v %v", tags, err)
+	}
+	if tags, err := reg.Tags(context.Background(), repo+"/cache"); err != nil || !slices.Contains(tags, apps.CacheTag) {
+		t.Fatalf("the live app's build cache was removed: %v %v", tags, err)
 	}
 }
 

@@ -50,6 +50,21 @@ func RepositoryName(workspaceID, appID uuid.UUID) string {
 	return workspaceID.String() + "/" + appID.String()
 }
 
+// CacheRepositoryName is the app's build-cache repository,
+// "<workspace-id>/<app-id>/cache": one per app, so a build only ever
+// imports layers its own app's builds produced, and the registry token of
+// a build covers exactly the app's two repositories.
+func CacheRepositoryName(workspaceID, appID uuid.UUID) string {
+	return RepositoryName(workspaceID, appID) + "/" + CacheRepoSuffix
+}
+
+// CacheTag is the single tag of a cache repository; each build overwrites
+// it, and registry GC (--delete-untagged) collects the previous cache.
+const CacheTag = "buildcache"
+
+// CacheRepoSuffix ends every cache repository's name.
+const CacheRepoSuffix = "cache"
+
 var slugPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
 
 // ValidSlug reports whether s can name an app: at most 40 lower-case

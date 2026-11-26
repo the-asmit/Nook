@@ -257,13 +257,19 @@ message BuildCommand {
   // Repository and tag to push, e.g. "<workspace-id>/<app-id>" and "b-<build-id>".
   string repository = 8;
   string tag = 9;
-  // Short-lived registry bearer token allowing push and pull on repository only; secret.
+  // Short-lived registry bearer token allowing push and pull on repository and
+  // cache_repository only; secret.
   string registry_token = 10;
   // Limits for the build container.
   google.protobuf.Duration timeout = 11;
   int64 memory_bytes = 12;
   int64 cpu_millicores = 13;
   int64 max_log_bytes = 14;
+  // The app's build-cache repository in the registry (registry_token also
+  // covers it): BuildKit imports and exports its layer cache there
+  // (<registry>/<cache_repository>:buildcache). Empty: build without a
+  // cache.
+  string cache_repository = 15;
 }
 
 // CancelBuildCommand stops a running build; the agent answers with

@@ -42,11 +42,18 @@ func TestLogStreamSplitsBatchesAndTruncates(t *testing.T) {
 func TestLogStreamRecognizesRegistryErrors(t *testing.T) {
 	l := newLogStream("b", newOutbox(), 1<<20)
 	l.line("#8 exporting to image")
-	if l.mentionsAfterError("registry:5000") {
+	if l.mentionsAfterError("registry:5000", "ws/app/cache") {
 		t.Fatal("no error yet")
 	}
+	// The cache of an app's first build does not exist yet: not a push
+	// failure, so the user's own error below stays the user's.
+	l.line("#4 ERROR: failed to configure registry cache importer: registry:5000/ws/app/cache:buildcache: not found")
+	l.line(`error: failed to solve: process "/bin/sh -c false" did not complete successfully: exit code: 1`)
+	if l.mentionsAfterError("registry:5000", "ws/app/cache") {
+		t.Fatal("a missing build cache was taken for a push failure")
+	}
 	l.line("ERROR: failed to push registry:5000/ws/app:b-1: unexpected status 401")
-	if !l.mentionsAfterError("registry:5000") {
+	if !l.mentionsAfterError("registry:5000", "ws/app/cache") {
 		t.Fatal("push error not recognized")
 	}
 }

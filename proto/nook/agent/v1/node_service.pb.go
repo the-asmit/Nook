@@ -1852,15 +1852,21 @@ type BuildCommand struct {
 	// Repository and tag to push, e.g. "<workspace-id>/<app-id>" and "b-<build-id>".
 	Repository string `protobuf:"bytes,8,opt,name=repository,proto3" json:"repository,omitempty"`
 	Tag        string `protobuf:"bytes,9,opt,name=tag,proto3" json:"tag,omitempty"`
-	// Short-lived registry bearer token allowing push and pull on repository only; secret.
+	// Short-lived registry bearer token allowing push and pull on repository and
+	// cache_repository only; secret.
 	RegistryToken string `protobuf:"bytes,10,opt,name=registry_token,json=registryToken,proto3" json:"registry_token,omitempty"`
 	// Limits for the build container.
 	Timeout       *durationpb.Duration `protobuf:"bytes,11,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	MemoryBytes   int64                `protobuf:"varint,12,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
 	CpuMillicores int64                `protobuf:"varint,13,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
 	MaxLogBytes   int64                `protobuf:"varint,14,opt,name=max_log_bytes,json=maxLogBytes,proto3" json:"max_log_bytes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// The app's build-cache repository in the registry (registry_token also
+	// covers it): BuildKit imports and exports its layer cache there
+	// (<registry>/<cache_repository>:buildcache). Empty: build without a
+	// cache.
+	CacheRepository string `protobuf:"bytes,15,opt,name=cache_repository,json=cacheRepository,proto3" json:"cache_repository,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *BuildCommand) Reset() {
@@ -1989,6 +1995,13 @@ func (x *BuildCommand) GetMaxLogBytes() int64 {
 		return x.MaxLogBytes
 	}
 	return 0
+}
+
+func (x *BuildCommand) GetCacheRepository() string {
+	if x != nil {
+		return x.CacheRepository
+	}
+	return ""
 }
 
 // CancelBuildCommand stops a running build; the agent answers with
@@ -3044,7 +3057,7 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe5\x03\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x90\x04\n" +
 	"\fBuildCommand\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x18\n" +
@@ -3064,7 +3077,8 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\atimeout\x18\v \x01(\v2\x19.google.protobuf.DurationR\atimeout\x12!\n" +
 	"\fmemory_bytes\x18\f \x01(\x03R\vmemoryBytes\x12%\n" +
 	"\x0ecpu_millicores\x18\r \x01(\x03R\rcpuMillicores\x12\"\n" +
-	"\rmax_log_bytes\x18\x0e \x01(\x03R\vmaxLogBytes\"/\n" +
+	"\rmax_log_bytes\x18\x0e \x01(\x03R\vmaxLogBytes\x12)\n" +
+	"\x10cache_repository\x18\x0f \x01(\tR\x0fcacheRepository\"/\n" +
 	"\x12CancelBuildCommand\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\";\n" +
 	"\bBuildLog\x12\x19\n" +

@@ -172,7 +172,7 @@ func (b *builder) failure(ctx context.Context, containerID string, cmd *agentv1.
 		logs.line("[nook] " + msg)
 		return withLog(result(id, agentv1.BuildResult_BUILD_RESULT_FAILED, msg), logs)
 	}
-	if logs.mentionsAfterError(cmd.GetRegistry()) {
+	if logs.mentionsAfterError(cmd.GetRegistry(), cmd.GetCacheRepository()) {
 		logs.line("[nook] pushing to the Nook registry failed; the build will be retried")
 		return withLog(infraError(id, "pushing the image to the registry failed"), logs)
 	}
@@ -205,6 +205,25 @@ func withLog(r *agentv1.BuildFinished, logs *logStream) *agentv1.BuildFinished {
 	return r
 }
 
+// cacheTag is the tag of an app's build cache (apps.CacheTag).
+const cacheTag = "buildcache"
+
+// cacheArgs imports and exports the app's layer cache in its cache
+// repository. mode=max caches every stage's layers (multi-stage builds
+// reuse their build stages too); image-manifest=true stores the cache as an
+// OCI image manifest, which every registry accepts; ignore-error keeps a
+// cache problem (a first build has no cache yet) from failing the build.
+func cacheArgs(cmd *agentv1.BuildCommand) []string {
+	if cmd.GetCacheRepository() == "" {
+		return nil
+	}
+	ref := cmd.GetRegistry() + "/" + cmd.GetCacheRepository() + ":" + cacheTag
+	return []string{
+		"--import-cache", "type=registry,ref=" + ref,
+		"--export-cache", "type=registry,ref=" + ref + ",mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true",
+	}
+}
+
 // containerSpec is the build container: BuildKit, rootless, in a user
 // namespace of its own, with every capability dropped except the two that
 // map that namespace, no host mounts, no Docker socket and hard limits.
@@ -231,7 +250,7 @@ func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) cl
 				"--output", "type=image,name=" + ref + ",push=true",
 				"--metadata-file", containerHome + "/" + metadataFile,
 				"--progress", "plain",
-			}, append(proxy.buildArgs(), hosts.buildOpts()...)...),
+			}, append(append(cacheArgs(cmd), proxy.buildArgs()...), hosts.buildOpts()...)...),
 			Env: append([]string{
 				"BUILDKITD_FLAGS=--config=" + containerHome + "/.config/buildkit/buildkitd.toml",
 				"DOCKER_CONFIG=" + containerHome + "/.docker",

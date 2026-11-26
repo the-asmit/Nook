@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -91,6 +92,10 @@ func validateBuild(cmd *agentv1.BuildCommand) error {
 		return errors.New("invalid registry address")
 	case cmd.GetSourceUrl() == "" || cmd.GetRegistryToken() == "":
 		return errors.New("source and registry token are required")
+	case cmd.GetCacheRepository() != "" &&
+		(!refPartPattern.MatchString(cmd.GetCacheRepository()) || !strings.HasPrefix(cmd.GetCacheRepository(), cmd.GetRepository()+"/")):
+		// A cache outside the app's own repository could mix apps' layers.
+		return errors.New("invalid cache repository")
 	}
 	return nil
 }

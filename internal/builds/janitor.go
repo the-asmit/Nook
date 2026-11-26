@@ -219,6 +219,9 @@ func (j *Janitor) purgeDeletedApps(ctx context.Context) error {
 				}
 			}
 		}
+		if cacheErr := j.deleteCache(ctx, apps.CacheRepositoryName(app.WorkspaceID, app.ID)); cacheErr != nil {
+			return cacheErr
+		}
 		sources, err := j.store.ListSourcesOfApp(ctx, app.ID)
 		if err != nil {
 			return fmt.Errorf("list sources: %w", err)
@@ -256,6 +259,12 @@ func (j *Janitor) removeStrayImages(ctx context.Context) error {
 		return err
 	}
 	for _, repo := range repos {
+		if base, isCache := strings.CutSuffix(repo, "/"+apps.CacheRepoSuffix); isCache {
+			if err := j.removeStrayCache(ctx, repo, base); err != nil {
+				return err
+			}
+			continue
+		}
 		wsID, appID, ok := parseRepository(repo)
 		if !ok {
 			continue
@@ -292,6 +301,49 @@ func (j *Janitor) removeStrayImages(ctx context.Context) error {
 			j.logger.InfoContext(ctx, "removed stray image", "repository", repo, "tag", tag)
 		}
 	}
+	return nil
+}
+
+// deleteCache removes every manifest of a build-cache repository; registry
+// GC then collects the layers no image uses.
+func (j *Janitor) deleteCache(ctx context.Context, repo string) error {
+	tags, err := j.registry.Tags(ctx, repo)
+	if err != nil {
+		return err
+	}
+	for _, tag := range tags {
+		digest, err := j.registry.TagDigest(ctx, repo, tag)
+		if errors.Is(err, registry.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := j.registry.DeleteManifest(ctx, repo, digest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removeStrayCache deletes the build cache of an app that no longer exists
+// (or is not in the workspace the repository names): purged apps, and
+// anything else in a cache repository's place.
+func (j *Janitor) removeStrayCache(ctx context.Context, repo, base string) error {
+	wsID, appID, ok := parseRepository(base)
+	if ok {
+		app, err := j.store.GetAppByID(ctx, appID)
+		if err != nil && !store.IsNotFound(err) {
+			return fmt.Errorf("read app: %w", err)
+		}
+		if err == nil && app.WorkspaceID == wsID && app.DeletedAt == nil {
+			return nil // a live app's cache: overwritten by every build
+		}
+	}
+	if err := j.deleteCache(ctx, repo); err != nil {
+		return err
+	}
+	j.logger.InfoContext(ctx, "removed stray build cache", "repository", repo)
 	return nil
 }
 

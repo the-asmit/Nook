@@ -136,12 +136,20 @@ func (l *logStream) total() int64 {
 }
 
 // mentionsAfterError reports whether one of the last lines is an error
-// mentioning s (BuildKit names the registry when a push fails).
-func (l *logStream) mentionsAfterError(s string) bool {
+// mentioning s (BuildKit names the registry when a push fails). Lines that
+// also mention except (the build-cache repository) do not count: a cache
+// that is not there yet ("failed to configure registry cache importer:
+// ... not found" on an app's first build) or fails to export never fails
+// a build, so it must not turn the user's own error into a retried
+// "push failure".
+func (l *logStream) mentionsAfterError(s, except string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	for _, line := range l.recent {
 		lower := strings.ToLower(line)
+		if except != "" && strings.Contains(line, except) {
+			continue
+		}
 		if strings.Contains(lower, "error") && strings.Contains(line, s) {
 			return true
 		}

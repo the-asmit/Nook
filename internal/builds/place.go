@@ -147,8 +147,10 @@ func (d *Dispatcher) place(ctx context.Context, dep *store.Deployment, app *stor
 // fails the attempt as an infrastructure error, which is retried.
 func (d *Dispatcher) send(ctx context.Context, dep *store.Deployment, app *store.App, b *store.Build, node *candidate) error {
 	repo := apps.RepositoryName(app.WorkspaceID, app.ID)
+	cacheRepo := apps.CacheRepositoryName(app.WorkspaceID, app.ID)
 	token, err := d.Issuer.Token("node:"+node.name, d.cfg.Timeout+tokenMargin,
-		registry.RepositoryAccess(repo, registry.ActionPush, registry.ActionPull))
+		registry.RepositoryAccess(repo, registry.ActionPush, registry.ActionPull),
+		registry.RepositoryAccess(cacheRepo, registry.ActionPush, registry.ActionPull))
 	if err != nil {
 		return err
 	}
@@ -156,7 +158,7 @@ func (d *Dispatcher) send(ctx context.Context, dep *store.Deployment, app *store
 		BuildId: b.ID.String(), DeploymentId: dep.ID.String(), Attempt: b.Attempt,
 		SourceUrl:    d.Objects.PresignGet(dep.SourceKey, d.cfg.Timeout+tokenMargin),
 		SourceSha256: hex.EncodeToString(dep.SourceSha256), SourceSize: dep.SourceSize,
-		Registry: d.RegistryAddr, Repository: repo, Tag: b.ImageTag, RegistryToken: token,
+		Registry: d.RegistryAddr, Repository: repo, Tag: b.ImageTag, RegistryToken: token, CacheRepository: cacheRepo,
 		Timeout: durationpb.New(d.cfg.Timeout), MemoryBytes: d.cfg.MemoryMB << 20, CpuMillicores: d.cfg.CPUMillicores,
 		MaxLogBytes: d.cfg.MaxLogBytes,
 	}}}
