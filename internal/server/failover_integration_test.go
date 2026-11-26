@@ -138,6 +138,33 @@ func TestNodeDeathMovesAppsAndFencesTheOldOne(t *testing.T) {
 	}
 }
 
+// TestFailedOverInstanceStopsWhenItsNodeReturnsWithoutReconnecting: a node
+// declared dead while its agent stays connected (late heartbeats) comes
+// back by heartbeats alone, so reconnection reconciliation never runs; the
+// leader still has the failed-over container removed, and the app runs
+// again.
+func TestFailedOverInstanceStopsWhenItsNodeReturnsWithoutReconnecting(t *testing.T) {
+	r := startRuntimeEnv(t, map[string]string{"NOOK_ROLLOUT_RELOCATE_INTERVAL": "200ms"})
+	r.newRuntimeApp(r.alice, r.ws, "web", nil)
+	r.waitLive(r.alice, r.ws, "web", r.release(r.ws, "web"))
+	_, web := r.appIDs(r.ws, "web")
+	old := r.newestInstance(web)
+
+	// What the failure detector does when heartbeats are late; the next
+	// heartbeat makes the node ready again (the agent never disconnects).
+	eventually(t, 30*time.Second, "the instance to be failed over", func() bool {
+		r.exec(`UPDATE nodes SET status = 'dead' WHERE name = $1 AND status = 'ready'`, old.Node)
+		return r.instance(old.ID).State == "stopping"
+	})
+	eventually(t, time.Minute, "the failed-over container to go and the app to run again", func() bool {
+		return containerState(t, old.ContainerID) == "" && r.instance(old.ID).State == "stopped" &&
+			r.app(r.alice, r.ws, "web").Health == "running"
+	})
+	if n := r.newestInstance(web); n.ID == old.ID || n.Cause != "failover" || n.State != "healthy" {
+		t.Fatalf("after the node returned: %+v", n)
+	}
+}
+
 // TestDrainMovesAppsWithoutFailedRequests: draining a node moves its app
 // to another node while requests keep flowing through the gateway; none
 // fails, and the drain completes with nothing left on the node.

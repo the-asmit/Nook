@@ -116,6 +116,17 @@ WHERE n.status = 'dead' AND i.state IN ('starting', 'healthy', 'unhealthy')
 ORDER BY i.id
 LIMIT @row_limit;
 
+-- name: ListFailedOverOnLiveNodes :many
+-- Failed-over instances whose node is alive again. Reconciliation removes
+-- their containers when the agent reconnects, but a node can come back
+-- without reconnecting (late heartbeats on an intact stream, or a
+-- reconnect just before the failover), so the leader sends the stop.
+SELECT i.* FROM app_instances i
+JOIN nodes n ON n.id = i.node_id
+WHERE i.state = 'stopping' AND i.stop_reason = 'failover' AND n.status IN ('ready', 'suspect', 'draining')
+ORDER BY i.id
+LIMIT @row_limit;
+
 -- name: FailOverInstance :one
 -- An instance on a dead node no longer serves; the time it stopped
 -- serving is the node's death.

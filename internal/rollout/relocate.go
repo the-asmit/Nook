@@ -34,7 +34,9 @@ func (f FollowUps) Run(ctx context.Context) {
 // deployments' owners place replacements; deployments with instances on
 // draining nodes are handed to their owners, which start a replacement
 // and stop the old instance once it is healthy; sleeping apps' kept
-// containers on draining nodes are removed (they wake elsewhere); and
+// containers on draining nodes are removed (they wake elsewhere);
+// failed-over instances whose node is alive again are told to stop (their
+// node may never reconnect, so reconciliation would not run); and
 // running apps left without an instance for lack of room are retried, so
 // they come back as soon as a node returns or frees memory. Every
 // change is a compare-and-set, so repeating a pass is harmless. It runs
@@ -61,6 +63,16 @@ func (c *Controller) Relocate(ctx context.Context, db DB) (FollowUps, error) {
 				"node_dead_for", c.now().Sub(deadAt).Round(time.Millisecond).String())
 			c.Routes.Changed(ctx, d.AppID)
 			c.kick(ctx, d.DeploymentID)
+		})
+	}
+	back, err := q.ListFailedOverOnLiveNodes(ctx, relocateBatch)
+	if err != nil {
+		return after, fmt.Errorf("list failed-over instances on live nodes: %w", err)
+	}
+	for i := range back {
+		inst := back[i]
+		after = append(after, func(ctx context.Context) {
+			c.sendStop(ctx, *inst.NodeID, inst.ID.String(), 0, false)
 		})
 	}
 	moving, err := q.ListDeploymentsOnDrainingNodes(ctx, relocateBatch)

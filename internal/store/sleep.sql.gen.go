@@ -347,6 +347,64 @@ func (q *Queries) ListEvictable(ctx context.Context, exceptAppID uuid.UUID) ([]L
 	return items, nil
 }
 
+const listFailedOverOnLiveNodes = `-- name: ListFailedOverOnLiveNodes :many
+SELECT i.id, i.app_id, i.deployment_id, i.workspace_id, i.node_id, i.node_name, i.state, i.memory_mb, i.cpu_millicores, i.container_id, i.address, i.host_port, i.restart_count, i.start_sent_at, i.started_at, i.last_healthy_at, i.stop_requested_at, i.stopped_at, i.last_error, i.startup_log, i.created_at, i.updated_at, i.cause, i.cause_at, i.stop_reason FROM app_instances i
+JOIN nodes n ON n.id = i.node_id
+WHERE i.state = 'stopping' AND i.stop_reason = 'failover' AND n.status IN ('ready', 'suspect', 'draining')
+ORDER BY i.id
+LIMIT $1
+`
+
+// Failed-over instances whose node is alive again. Reconciliation removes
+// their containers when the agent reconnects, but a node can come back
+// without reconnecting (late heartbeats on an intact stream, or a
+// reconnect just before the failover), so the leader sends the stop.
+func (q *Queries) ListFailedOverOnLiveNodes(ctx context.Context, rowLimit int32) ([]AppInstance, error) {
+	rows, err := q.db.Query(ctx, listFailedOverOnLiveNodes, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppInstance{}
+	for rows.Next() {
+		var i AppInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.WorkspaceID,
+			&i.NodeID,
+			&i.NodeName,
+			&i.State,
+			&i.MemoryMb,
+			&i.CpuMillicores,
+			&i.ContainerID,
+			&i.Address,
+			&i.HostPort,
+			&i.RestartCount,
+			&i.StartSentAt,
+			&i.StartedAt,
+			&i.LastHealthyAt,
+			&i.StopRequestedAt,
+			&i.StoppedAt,
+			&i.LastError,
+			&i.StartupLog,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Cause,
+			&i.CauseAt,
+			&i.StopReason,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIdleCandidates = `-- name: ListIdleCandidates :many
 SELECT a.id AS app_id, a.slug, a.workspace_id, a.sleep_after_seconds, a.current_deployment_id, a.last_request_at,
        i.id AS instance_id, i.last_healthy_at
