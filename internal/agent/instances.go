@@ -56,7 +56,8 @@ type instances struct {
 	outbox    *outbox
 	logger    *slog.Logger
 	nodeID    func() string
-	advertise netip.Addr
+	advertise netip.Addr // where the agent and the gateway reach app ports
+	publish   netip.Addr // where app ports are bound (usually advertise)
 	policy    crashPolicy
 	clock     clock
 
@@ -421,7 +422,7 @@ func (m *instances) listOwn(ctx context.Context) ([]containerSummary, error) {
 		c := &list.Items[i]
 		s := containerSummary{id: c.ID, instanceID: c.Labels[instanceLabel], appID: c.Labels[appLabel], running: c.State == "running", labels: c.Labels}
 		for _, p := range c.Ports {
-			if p.PublicPort != 0 && p.IP.Unmap() == m.advertise {
+			if p.PublicPort != 0 && p.IP.Unmap() == m.publish {
 				s.hostPort = int32(p.PublicPort)
 			}
 		}

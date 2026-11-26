@@ -106,7 +106,7 @@ func validHealthPath(p string) bool {
 // capability dropped, no privilege escalation, Docker's default seccomp
 // profile, hard memory/CPU/PID limits, no mounts from the host (only a
 // tmpfs /tmp), rotated logs, its own network, and its port published only
-// on the node's advertise address.
+// on the node's publish address (normally its advertise address).
 func (m *instances) appContainerSpec(cmd *agentv1.StartInstanceCommand, image, networkName string) (client.ContainerCreateOptions, error) {
 	port, err := network.ParsePort(strconv.Itoa(int(cmd.GetPort())) + "/tcp")
 	if err != nil {
@@ -133,7 +133,7 @@ func (m *instances) appContainerSpec(cmd *agentv1.StartInstanceCommand, image, n
 		},
 		HostConfig: &container.HostConfig{
 			NetworkMode:    container.NetworkMode(networkName),
-			PortBindings:   network.PortMap{port: []network.PortBinding{{HostIP: m.advertise}}},
+			PortBindings:   network.PortMap{port: []network.PortBinding{{HostIP: m.publish}}},
 			CapDrop:        []string{"ALL"},
 			SecurityOpt:    []string{"no-new-privileges:true"},
 			ReadonlyRootfs: cmd.GetReadOnlyRootfs(),
@@ -276,13 +276,13 @@ func (m *instances) hostPort(ctx context.Context, id string, port int32) (int, e
 		return 0, fmt.Errorf("app port: %w", err)
 	}
 	for _, b := range info.Container.NetworkSettings.Ports[p] {
-		if b.HostIP.Unmap() == m.advertise {
+		if b.HostIP.Unmap() == m.publish {
 			if n, err := strconv.Atoi(b.HostPort); err == nil {
 				return n, nil
 			}
 		}
 	}
-	return 0, errors.New("the app's port is not published on the advertise address")
+	return 0, errors.New("the app's port is not published on the publish address")
 }
 
 // tailLog returns the container's last lines of output.

@@ -17,6 +17,7 @@ import (
 	"net/netip"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -59,8 +60,25 @@ type Config struct {
 	// BuildMaxContextBytes limits the extracted size of a build context.
 	BuildMaxContextBytes int64 `env:"NOOK_AGENT_BUILD_MAX_CONTEXT_BYTES" envDefault:"2147483648"`
 	// AdvertiseAddr is the node's private IP address that app ports are
-	// published on (never a wildcard address).
+	// published on (never a wildcard address). The gateway reaches apps
+	// there over plain HTTP, so it must be a loopback or private address
+	// (see privateAdvertise) unless AllowPublicAdvertise is set.
 	AdvertiseAddr string `env:"NOOK_AGENT_ADVERTISE_ADDR"`
+	// ServerAddr is the control plane's host:port, overriding the address
+	// saved at join (the control plane moved, or the agent now runs in a
+	// container that reaches it by another name). The CA pinned at join
+	// still authenticates the server, so the name must be in its
+	// certificate (NOOK_GRPC_SERVER_NAMES).
+	ServerAddr string `env:"NOOK_AGENT_SERVER_ADDR"`
+	// PublishAddr is the address app ports are bound to, when it differs
+	// from the address they are reached at (default: AdvertiseAddr). Docker
+	// Desktop is such a case: it publishes ports on the host side, so a
+	// containerized agent binds 127.0.0.1 and advertises
+	// host.docker.internal's address.
+	PublishAddr string `env:"NOOK_AGENT_PUBLISH_ADDR"`
+	// AllowPublicAdvertise accepts a public advertise address, for nodes
+	// whose app traffic is protected some other way. Logged as a warning.
+	AllowPublicAdvertise bool `env:"NOOK_AGENT_ALLOW_PUBLIC_ADVERTISE_ADDR" envDefault:"false"`
 	// RegistryPullAddr is the registry's host:port as the agent itself
 	// reaches it, when that differs from the address the control plane
 	// names (build containers and the agent on different networks).
@@ -177,6 +195,20 @@ func (c *Config) Validate() error {
 	}
 	if a, err := netip.ParseAddr(c.AdvertiseAddr); err != nil || a.IsUnspecified() || a.IsMulticast() {
 		errs = append(errs, errors.New("NOOK_AGENT_ADVERTISE_ADDR must be the node's private IP address (not 0.0.0.0 or ::)"))
+	} else if !privateAdvertise(a) && !c.AllowPublicAdvertise {
+		errs = append(errs, publicAddrError("NOOK_AGENT_ADVERTISE_ADDR", a))
+	}
+	if c.ServerAddr != "" {
+		if host, port, err := net.SplitHostPort(c.ServerAddr); err != nil || host == "" || port == "" {
+			errs = append(errs, errors.New("NOOK_AGENT_SERVER_ADDR must be host:port"))
+		}
+	}
+	if c.PublishAddr != "" {
+		if a, err := netip.ParseAddr(c.PublishAddr); err != nil || a.IsUnspecified() || a.IsMulticast() {
+			errs = append(errs, errors.New("NOOK_AGENT_PUBLISH_ADDR must be an IP address of the node (not 0.0.0.0 or ::)"))
+		} else if !privateAdvertise(a) && !c.AllowPublicAdvertise {
+			errs = append(errs, publicAddrError("NOOK_AGENT_PUBLISH_ADDR", a))
+		}
 	}
 	if c.RegistryPullAddr != "" && !registryPattern.MatchString(c.RegistryPullAddr) {
 		errs = append(errs, errors.New("NOOK_AGENT_REGISTRY_PULL_ADDR must be host:port"))
@@ -261,8 +293,13 @@ func New(cfg *Config, logger *slog.Logger) (*Agent, error) {
 		_ = d.close()
 		return nil, fmt.Errorf("NOOK_AGENT_ADVERTISE_ADDR: %w", err)
 	}
+	publish, err := cfg.publishAddr()
+	if err != nil {
+		_ = d.close()
+		return nil, fmt.Errorf("NOOK_AGENT_PUBLISH_ADDR: %w", err)
+	}
 	a.instances = &instances{
-		docker: d, outbox: a.outbox, logger: logger, nodeID: a.NodeID, advertise: advertise.Unmap(), clock: realClock{},
+		docker: d, outbox: a.outbox, logger: logger, nodeID: a.NodeID, advertise: advertise.Unmap(), publish: publish, clock: realClock{},
 		puller: &puller{docker: d, caPEM: caPEM, override: cfg.RegistryPullAddr, tmpDir: filepath.Join(cfg.StateDir, "pulls")},
 		policy: crashPolicy{Limit: cfg.CrashLimit, Window: cfg.CrashWindow, MinBackoff: cfg.RestartBackoffMin, MaxBackoff: cfg.RestartBackoffMax},
 		m:      map[string]*instance{}, logs: map[string]context.CancelFunc{},
@@ -282,12 +319,58 @@ func (a *Agent) NodeID() string { return a.id.Load().NodeID }
 // Connected reports whether a session is established.
 func (a *Agent) Connected() bool { return a.connected.Load() }
 
+// sharedAddressSpace is 100.64.0.0/10 (RFC 6598), not routed on the
+// internet; WireGuard meshes such as Tailscale hand out addresses from it.
+var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
+
+// privateAdvertise reports whether app traffic to a stays off the public
+// internet: loopback, RFC 1918, IPv6 ULA or shared address space.
+func privateAdvertise(a netip.Addr) bool {
+	a = a.Unmap()
+	return a.IsLoopback() || a.IsPrivate() || sharedAddressSpace.Contains(a)
+}
+
+func publicAddrError(name string, a netip.Addr) error {
+	return fmt.Errorf("%s %s is not a private address: the gateway reaches apps over plain HTTP, "+
+		"so app traffic must stay on a private network (a VPC, or WireGuard between nodes); use the node's private address, "+
+		"or set NOOK_AGENT_ALLOW_PUBLIC_ADVERTISE_ADDR=true if that traffic is protected another way", name, a)
+}
+
+// publishAddr is where app ports are bound (validated configuration).
+func (c *Config) publishAddr() (netip.Addr, error) {
+	raw := c.PublishAddr
+	if raw == "" {
+		raw = c.AdvertiseAddr
+	}
+	a, err := netip.ParseAddr(raw)
+	return a.Unmap(), err
+}
+
+// publicAdvertiseWarning is the startup warning for a public advertise
+// address accepted with the override ("" when there is nothing to warn).
+func publicAdvertiseWarning(c *Config) string {
+	var public []string
+	for _, raw := range []string{c.AdvertiseAddr, c.PublishAddr} {
+		if a, err := netip.ParseAddr(raw); err == nil && !privateAdvertise(a) && !slices.Contains(public, a.String()) {
+			public = append(public, a.String())
+		}
+	}
+	if len(public) == 0 {
+		return ""
+	}
+	return "app ports on public address " + strings.Join(public, ", ") + " (NOOK_AGENT_ALLOW_PUBLIC_ADVERTISE_ADDR=true): " +
+		"the gateway sends app traffic (visitor identities, cookies the app sets) there over plain HTTP"
+}
+
 // Run keeps a session with the control plane until ctx is done or the
 // control plane rejects this node permanently (for example after
 // `nook node remove`), in which case it returns that error.
 func (a *Agent) Run(ctx context.Context) error {
 	if _, err := a.docker.version(ctx); err != nil {
 		a.logger.WarnContext(ctx, "docker engine not reachable; heartbeats will report it", "error", err.Error())
+	}
+	if w := publicAdvertiseWarning(&a.cfg); w != "" {
+		a.logger.WarnContext(ctx, w)
 	}
 	if err := a.prepare(ctx); err != nil {
 		return err
@@ -360,9 +443,10 @@ func backoff(attempt int, minDelay, maxDelay time.Duration) time.Duration {
 // by the next connection.
 func (a *Agent) dial() (*grpc.ClientConn, error) {
 	id := a.id.Load()
-	host, _, err := net.SplitHostPort(id.Server)
+	server := a.serverAddr()
+	host, _, err := net.SplitHostPort(server)
 	if err != nil {
-		return nil, fmt.Errorf("invalid server address %q: %w", id.Server, err)
+		return nil, fmt.Errorf("invalid server address %q: %w", server, err)
 	}
 	roots := x509.NewCertPool()
 	roots.AddCert(id.ca)
@@ -374,15 +458,24 @@ func (a *Agent) dial() (*grpc.ClientConn, error) {
 			return a.id.Load().tlsCertificate(), nil
 		},
 	}
-	conn, err := grpc.NewClient(id.Server,
+	conn, err := grpc.NewClient(server,
 		grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{Time: 30 * time.Second, Timeout: 10 * time.Second}),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(1<<20)),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("connect to %s: %w", id.Server, err)
+		return nil, fmt.Errorf("connect to %s: %w", server, err)
 	}
 	return conn, nil
+}
+
+// serverAddr is the control plane to connect to: NOOK_AGENT_SERVER_ADDR,
+// else the address saved at join.
+func (a *Agent) serverAddr() string {
+	if a.cfg.ServerAddr != "" {
+		return a.cfg.ServerAddr
+	}
+	return a.id.Load().Server
 }
 
 // connectOnce runs one Connect stream until it fails or a reconnect is requested.
@@ -435,7 +528,7 @@ func (a *Agent) connectOnce(ctx context.Context) error {
 	interval := max(acc.GetHeartbeatInterval().AsDuration(), time.Second)
 	a.instances.restore(acc.GetInstances())
 	a.connected.Store(true)
-	a.logger.InfoContext(ctx, "connected to the control plane", "server", a.id.Load().Server, "heartbeat_interval", interval.String())
+	a.logger.InfoContext(ctx, "connected to the control plane", "server", a.serverAddr(), "heartbeat_interval", interval.String())
 
 	results := make(chan *agentv1.CommandResult, 16)
 	ticker := time.NewTicker(interval)
