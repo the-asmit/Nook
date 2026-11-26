@@ -66,6 +66,7 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Start Postgres/Redis/MinIO/registry/Dex | `make dev-up` (runs `make env`, issues the registry certificate) |
 | Run the control plane | `make run-server` |
 | Run a dev worker agent (after `nook-agent join --state-dir .nook-dev/agent`) | `make run-agent` |
+| Run the dev gateway (apps at `http://<app>--<ws>.apps.localhost:8090`) | `make run-gateway` |
 | Unit tests (race) | `make test` |
 | Unit + integration tests | `make test-integration` (needs Docker) |
 | Lint / format | `make lint` / `make fmt` |
@@ -76,7 +77,7 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Lint protobuf / breaking changes | `make proto-lint` / `make proto-breaking` (against `main`) |
 | Validate the OpenAPI spec | `make openapi-lint` |
 | CLI release archives | `make release-snapshot` (into `dist/`) |
-| Multi-arch images (server + agent) | `make docker-build`, then `make docker-run` |
+| Multi-arch images (server, agent, gateway) | `make docker-build`, then `make docker-run` |
 | Master key for app environment variables | `go run ./cmd/nook-server secrets init --out FILE` (`make dev-up` does it) |
 | Show the agent's egress rules | `go run ./cmd/nook-agent firewall rules` |
 
@@ -169,6 +170,23 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
   Docker socket, own network, port published only on the advertise
   address. Container egress is filtered by the agent's firewall; any new
   container kind joins a filtered bridge.
+- **The gateway** holds no database credentials or OIDC secret: it uses
+  the control plane's `/internal/v1` API (shared `NOOK_GATEWAY_SECRET`,
+  404 otherwise). Anything that can change a route (instance health,
+  switch-over, stop/start, delete, access changes) calls
+  `RouteEvents.Changed`; the hint is best-effort, the gateway's resync is
+  the safety net. App hosts are `<app>--<workspace>.<apps domain>`, so
+  slugs never contain `--` and the label stays within 63 characters.
+- **Visitor sessions** never span hosts: each app host gets its own
+  host-only (`__Host-` over HTTPS) cookie via a single-use, host-bound,
+  one-minute code from the auth host. Everything a session or code
+  authorizes is checked together with the host. `/_nook/*` on app hosts
+  belongs to the gateway; incoming `X-Nook-*` headers and Nook cookies
+  are always stripped before proxying. Return paths go through
+  `auth.SafeReturnPath`; redirect targets never come from request hosts.
+- **Gateway → app** traffic is plain HTTP on the private network, guarded
+  by the agent firewall (`NOOK_AGENT_GATEWAY_ADDRS`); this is the one
+  documented exception to TLS outside localhost (ADR 0028).
 - **Spelling**: code and prose use US English (`canceled`); the API and
   database status value is `cancelled`, as specified.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
@@ -201,7 +219,7 @@ nook/
 │   ├── nook-server/           # control plane entry point (+ `registry-cert`, `secrets init|add-key|rotate-key`)
 │   ├── nook/                  # CLI entry point
 │   ├── nook-agent/            # worker agent entry point: `join`, `run`, `firewall rules|remove`, `version`
-│   └── nook-gateway/          # (planned) gateway
+│   └── nook-gateway/          # gateway entry point (the only public entry point)
 ├── internal/
 │   ├── platform/              # shared infrastructure used by every binary
 │   │   ├── config/            # env loading, *_FILE secrets, Secret type, Environment, validators, internal-host checks
@@ -213,8 +231,8 @@ nook/
 │   │   └── httpserver/        # server lifecycle, graceful shutdown, common Gin middleware
 │   ├── server/                # control plane: config (incl. TLS rules) + startup/shutdown wiring
 │   │   ├── testdata/testapp/  # tiny app the runtime integration tests release (built and pushed by the tests)
-│   │   ├── api/               # Gin router, ops endpoints, /api/v1 JSON handlers
-│   │   └── web/               # server-rendered pages: sign-in, sign-out, not-invited, device approval
+│   │   ├── api/               # Gin router, ops endpoints, /api/v1 JSON handlers, /internal/v1 for gateways
+│   │   └── web/               # server-rendered pages: sign-in, sign-out, not-invited, device approval, auth host (/_visitor)
 │   ├── store/                 # sqlc: queries/*.sql, generated *.gen.go, sqlc.yaml, transactions
 │   ├── apperr/                # classified domain errors (kind + stable code) mapped to HTTP by handlers
 │   ├── audit/                 # append-only audit log entries, written in the change's transaction
@@ -230,7 +248,7 @@ nook/
 │   ├── objstore/              # S3-compatible storage (SigV4): presigned upload/download URLs, verified HEAD, small objects
 │   ├── registry/              # private registry: repository-scoped ES256 tokens (x5c chain to the CA) + registry API client
 │   ├── archive/               # reproducible source archives (ignore files) and hostile-archive-safe extraction (os.Root)
-│   ├── apps/                  # apps, quotas, deployments, verified uploads, settings, stop/start, rollback, encrypted env (tenant-scoped)
+│   ├── apps/                  # apps, quotas, deployments, verified uploads, settings, stop/start, rollback, encrypted env, access policies (tenant-scoped)
 │   ├── builds/                # deployment queue (Redis Streams), dispatcher, agent results, live logs, janitor, registry GC windows
 │   ├── rollout/               # releases: placement → StartInstance → health-gated switch → drain; desired state, reconciliation, app log streams
 │   ├── secrets/               # AES-256-GCM keyring (versioned master key), key checks, rotation
@@ -242,7 +260,9 @@ nook/
 │   │                          #   builds in locked-down rootless BuildKit containers (custom seccomp, userns check),
 │   │                          #   app instances (pull by digest, hardened containers, health checks, crash backoff,
 │   │                          #   adoption), log streaming, egress firewall (iptables via a helper container)
-│   └── gateway/               # (planned) gateway logic
+│   ├── routes/                # app host scheme (<app>--<ws>.<domain>), route records, nook:routes Pub/Sub events
+│   ├── visitor/               # visitor sign-in: auth-host sessions, single-use host-bound codes, access checks, sealed certificates
+│   └── gateway/               # nook-gateway: route table, reverse proxy, visitor sessions, TLS modes, rate limits, pages, drain
 ├── migrations/                # goose SQL migrations, embedded into the binary by migrations.go
 ├── tools/
 │   └── devenv/                # `make env`: creates/updates .env with generated secrets and bcrypt hashes (dev only)
@@ -254,7 +274,8 @@ nook/
 │   ├── compose/registry/config.yml      # CNCF Distribution config (S3 storage, TLS, token auth; shared with integration tests)
 │   ├── compose/registry/gc.sh           # registry blob GC inside a control-plane maintenance window
 │   ├── docker/nook-server.Dockerfile    # multi-stage, distroless, non-root
-│   └── docker/nook-agent.Dockerfile     # multi-arch, distroless, non-root; Docker socket = root on the host (dedicated workers only)
+│   ├── docker/nook-agent.Dockerfile     # multi-arch, distroless, non-root; Docker socket = root on the host (dedicated workers only)
+│   └── docker/nook-gateway.Dockerfile   # multi-arch, distroless, non-root; stateless
 ├── examples/                  # hello-go and hello-node: tiny apps with Dockerfile + nook.toml (used by tests and the README)
 ├── test/e2e/                  # (planned) end-to-end tests
 └── docs/

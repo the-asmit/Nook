@@ -3,7 +3,7 @@
 Nook is a self-hosted private cloud for a team's internal tools. A developer
 runs `nook deploy` in a folder with a Dockerfile; Nook builds it, runs it on
 one of the team's own servers and serves it at a private URL such as
-`https://leave-tracker.apps.example.com`, which only the people the owner
+`https://leave-tracker--acme.apps.example.com`, which only the people the owner
 granted access to can open (they sign in with Google through OpenID Connect).
 Idle apps are stopped and woken again on the next request.
 
@@ -39,7 +39,17 @@ Nook is built in stages. So far:
    `nook logs --follow` streams output, `nook rollback` and
    `nook apps stop/start` do what they say.
 
-The gateway (public URLs) and the dashboard come later.
+6. **The gateway**: `nook-gateway`, the only public entry point, serves
+   every app at `https://<app>--<workspace>.<apps domain>` (TLS from Let's
+   Encrypt on demand, your own certificate, or a TLS proxy in front).
+   Visitors of private apps sign in through one auth host with the same
+   identity provider (no Nook account needed); `nook access` chooses who
+   may open an app (workspace members, admins plus granted emails, or
+   anyone), and the app receives the visitor's email in `X-Nook-Email`.
+   WebSockets and server-sent events pass through; app ports accept
+   connections only from the gateways.
+
+Sleeping apps, moving apps between nodes and the dashboard come later.
 
 ## Prerequisites
 
@@ -115,11 +125,20 @@ bin/nook-agent join --state-dir .nook-dev/agent --server 127.0.0.1:9443 --token 
 make run-agent
 ```
 
+Run the gateway too (apps at `http://<app>--<workspace>.apps.localhost:8090`;
+browsers resolve `*.localhost` to this machine):
+
+```sh
+make run-gateway
+```
+
 ```sh
 cd examples/hello-go
-../../bin/nook deploy                     # pack, upload, build, release; ends with the app's address
-curl http://127.0.0.1:<port>/             # the address nook deploy printed
-../../bin/nook apps info hello-go         # desired state, live deployment, instance, restarts
+../../bin/nook deploy                     # pack, upload, build, release; ends with the app's URL
+../../bin/nook open hello-go              # sign in as alice@nook.test: "Signed in as alice@nook.test"
+../../bin/nook access grant hello-go bob@partner.test   # let someone else in (by email)
+../../bin/nook access set hello-go --mode public        # or: workspace (default), restricted
+../../bin/nook apps info hello-go         # URL, access, live deployment, instance, restarts
 ../../bin/nook env set hello-go GREETING=hi        # releases the change without a rebuild
 ../../bin/nook logs hello-go --follow
 ../../bin/nook rollback hello-go
