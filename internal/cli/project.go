@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -35,6 +36,10 @@ type Project struct {
 	// ReadOnlyRootfs runs the container with a read-only root file system
 	// (writable /tmp only).
 	ReadOnlyRootfs bool `toml:"read_only_rootfs,omitempty"`
+	// SleepAfter is how long the app may go without requests before it
+	// sleeps ("15m", "1h"), or "never"; the next request wakes it. Empty:
+	// the server's default (15m).
+	SleepAfter string `toml:"sleep_after,omitempty"`
 }
 
 var slugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$`)
@@ -63,12 +68,30 @@ func (p *Project) Validate() error {
 	if p.StartupTimeout < 1 || p.StartupTimeout > 3600 {
 		errs = append(errs, fmt.Errorf("startup_timeout = %d: must be between 1 and 3600 seconds", p.StartupTimeout))
 	}
+	if p.SleepAfter != "" && p.SleepAfter != sleepNever {
+		if d, err := time.ParseDuration(p.SleepAfter); err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("sleep_after = %q: must be a duration such as \"15m\" or \"1h\", or \"never\"", p.SleepAfter))
+		}
+	}
 	return errors.Join(errs...)
+}
+
+// sleepNever is the sleep_after of apps that never sleep.
+const sleepNever = "never"
+
+// sameSleepAfter compares a nook.toml sleep_after with the server's.
+func sameSleepAfter(a, b string) bool {
+	if a == sleepNever || b == sleepNever {
+		return a == b
+	}
+	da, errA := time.ParseDuration(a)
+	db, errB := time.ParseDuration(b)
+	return errA == nil && errB == nil && da == db
 }
 
 // defaultProject is what `nook init` starts from.
 func defaultProject(app string) Project {
-	return Project{App: app, Port: 8080, HealthCheckPath: "/", MemoryMB: 256, CPUMillicores: 500, StartupTimeout: 60}
+	return Project{App: app, Port: 8080, HealthCheckPath: "/", MemoryMB: 256, CPUMillicores: 500, StartupTimeout: 60, SleepAfter: "15m"}
 }
 
 // errNoProject means the folder has no nook.toml.
@@ -124,6 +147,9 @@ func writeProject(dir string, p *Project) error {
 	fmt.Fprintf(&b, "# Path that answers 2xx when the app is healthy.\nhealth_check_path = %q\n", p.HealthCheckPath)
 	fmt.Fprintf(&b, "# Resource limits: memory in MB, CPU in millicores (1000 = one CPU).\nmemory_mb = %d\ncpu_millicores = %d\n", p.MemoryMB, p.CPUMillicores)
 	fmt.Fprintf(&b, "# Seconds a new version may take to pass its health check before the\n# deploy fails (the previous version keeps serving).\nstartup_timeout = %d\n", p.StartupTimeout)
+	if p.SleepAfter != "" {
+		fmt.Fprintf(&b, "# Stop the app after this long without requests to free its memory; the\n# next request wakes it (a cold start). \"never\" keeps it running.\nsleep_after = %q\n", p.SleepAfter)
+	}
 	if p.ReadOnlyRootfs {
 		b.WriteString("# Run with a read-only root file system (only /tmp is writable).\nread_only_rootfs = true\n")
 	}

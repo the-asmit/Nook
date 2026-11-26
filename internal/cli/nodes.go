@@ -147,11 +147,69 @@ func (r *runner) nodeCommand() *cobra.Command {
 		},
 	}
 
-	drain := r.nodeAction("drain", "Stop placing work on a node (the scheduler moves work off it)", http.MethodPost, "/drain")
+	drain := r.drainCommand()
 	undrain := r.nodeAction("undrain", "Make a drained node available again", http.MethodPost, "/undrain")
 	remove := r.nodeAction("remove", "Remove a node: revoke its certificates and disconnect its agent", http.MethodDelete, "")
 
 	cmd.AddCommand(list, inspect, drain, undrain, remove, r.joinTokenCommand())
+	return cmd
+}
+
+// drainCommand is `nook node drain`: nothing new is placed on the node and
+// every app moves off it with zero downtime (a replacement starts on
+// another node and serves before the old instance stops); it waits until
+// the node runs no app.
+func (r *runner) drainCommand() *cobra.Command {
+	var noWait bool
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use: "drain <name|id>", Short: "Move every app off a node (zero downtime) and place nothing new on it", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, c, err := r.authed()
+			if err != nil {
+				return err
+			}
+			path := "/api/v1/nodes/" + url.PathEscape(args[0])
+			if err := c.do(cmd.Context(), http.MethodPost, path+"/drain", nil, nil); err != nil {
+				return err
+			}
+			if noWait {
+				return r.emit(map[string]string{"node": args[0], "result": "draining"}, func() {
+					r.printf("Node %s is draining; its apps move to other nodes.\n", args[0])
+				})
+			}
+			start, deadline, last := time.Now(), time.Now().Add(timeout), int64(-1)
+			for {
+				var n struct {
+					ActiveInstances int64 `json:"active_instances"`
+				}
+				if err := c.do(cmd.Context(), http.MethodGet, path, nil, &n); err != nil {
+					return err
+				}
+				if n.ActiveInstances == 0 {
+					took := time.Since(start).Round(100 * time.Millisecond)
+					return r.emit(map[string]any{"node": args[0], "result": "drained", "seconds": took.Seconds()}, func() {
+						r.printf("Node %s is drained: no app runs on it (took %s).\n", args[0], took)
+					})
+				}
+				if n.ActiveInstances != last {
+					r.status("Draining %s: %d app instance(s) still on it...", args[0], n.ActiveInstances)
+					last = n.ActiveInstances
+				}
+				if time.Now().After(deadline) {
+					return fmt.Errorf("node %s still runs %d app instance(s) after %s; other nodes may lack capacity (the apps keep running on it)",
+						args[0], n.ActiveInstances, timeout)
+				}
+				select {
+				case <-cmd.Context().Done():
+					return cmd.Context().Err()
+				case <-time.After(time.Second):
+				}
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "return once the node is draining instead of waiting for its apps to move")
+	cmd.Flags().DurationVar(&timeout, "timeout", 10*time.Minute, "how long to wait for the apps to move")
 	return cmd
 }
 

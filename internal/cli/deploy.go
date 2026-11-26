@@ -161,6 +161,9 @@ func (r *runner) syncSettings(cmd *cobra.Command, c *client, ws string, p *Proje
 	if p.ReadOnlyRootfs != app.ReadOnlyRootfs {
 		changes["read_only_rootfs"] = p.ReadOnlyRootfs
 	}
+	if p.SleepAfter != "" && !sameSleepAfter(p.SleepAfter, app.SleepAfter) {
+		changes["sleep_after"] = p.SleepAfter
+	}
 	if len(changes) == 0 {
 		return nil
 	}

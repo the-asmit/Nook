@@ -45,6 +45,9 @@ type appDetail struct {
 	LiveDeployment *int32        `json:"live_deployment"`
 	Health         string        `json:"health"`
 	Instance       *instanceInfo `json:"instance"`
+	SleepingSince  *time.Time    `json:"sleeping_since"`
+	SleepReason    string        `json:"sleep_reason"`
+	LastRequestAt  *time.Time    `json:"last_request_at"`
 }
 
 func (r *runner) appsInfoCommand() *cobra.Command {
@@ -75,6 +78,24 @@ func (r *runner) appsInfoCommand() *cobra.Command {
 func (r *runner) printAppDetail(ws string, app *appDetail, latest *deploymentInfo) {
 	r.printf("App:          %s (%s)\nWorkspace:    %s\nURL:          %s (access: %s)\nDesired:      %s\nHealth:       %s\n",
 		app.Slug, app.Name, ws, app.URL, app.AccessMode, app.DesiredState, app.Health)
+	switch {
+	case app.SleepingSince != nil:
+		why := map[string]string{"evicted": "put to sleep to make room for another app"}[app.SleepReason]
+		if why == "" {
+			why = "idle for " + app.SleepAfter
+		}
+		r.printf("Sleeping:     since %s (%s); the next request wakes it\n", app.SleepingSince.Local().Format(time.RFC1123), why)
+	case app.Health == "waking":
+		r.printf("Waking:       starting its instance\n")
+	}
+	if app.SleepAfter == sleepNever {
+		r.printf("Sleep after:  never (always running)\n")
+	} else {
+		r.printf("Sleep after:  %s without requests\n", app.SleepAfter)
+	}
+	if app.LastRequestAt != nil {
+		r.printf("Last request: %s\n", app.LastRequestAt.Local().Format(time.RFC1123))
+	}
 	if app.LiveDeployment != nil {
 		r.printf("Live:         #%d\n", *app.LiveDeployment)
 	} else {
@@ -126,6 +147,53 @@ func (r *runner) lifecycleCommand(verb, short string) *cobra.Command {
 			})
 		},
 	}
+}
+
+// wakeCommand is `nook apps wake`: it wakes a sleeping app and waits until
+// it runs, showing how long the cold start took.
+func (r *runner) wakeCommand() *cobra.Command {
+	var timeout time.Duration
+	cmd := &cobra.Command{
+		Use: "wake <slug>", Short: "Wake a sleeping app and wait until it runs", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, c, err := r.appContext()
+			if err != nil {
+				return err
+			}
+			start := time.Now()
+			var app appDetail
+			if err := c.do(cmd.Context(), http.MethodPost, appPath(ws, args[0])+"/wake", nil, &app); err != nil {
+				return err
+			}
+			if app.Health == "running" {
+				return r.emit(app, func() { r.printf("%s is already running.\n", app.Slug) })
+			}
+			r.status("Waking %s...", app.Slug)
+			deadline := time.Now().Add(timeout)
+			for app.Health != "running" {
+				if app.Health == "crashed" || app.Health == "stopped" {
+					return fmt.Errorf("%s did not wake: it is %s (see 'nook apps info %s')", app.Slug, app.Health, app.Slug)
+				}
+				if time.Now().After(deadline) {
+					return fmt.Errorf("%s is still %s after %s", app.Slug, app.Health, timeout)
+				}
+				select {
+				case <-cmd.Context().Done():
+					return cmd.Context().Err()
+				case <-time.After(250 * time.Millisecond):
+				}
+				if err := c.do(cmd.Context(), http.MethodGet, appPath(ws, args[0]), nil, &app); err != nil {
+					return err
+				}
+			}
+			took := time.Since(start)
+			return r.emit(map[string]any{"app": app, "woke_in_seconds": took.Seconds()}, func() {
+				r.printf("%s is running (woke in %s).\n", app.Slug, took.Round(10*time.Millisecond))
+			})
+		},
+	}
+	cmd.Flags().DurationVar(&timeout, "timeout", 2*time.Minute, "how long to wait for the app to run")
+	return cmd
 }
 
 type envVarInfo struct {

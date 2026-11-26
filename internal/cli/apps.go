@@ -26,6 +26,7 @@ type appInfo struct {
 	DesiredState          string    `json:"desired_state"`
 	URL                   string    `json:"url"`
 	AccessMode            string    `json:"access_mode"`
+	SleepAfter            string    `json:"sleep_after"`
 	Deployments           int32     `json:"deployments"`
 	CreatedAt             time.Time `json:"created_at"`
 }
@@ -194,7 +195,7 @@ func (r *runner) appsCommand() *cobra.Command {
 
 	cmd.AddCommand(create, list, info, del,
 		r.lifecycleCommand("stop", "Stop an app (it stays stopped until started)"),
-		r.lifecycleCommand("start", "Start a stopped or crashed app"))
+		r.lifecycleCommand("start", "Start a stopped or crashed app"), r.wakeCommand())
 	return cmd
 }
 
@@ -203,7 +204,7 @@ func createApp(cmd *cobra.Command, c *client, ws string, p *Project) (appInfo, e
 	err := c.do(cmd.Context(), http.MethodPost, appsPath(ws), map[string]any{
 		"slug": p.App, "port": p.Port, "health_check_path": p.HealthCheckPath,
 		"memory_mb": p.MemoryMB, "cpu_millicores": p.CPUMillicores,
-		"startup_timeout_seconds": p.StartupTimeout, "read_only_rootfs": p.ReadOnlyRootfs,
+		"startup_timeout_seconds": p.StartupTimeout, "read_only_rootfs": p.ReadOnlyRootfs, "sleep_after": p.SleepAfter,
 	}, &app)
 	return app, err
 }
