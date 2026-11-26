@@ -1,17 +1,22 @@
 -- Routes, access policies, visitor sign-in and gateway certificates.
 
 -- name: ListRoutes :many
--- Every live app with where it is served: the newest instance of its
--- current deployment (or none).
+-- Every live app with where it is served: the serving (else newest)
+-- instance of its current deployment (or none), and whether it sleeps or
+-- is waking.
 SELECT a.id AS app_id, a.slug AS app_slug, w.id AS workspace_id, w.slug AS workspace_slug,
        a.access_mode, a.desired_state, a.current_deployment_id,
+       (a.sleeping_since IS NOT NULL)::boolean AS sleeping, (a.wake_requested_at IS NOT NULL)::boolean AS waking,
        coalesce(i.state::text, '')::text AS instance_state, coalesce(i.address, '')::text AS address, i.host_port
 FROM apps a
 JOIN workspaces w ON w.id = a.workspace_id
 LEFT JOIN LATERAL (
     SELECT state, address, host_port FROM app_instances
     WHERE deployment_id = a.current_deployment_id
-    ORDER BY created_at DESC
+    -- A serving instance wins over a newer one that is still starting
+    -- (an app moving to another node serves from the old one until the
+    -- new one is healthy); among serving ones, the newest.
+    ORDER BY (state IN ('healthy', 'unhealthy')) DESC, created_at DESC
     LIMIT 1
 ) i ON true
 WHERE a.deleted_at IS NULL
@@ -20,13 +25,17 @@ ORDER BY a.id;
 -- name: GetRoute :one
 SELECT a.id AS app_id, a.slug AS app_slug, w.id AS workspace_id, w.slug AS workspace_slug,
        a.access_mode, a.desired_state, a.current_deployment_id,
+       (a.sleeping_since IS NOT NULL)::boolean AS sleeping, (a.wake_requested_at IS NOT NULL)::boolean AS waking,
        coalesce(i.state::text, '')::text AS instance_state, coalesce(i.address, '')::text AS address, i.host_port
 FROM apps a
 JOIN workspaces w ON w.id = a.workspace_id
 LEFT JOIN LATERAL (
     SELECT state, address, host_port FROM app_instances
     WHERE deployment_id = a.current_deployment_id
-    ORDER BY created_at DESC
+    -- A serving instance wins over a newer one that is still starting
+    -- (an app moving to another node serves from the old one until the
+    -- new one is healthy); among serving ones, the newest.
+    ORDER BY (state IN ('healthy', 'unhealthy')) DESC, created_at DESC
     LIMIT 1
 ) i ON true
 WHERE a.id = @app_id AND a.deleted_at IS NULL;

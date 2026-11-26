@@ -88,10 +88,10 @@ func (q *Queries) CountLiveApps(ctx context.Context, workspaceID uuid.UUID) (int
 
 const createApp = `-- name: CreateApp :one
 INSERT INTO apps (workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores,
-                  startup_timeout_seconds, read_only_rootfs)
+                  startup_timeout_seconds, read_only_rootfs, sleep_after_seconds)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10)
-RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode
+        $9, $10, $11)
+RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at
 `
 
 type CreateAppParams struct {
@@ -105,6 +105,7 @@ type CreateAppParams struct {
 	CpuMillicores         int32
 	StartupTimeoutSeconds int32
 	ReadOnlyRootfs        bool
+	SleepAfterSeconds     *int32
 }
 
 func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, error) {
@@ -119,6 +120,7 @@ func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, erro
 		arg.CpuMillicores,
 		arg.StartupTimeoutSeconds,
 		arg.ReadOnlyRootfs,
+		arg.SleepAfterSeconds,
 	)
 	var i App
 	err := row.Scan(
@@ -140,6 +142,11 @@ func (q *Queries) CreateApp(ctx context.Context, arg CreateAppParams) (App, erro
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }
@@ -207,7 +214,7 @@ func (q *Queries) CreateDeployment(ctx context.Context, arg CreateDeploymentPara
 }
 
 const getApp = `-- name: GetApp :one
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode FROM apps WHERE workspace_id = $1 AND slug = $2 AND deleted_at IS NULL
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at FROM apps WHERE workspace_id = $1 AND slug = $2 AND deleted_at IS NULL
 `
 
 type GetAppParams struct {
@@ -239,12 +246,17 @@ func (q *Queries) GetApp(ctx context.Context, arg GetAppParams) (App, error) {
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }
 
 const getAppByID = `-- name: GetAppByID :one
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode FROM apps WHERE id = $1
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at FROM apps WHERE id = $1
 `
 
 func (q *Queries) GetAppByID(ctx context.Context, id uuid.UUID) (App, error) {
@@ -269,6 +281,11 @@ func (q *Queries) GetAppByID(ctx context.Context, id uuid.UUID) (App, error) {
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }
@@ -483,7 +500,7 @@ func (q *Queries) ListAbandonedUploads(ctx context.Context, arg ListAbandonedUpl
 }
 
 const listApps = `-- name: ListApps :many
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode FROM apps
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at FROM apps
 WHERE workspace_id = $1 AND deleted_at IS NULL AND slug > $2
 ORDER BY slug
 LIMIT $3
@@ -523,6 +540,11 @@ func (q *Queries) ListApps(ctx context.Context, arg ListAppsParams) ([]App, erro
 			&i.StartupTimeoutSeconds,
 			&i.ReadOnlyRootfs,
 			&i.AccessMode,
+			&i.SleepAfterSeconds,
+			&i.SleepingSince,
+			&i.SleepReason,
+			&i.LastRequestAt,
+			&i.WakeRequestedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -535,7 +557,7 @@ func (q *Queries) ListApps(ctx context.Context, arg ListAppsParams) ([]App, erro
 }
 
 const listDeletedApps = `-- name: ListDeletedApps :many
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode FROM apps a
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at FROM apps a
 WHERE a.deleted_at IS NOT NULL
   AND NOT EXISTS (
       SELECT 1 FROM app_instances i
@@ -574,6 +596,11 @@ func (q *Queries) ListDeletedApps(ctx context.Context, rowLimit int32) ([]App, e
 			&i.StartupTimeoutSeconds,
 			&i.ReadOnlyRootfs,
 			&i.AccessMode,
+			&i.SleepAfterSeconds,
+			&i.SleepingSince,
+			&i.SleepReason,
+			&i.LastRequestAt,
+			&i.WakeRequestedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -871,7 +898,7 @@ func (q *Queries) ListUnownedActiveDeployments(ctx context.Context, arg ListUnow
 }
 
 const lockApp = `-- name: LockApp :one
-SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode FROM apps WHERE id = $1 FOR UPDATE
+SELECT id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at FROM apps WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockApp(ctx context.Context, id uuid.UUID) (App, error) {
@@ -896,6 +923,11 @@ func (q *Queries) LockApp(ctx context.Context, id uuid.UUID) (App, error) {
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }
@@ -1357,7 +1389,7 @@ func (q *Queries) SetCurrentDeployment(ctx context.Context, arg SetCurrentDeploy
 const setDesiredState = `-- name: SetDesiredState :one
 UPDATE apps SET desired_state = $1, desired_state_at = now()
 WHERE id = $2 AND deleted_at IS NULL
-RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode
+RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at
 `
 
 type SetDesiredStateParams struct {
@@ -1387,12 +1419,17 @@ func (q *Queries) SetDesiredState(ctx context.Context, arg SetDesiredStateParams
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }
 
 const softDeleteApp = `-- name: SoftDeleteApp :one
-UPDATE apps SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode
+UPDATE apps SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at
 `
 
 func (q *Queries) SoftDeleteApp(ctx context.Context, id uuid.UUID) (App, error) {
@@ -1417,6 +1454,11 @@ func (q *Queries) SoftDeleteApp(ctx context.Context, id uuid.UUID) (App, error) 
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }
@@ -1508,9 +1550,9 @@ const updateAppSettings = `-- name: UpdateAppSettings :one
 UPDATE apps
 SET port = $1, health_check_path = $2, memory_mb = $3,
     cpu_millicores = $4, startup_timeout_seconds = $5,
-    read_only_rootfs = $6
-WHERE id = $7 AND deleted_at IS NULL
-RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode
+    read_only_rootfs = $6, sleep_after_seconds = $7
+WHERE id = $8 AND deleted_at IS NULL
+RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at
 `
 
 type UpdateAppSettingsParams struct {
@@ -1520,6 +1562,7 @@ type UpdateAppSettingsParams struct {
 	CpuMillicores         int32
 	StartupTimeoutSeconds int32
 	ReadOnlyRootfs        bool
+	SleepAfterSeconds     *int32
 	ID                    uuid.UUID
 }
 
@@ -1531,6 +1574,7 @@ func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsPa
 		arg.CpuMillicores,
 		arg.StartupTimeoutSeconds,
 		arg.ReadOnlyRootfs,
+		arg.SleepAfterSeconds,
 		arg.ID,
 	)
 	var i App
@@ -1553,6 +1597,11 @@ func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsPa
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }

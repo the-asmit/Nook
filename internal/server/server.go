@@ -143,7 +143,7 @@ func (s *Server) listen(ctx context.Context, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("register postgres pool metrics: %w", err)
 	}
-	router, err := api.NewRouter(&api.Deps{
+	router, err := api.NewRouter(&api.Deps{ //nolint:contextcheck // middleware runs on each request's own context.
 		Logger:           s.logger,
 		Registry:         reg,
 		HTTP:             cfg.HTTP,
@@ -224,10 +224,18 @@ func (s *Server) Serve(ctx context.Context) error {
 	start("agent gRPC", s.grpc.Serve)
 	start("leader election", func(ctx context.Context) error {
 		s.elector.Run(ctx, func(ctx context.Context, sess *leader.Session) {
-			// Every detector query runs on the lock connection (fencing).
+			// Every query of the leader's loops runs on the lock connection
+			// (fencing): a deposed leader cannot act.
+			var loops sync.WaitGroup
+			loops.Go(func() {
+				s.rollout.RunLeader(ctx, func(ctx context.Context, fn func(rollout.DB) error) error {
+					return sess.Do(ctx, func(conn *pgx.Conn) error { return fn(conn) })
+				})
+			})
 			s.detector.Run(ctx, func(ctx context.Context, fn func(nodes.DB) error) error {
 				return sess.Do(ctx, func(conn *pgx.Conn) error { return fn(conn) })
 			})
+			loops.Wait()
 		})
 		return nil
 	})

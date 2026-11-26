@@ -40,8 +40,8 @@ type Service struct {
 
 // NewService returns the service. The keyring encrypts environment values;
 // events announces route changes to gateways.
-func NewService(st *store.Store, objects *objstore.Client, queue Queue, keyring *secrets.Keyring, events RouteEvents, cfg Config) *Service {
-	return &Service{store: st, objects: objects, queue: queue, keyring: keyring, events: events, cfg: cfg, now: time.Now}
+func NewService(st *store.Store, objects *objstore.Client, queue Queue, keyring *secrets.Keyring, events RouteEvents, cfg *Config) *Service {
+	return &Service{store: st, objects: objects, queue: queue, keyring: keyring, events: events, cfg: *cfg, now: time.Now}
 }
 
 // RepositoryName is the registry repository of an app's images. IDs, not
@@ -86,9 +86,15 @@ type Spec struct {
 	StartupTimeoutSeconds int32
 	// ReadOnlyRootfs runs the container with a read-only root file system.
 	ReadOnlyRootfs bool
+	// SleepAfter is how long the app may go without requests before it
+	// sleeps: a duration ("15m"), "never", or "" for the default.
+	SleepAfter string
+	// sleepAfterSeconds is SleepAfter normalized (nil: never).
+	sleepAfterSeconds *int32
 }
 
-func (s *Service) normalize(spec Spec) (Spec, error) {
+func (s *Service) normalize(in *Spec) (Spec, error) {
+	spec := *in
 	if !ValidSlug(spec.Slug) {
 		return spec, apperr.Invalid("invalid_slug", "app slug must be 1 to 40 lower-case letters, digits or inner hyphens, without \"--\"")
 	}
@@ -130,7 +136,59 @@ func (s *Service) normalize(spec Spec) (Spec, error) {
 	if spec.StartupTimeoutSeconds < 1 || spec.StartupTimeoutSeconds > maxStartup {
 		return spec, apperr.Invalid("invalid_startup_timeout", "startup timeout must be between 1 and %d seconds", maxStartup)
 	}
+	secs, err := s.parseSleepAfter(spec.SleepAfter)
+	if err != nil {
+		return spec, err
+	}
+	spec.sleepAfterSeconds = secs
 	return spec, nil
+}
+
+// SleepNever is the sleep_after value of apps that never sleep.
+const SleepNever = "never"
+
+// parseSleepAfter turns a sleep_after setting into seconds (nil: never),
+// within the instance's bounds.
+func (s *Service) parseSleepAfter(v string) (*int32, error) {
+	v = strings.TrimSpace(v)
+	if v == SleepNever {
+		return nil, nil
+	}
+	d := s.cfg.DefaultSleepAfter
+	if v != "" {
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			return nil, apperr.Invalid("invalid_sleep_after", "sleep_after must be a duration such as \"15m\" or \"never\"")
+		}
+		d = parsed
+	}
+	if d < s.cfg.MinSleepAfter || d > s.cfg.MaxSleepAfter || d%time.Second != 0 {
+		return nil, apperr.Invalid("invalid_sleep_after", "sleep_after must be whole seconds between %s and %s, or \"never\"",
+			FormatDuration(s.cfg.MinSleepAfter), FormatDuration(s.cfg.MaxSleepAfter))
+	}
+	secs := int32(d / time.Second) //nolint:gosec // G115: bounded by the maximum (validated to be at most 30 days).
+	return &secs, nil
+}
+
+// FormatSleepAfter shows an app's sleep_after ("15m", "1h30m", "never").
+func FormatSleepAfter(secs *int32) string {
+	if secs == nil {
+		return SleepNever
+	}
+	return FormatDuration(time.Duration(*secs) * time.Second)
+}
+
+// FormatDuration writes a duration without trailing zero units ("15m"
+// rather than "15m0s").
+func FormatDuration(d time.Duration) string {
+	out := d.String()
+	if strings.HasSuffix(out, "m0s") {
+		out = strings.TrimSuffix(out, "0s")
+	}
+	if strings.HasSuffix(out, "h0m") {
+		out = strings.TrimSuffix(out, "0m")
+	}
+	return out
 }
 
 func validPath(p string) bool {
@@ -200,8 +258,8 @@ func (s *Service) MemoryQuotaMB(ctx context.Context, q *store.Queries, workspace
 }
 
 // Create makes an app in a workspace the actor belongs to.
-func (s *Service) Create(ctx context.Context, actor workspace.Actor, wsSlug string, spec Spec) (store.App, error) {
-	spec, invalid := s.normalize(spec)
+func (s *Service) Create(ctx context.Context, actor workspace.Actor, wsSlug string, in *Spec) (store.App, error) {
+	spec, invalid := s.normalize(in)
 	if invalid != nil {
 		return store.App{}, invalid
 	}
@@ -232,7 +290,7 @@ func (s *Service) Create(ctx context.Context, actor workspace.Actor, wsSlug stri
 		app, err = q.CreateApp(ctx, store.CreateAppParams{
 			WorkspaceID: v.Workspace.ID, Slug: spec.Slug, Name: spec.Name, CreatedBy: &actor.UserID,
 			Port: spec.Port, HealthCheckPath: spec.HealthCheckPath, MemoryMb: spec.MemoryMB, CpuMillicores: spec.CPUMillicores,
-			StartupTimeoutSeconds: spec.StartupTimeoutSeconds, ReadOnlyRootfs: spec.ReadOnlyRootfs,
+			StartupTimeoutSeconds: spec.StartupTimeoutSeconds, ReadOnlyRootfs: spec.ReadOnlyRootfs, SleepAfterSeconds: spec.sleepAfterSeconds,
 		})
 		if err != nil {
 			return err

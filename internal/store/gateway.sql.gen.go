@@ -190,7 +190,7 @@ func (q *Queries) DeleteGatewayCertificate(ctx context.Context, name string) err
 }
 
 const getAppBySlugs = `-- name: GetAppBySlugs :one
-SELECT a.id, a.workspace_id, a.slug, a.name, a.created_by, a.port, a.health_check_path, a.memory_mb, a.cpu_millicores, a.next_deployment_number, a.created_at, a.deleted_at, a.desired_state, a.desired_state_at, a.current_deployment_id, a.startup_timeout_seconds, a.read_only_rootfs, a.access_mode FROM apps a JOIN workspaces w ON w.id = a.workspace_id
+SELECT a.id, a.workspace_id, a.slug, a.name, a.created_by, a.port, a.health_check_path, a.memory_mb, a.cpu_millicores, a.next_deployment_number, a.created_at, a.deleted_at, a.desired_state, a.desired_state_at, a.current_deployment_id, a.startup_timeout_seconds, a.read_only_rootfs, a.access_mode, a.sleep_after_seconds, a.sleeping_since, a.sleep_reason, a.last_request_at, a.wake_requested_at FROM apps a JOIN workspaces w ON w.id = a.workspace_id
 WHERE w.slug = $1 AND a.slug = $2 AND a.deleted_at IS NULL
 `
 
@@ -222,6 +222,11 @@ func (q *Queries) GetAppBySlugs(ctx context.Context, arg GetAppBySlugsParams) (A
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }
@@ -245,13 +250,17 @@ func (q *Queries) GetGatewayCertificate(ctx context.Context, name string) (Gatew
 const getRoute = `-- name: GetRoute :one
 SELECT a.id AS app_id, a.slug AS app_slug, w.id AS workspace_id, w.slug AS workspace_slug,
        a.access_mode, a.desired_state, a.current_deployment_id,
+       (a.sleeping_since IS NOT NULL)::boolean AS sleeping, (a.wake_requested_at IS NOT NULL)::boolean AS waking,
        coalesce(i.state::text, '')::text AS instance_state, coalesce(i.address, '')::text AS address, i.host_port
 FROM apps a
 JOIN workspaces w ON w.id = a.workspace_id
 LEFT JOIN LATERAL (
     SELECT state, address, host_port FROM app_instances
     WHERE deployment_id = a.current_deployment_id
-    ORDER BY created_at DESC
+    -- A serving instance wins over a newer one that is still starting
+    -- (an app moving to another node serves from the old one until the
+    -- new one is healthy); among serving ones, the newest.
+    ORDER BY (state IN ('healthy', 'unhealthy')) DESC, created_at DESC
     LIMIT 1
 ) i ON true
 WHERE a.id = $1 AND a.deleted_at IS NULL
@@ -265,6 +274,8 @@ type GetRouteRow struct {
 	AccessMode          AppAccessMode
 	DesiredState        AppDesiredState
 	CurrentDeploymentID *uuid.UUID
+	Sleeping            bool
+	Waking              bool
 	InstanceState       string
 	Address             string
 	HostPort            *int32
@@ -281,6 +292,8 @@ func (q *Queries) GetRoute(ctx context.Context, appID uuid.UUID) (GetRouteRow, e
 		&i.AccessMode,
 		&i.DesiredState,
 		&i.CurrentDeploymentID,
+		&i.Sleeping,
+		&i.Waking,
 		&i.InstanceState,
 		&i.Address,
 		&i.HostPort,
@@ -383,13 +396,17 @@ const listRoutes = `-- name: ListRoutes :many
 
 SELECT a.id AS app_id, a.slug AS app_slug, w.id AS workspace_id, w.slug AS workspace_slug,
        a.access_mode, a.desired_state, a.current_deployment_id,
+       (a.sleeping_since IS NOT NULL)::boolean AS sleeping, (a.wake_requested_at IS NOT NULL)::boolean AS waking,
        coalesce(i.state::text, '')::text AS instance_state, coalesce(i.address, '')::text AS address, i.host_port
 FROM apps a
 JOIN workspaces w ON w.id = a.workspace_id
 LEFT JOIN LATERAL (
     SELECT state, address, host_port FROM app_instances
     WHERE deployment_id = a.current_deployment_id
-    ORDER BY created_at DESC
+    -- A serving instance wins over a newer one that is still starting
+    -- (an app moving to another node serves from the old one until the
+    -- new one is healthy); among serving ones, the newest.
+    ORDER BY (state IN ('healthy', 'unhealthy')) DESC, created_at DESC
     LIMIT 1
 ) i ON true
 WHERE a.deleted_at IS NULL
@@ -404,14 +421,17 @@ type ListRoutesRow struct {
 	AccessMode          AppAccessMode
 	DesiredState        AppDesiredState
 	CurrentDeploymentID *uuid.UUID
+	Sleeping            bool
+	Waking              bool
 	InstanceState       string
 	Address             string
 	HostPort            *int32
 }
 
 // Routes, access policies, visitor sign-in and gateway certificates.
-// Every live app with where it is served: the newest instance of its
-// current deployment (or none).
+// Every live app with where it is served: the serving (else newest)
+// instance of its current deployment (or none), and whether it sleeps or
+// is waking.
 func (q *Queries) ListRoutes(ctx context.Context) ([]ListRoutesRow, error) {
 	rows, err := q.db.Query(ctx, listRoutes)
 	if err != nil {
@@ -429,6 +449,8 @@ func (q *Queries) ListRoutes(ctx context.Context) ([]ListRoutesRow, error) {
 			&i.AccessMode,
 			&i.DesiredState,
 			&i.CurrentDeploymentID,
+			&i.Sleeping,
+			&i.Waking,
 			&i.InstanceState,
 			&i.Address,
 			&i.HostPort,
@@ -511,7 +533,7 @@ func (q *Queries) RevokeVisitorSession(ctx context.Context, tokenHash []byte) er
 }
 
 const setAccessMode = `-- name: SetAccessMode :one
-UPDATE apps SET access_mode = $1 WHERE id = $2 AND deleted_at IS NULL RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode
+UPDATE apps SET access_mode = $1 WHERE id = $2 AND deleted_at IS NULL RETURNING id, workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores, next_deployment_number, created_at, deleted_at, desired_state, desired_state_at, current_deployment_id, startup_timeout_seconds, read_only_rootfs, access_mode, sleep_after_seconds, sleeping_since, sleep_reason, last_request_at, wake_requested_at
 `
 
 type SetAccessModeParams struct {
@@ -541,6 +563,11 @@ func (q *Queries) SetAccessMode(ctx context.Context, arg SetAccessModeParams) (A
 		&i.StartupTimeoutSeconds,
 		&i.ReadOnlyRootfs,
 		&i.AccessMode,
+		&i.SleepAfterSeconds,
+		&i.SleepingSince,
+		&i.SleepReason,
+		&i.LastRequestAt,
+		&i.WakeRequestedAt,
 	)
 	return i, err
 }

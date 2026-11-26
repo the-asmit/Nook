@@ -425,6 +425,7 @@ const (
 	InstanceStateStopped   InstanceState = "stopped"
 	InstanceStateCrashed   InstanceState = "crashed"
 	InstanceStateFailed    InstanceState = "failed"
+	InstanceStateSleeping  InstanceState = "sleeping"
 )
 
 func (e *InstanceState) Scan(src interface{}) error {
@@ -470,7 +471,8 @@ func (e InstanceState) Valid() bool {
 		InstanceStateStopping,
 		InstanceStateStopped,
 		InstanceStateCrashed,
-		InstanceStateFailed:
+		InstanceStateFailed,
+		InstanceStateSleeping:
 		return true
 	}
 	return false
@@ -485,6 +487,7 @@ func AllInstanceStateValues() []InstanceState {
 		InstanceStateStopped,
 		InstanceStateCrashed,
 		InstanceStateFailed,
+		InstanceStateSleeping,
 	}
 }
 
@@ -650,6 +653,11 @@ type App struct {
 	StartupTimeoutSeconds int32
 	ReadOnlyRootfs        bool
 	AccessMode            AppAccessMode
+	SleepAfterSeconds     *int32
+	SleepingSince         *time.Time
+	SleepReason           string
+	LastRequestAt         *time.Time
+	WakeRequestedAt       *time.Time
 }
 
 type AppAccessGrant struct {
@@ -692,6 +700,9 @@ type AppInstance struct {
 	StartupLog      string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	Cause           string
+	CauseAt         *time.Time
+	StopReason      string
 }
 
 type AuditLog struct {

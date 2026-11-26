@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"math"
 	"net/http"
 	"net/netip"
 	"strconv"
 	"time"
+	"uuid"
 
 	"github.com/gin-gonic/gin"
 
@@ -64,6 +66,11 @@ type V1Deps struct {
 	MaxSourceBytes int64
 	// AppsBase builds app URLs.
 	AppsBase routes.Base
+	// Releases wakes sleeping apps (`nook apps wake`).
+	Releases *rollout.Controller
+	// LastRequest returns when an app last received a request (gateway
+	// activity), or nil.
+	LastRequest func(ctx context.Context, app uuid.UUID) *time.Time
 }
 
 // RouteBuildLog streams build logs; it is exempt from the request timeout.
@@ -107,6 +114,7 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	appRoutes.DELETE("/:app", h.deleteApp)
 	appRoutes.POST("/:app/stop", h.stopApp)
 	appRoutes.POST("/:app/start", h.startApp)
+	appRoutes.POST("/:app/wake", h.wakeApp)
 	appRoutes.POST("/:app/rollback", h.rollback)
 	appRoutes.GET("/:app/logs", h.appLogs)
 	appRoutes.GET("/:app/env", h.listEnv)

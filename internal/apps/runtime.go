@@ -29,6 +29,8 @@ type Settings struct {
 	CPUMillicores         *int32
 	StartupTimeoutSeconds *int32
 	ReadOnlyRootfs        *bool
+	// SleepAfter is a duration ("15m") or "never".
+	SleepAfter *string
 }
 
 // Update changes an app's settings (any member). They apply to the next
@@ -44,13 +46,14 @@ func (s *Service) Update(ctx context.Context, actor workspace.Actor, wsSlug, app
 			Slug: app.Slug, Name: app.Name, Port: deref(set.Port, app.Port), HealthCheckPath: deref(set.HealthCheckPath, app.HealthCheckPath),
 			MemoryMB: deref(set.MemoryMB, app.MemoryMb), CPUMillicores: deref(set.CPUMillicores, app.CpuMillicores),
 			StartupTimeoutSeconds: deref(set.StartupTimeoutSeconds, app.StartupTimeoutSeconds), ReadOnlyRootfs: deref(set.ReadOnlyRootfs, app.ReadOnlyRootfs),
+			SleepAfter: deref(set.SleepAfter, FormatSleepAfter(app.SleepAfterSeconds)),
 		}
-		if spec, err = s.normalize(spec); err != nil {
+		if spec, err = s.normalize(&spec); err != nil {
 			return err
 		}
 		out, err = q.UpdateAppSettings(ctx, store.UpdateAppSettingsParams{
 			ID: app.ID, Port: spec.Port, HealthCheckPath: spec.HealthCheckPath, MemoryMb: spec.MemoryMB, CpuMillicores: spec.CPUMillicores,
-			StartupTimeoutSeconds: spec.StartupTimeoutSeconds, ReadOnlyRootfs: spec.ReadOnlyRootfs,
+			StartupTimeoutSeconds: spec.StartupTimeoutSeconds, ReadOnlyRootfs: spec.ReadOnlyRootfs, SleepAfterSeconds: spec.sleepAfterSeconds,
 		})
 		if err != nil {
 			return fmt.Errorf("update app: %w", err)
@@ -61,6 +64,7 @@ func (s *Service) Update(ctx context.Context, actor workspace.Actor, wsSlug, app
 			Metadata: map[string]any{
 				"slug": app.Slug, "port": spec.Port, "health_check_path": spec.HealthCheckPath, "memory_mb": spec.MemoryMB,
 				"cpu_millicores": spec.CPUMillicores, "startup_timeout_seconds": spec.StartupTimeoutSeconds, "read_only_rootfs": spec.ReadOnlyRootfs,
+				"sleep_after": FormatSleepAfter(spec.sleepAfterSeconds),
 			},
 		})
 	})
@@ -97,6 +101,10 @@ func (s *Service) setDesired(ctx context.Context, actor workspace.Actor, wsSlug,
 		}
 		if out, err = q.SetDesiredState(ctx, store.SetDesiredStateParams{ID: app.ID, DesiredState: state}); err != nil {
 			return fmt.Errorf("set desired state: %w", err)
+		}
+		// Starting or stopping an app ends any sleep: a started app runs.
+		if err = q.ClearSleep(ctx, app.ID); err != nil {
+			return fmt.Errorf("clear sleep: %w", err)
 		}
 		if app.CurrentDeploymentID != nil {
 			wake = append(wake, *app.CurrentDeploymentID)

@@ -49,6 +49,9 @@ const (
 	ActionAppUpdate          = "app.update"
 	ActionAppStop            = "app.stop"
 	ActionAppStart           = "app.start"
+	// ActionAppEvict: an idle app was put to sleep to make room for another
+	// (no actor: the scheduler decided).
+	ActionAppEvict           = "app.evict"
 	ActionEnvSet             = "env.set"
 	ActionEnvUnset           = "env.unset"
 	ActionDeploymentRollback = "deployment.rollback"

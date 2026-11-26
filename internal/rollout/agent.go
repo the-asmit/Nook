@@ -110,12 +110,12 @@ func (c *Controller) startCommand(ctx context.Context, dep *store.Deployment, ap
 	}}}, nil
 }
 
-// stopInstance marks an instance stopping and asks its node to stop it
-// after drain. An unreachable node gets the request again when its agent
-// reconnects (reconciliation).
-func (c *Controller) stopInstance(ctx context.Context, inst *store.AppInstance, drain time.Duration) {
+// stopInstance marks an instance stopping (for reason) and asks its node
+// to stop it after drain. An unreachable node gets the request again when
+// its agent reconnects (reconciliation).
+func (c *Controller) stopInstance(ctx context.Context, inst *store.AppInstance, drain time.Duration, reason string) {
 	if inst.State != store.InstanceStateStopping {
-		if _, err := c.Store.RequestInstanceStop(ctx, inst.ID); err != nil {
+		if _, err := c.Store.RequestInstanceStop(ctx, store.RequestInstanceStopParams{ID: inst.ID, StopReason: reason}); err != nil {
 			if !store.IsNotFound(err) {
 				c.Logger.WarnContext(ctx, "could not stop instance", "instance", inst.ID.String(), "error", err.Error())
 			}
@@ -131,7 +131,7 @@ func (c *Controller) stopInstance(ctx context.Context, inst *store.AppInstance, 
 		}
 		return
 	}
-	c.sendStop(ctx, *inst.NodeID, inst.ID.String(), drain)
+	c.sendStop(ctx, *inst.NodeID, inst.ID.String(), drain, false)
 }
 
 // nodeRemoved reports whether a node was removed from Nook.
@@ -140,9 +140,11 @@ func (c *Controller) nodeRemoved(ctx context.Context, nodeID uuid.UUID) bool {
 	return store.IsNotFound(err) || (err == nil && status == store.NodeStatusRemoved)
 }
 
-func (c *Controller) sendStop(ctx context.Context, nodeID uuid.UUID, instanceID string, drain time.Duration) {
+// sendStop asks a node to stop an instance's container after drain,
+// keeping the container when keep is set (an app going to sleep).
+func (c *Controller) sendStop(ctx context.Context, nodeID uuid.UUID, instanceID string, drain time.Duration, keep bool) {
 	cmd := &agentv1.Command{Kind: &agentv1.Command_StopInstance{StopInstance: &agentv1.StopInstanceCommand{
-		InstanceId: instanceID, Drain: durationpb.New(drain),
+		InstanceId: instanceID, Drain: durationpb.New(drain), KeepContainer: keep,
 	}}}
 	res, err := c.Commander.Dispatch(ctx, nodeID, cmd, dispatchTimeout)
 	if err == nil && res.GetError() != nil {
@@ -183,7 +185,11 @@ func (c *Controller) InstanceStatus(ctx context.Context, nodeID uuid.UUID, m *ag
 	case agentv1.InstanceState_INSTANCE_STATE_STARTING:
 		err = c.Store.SetInstanceContainer(ctx, store.SetInstanceContainerParams{ID: id, ContainerID: containerID, HostPort: port})
 	case agentv1.InstanceState_INSTANCE_STATE_HEALTHY:
-		_, err = c.Store.InstanceRunning(ctx, store.InstanceRunningParams{ID: id, ContainerID: containerID, HostPort: port, RestartCount: restarts})
+		var running store.AppInstance
+		running, err = c.Store.InstanceRunning(ctx, store.InstanceRunningParams{ID: id, ContainerID: containerID, HostPort: port, RestartCount: restarts})
+		if err == nil && inst.State == store.InstanceStateStarting {
+			c.recovered(ctx, &running)
+		}
 	case agentv1.InstanceState_INSTANCE_STATE_UNHEALTHY:
 		_, err = c.Store.InstanceUnhealthy(ctx, store.InstanceUnhealthyParams{ID: id, RestartCount: restarts, LastError: msg})
 	case agentv1.InstanceState_INSTANCE_STATE_CRASHED:
@@ -224,11 +230,18 @@ func (c *Controller) AgentConnected(ctx context.Context, nodeID uuid.UUID, repor
 		inst, ok := wanted[r.GetInstanceId()]
 		switch {
 		case !ok:
+			// Includes the containers of instances that moved away while
+			// the node was unreachable (failover): they never serve again.
 			c.Logger.InfoContext(ctx, "removing a container the node should not run", "node_id", nodeID.String(), "instance", r.GetInstanceId())
-			c.sendStop(ctx, nodeID, r.GetInstanceId(), 0)
+			c.sendStop(ctx, nodeID, r.GetInstanceId(), 0, false)
 		case inst.State == store.InstanceStateStopping:
 			if !r.GetStopping() {
-				c.sendStop(ctx, nodeID, r.GetInstanceId(), 0)
+				c.sendStop(ctx, nodeID, r.GetInstanceId(), 0, false)
+			}
+		case inst.State == store.InstanceStateSleeping:
+			// Kept, stopped, for a fast wake; still running if the stop was lost.
+			if r.GetRunning() && !r.GetStopping() {
+				c.sendStop(ctx, nodeID, r.GetInstanceId(), 0, true)
 			}
 		case inst.State == store.InstanceStateCrashed:
 			// Kept, stopped, for its logs.
@@ -241,6 +254,8 @@ func (c *Controller) AgentConnected(ctx context.Context, nodeID uuid.UUID, repor
 			continue
 		}
 		switch inst.State {
+		case store.InstanceStateSleeping:
+			// Its container is gone: a wake creates a new one.
 		case store.InstanceStateStopping, store.InstanceStateCrashed:
 			if _, err := c.Store.InstanceStopped(ctx, inst.ID); err != nil && !store.IsNotFound(err) {
 				c.Logger.WarnContext(ctx, "could not record stopped instance", "instance", id, "error", err.Error())

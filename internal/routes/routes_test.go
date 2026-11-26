@@ -84,9 +84,30 @@ func TestStates(t *testing.T) {
 		{"stopped", true, "healthy", StateStopped},
 		{"running", true, "stopped", StateStopped},
 	} {
-		if got := StateOf(c.desired, c.deployed, c.instance); got != c.want {
+		if got := StateOf(c.desired, c.deployed, c.instance, false, false); got != c.want {
 			t.Errorf("StateOf(%s, %v, %s) = %s, want %s", c.desired, c.deployed, c.instance, got, c.want)
 		}
+	}
+	// Sleeping and waking.
+	for _, c := range []struct {
+		desired, instance string
+		sleeping, waking  bool
+		want              string
+	}{
+		{"running", "sleeping", true, false, StateSleeping},
+		{"running", "healthy", true, false, StateSleeping},
+		{"running", "sleeping", false, true, StateWaking},
+		{"running", "starting", false, true, StateWaking},
+		{"running", "healthy", false, true, StateRunning},
+		{"stopped", "sleeping", true, false, StateStopped},
+		{"running", "sleeping", false, false, StateStopped},
+	} {
+		if got := StateOf(c.desired, true, c.instance, c.sleeping, c.waking); got != c.want {
+			t.Errorf("StateOf(%s, %s, sleeping=%v, waking=%v) = %s, want %s", c.desired, c.instance, c.sleeping, c.waking, got, c.want)
+		}
+	}
+	if !Wakeable(StateSleeping) || !Wakeable(StateWaking) || Wakeable(StateStarting) || Wakeable(StateStopped) {
+		t.Fatal("Wakeable")
 	}
 	r := Route{State: StateRunning, Upstream: "10.0.0.5:30001"}
 	if !r.Serving() || (&Route{State: StateStopped, Upstream: "x"}).Serving() || (&Route{State: StateRunning}).Serving() {

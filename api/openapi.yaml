@@ -813,6 +813,7 @@ paths:
                 cpu_millicores: { type: integer, minimum: 10 }
                 startup_timeout_seconds: { type: integer, minimum: 1, description: "Default 60; at most the installation's maximum." }
                 read_only_rootfs: { type: boolean }
+                sleep_after: { type: string, description: 'Idle time before the app sleeps, e.g. "15m" (the default), or "never"; within the installation''s minimum and maximum.' }
       responses:
         "201":
           description: Created.
@@ -863,6 +864,7 @@ paths:
                 cpu_millicores: { type: integer, minimum: 10 }
                 startup_timeout_seconds: { type: integer, minimum: 1 }
                 read_only_rootfs: { type: boolean }
+                sleep_after: { type: string, description: 'A duration such as "15m", or "never".' }
       responses:
         "200":
           description: The app after the change.
@@ -927,6 +929,30 @@ paths:
               schema: { $ref: "#/components/schemas/AppDetail" }
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/wake:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    post:
+      tags: [apps]
+      operationId: wakeApp
+      summary: Wake a sleeping app (any member)
+      description: |
+        Idle apps sleep after their `sleep_after` without requests; the next
+        request through the gateway wakes them, and so does this call. One
+        wake happens however many requests or calls arrive at once. The
+        instance resumes on its previous node when that node has room
+        (container and image still there), otherwise it is placed anew.
+      responses:
+        "202":
+          description: The app after the request ("waking", or "running" if it was awake).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AppDetail" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /api/v1/workspaces/{slug}/apps/{app}/rollback:
     parameters:
@@ -1483,6 +1509,30 @@ paths:
               schema: { $ref: "#/components/schemas/Route" }
         "404": { description: The app does not exist (or not a gateway). }
 
+  /internal/v1/apps/{app_id}/wake:
+    parameters:
+      - name: app_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [internal]
+      operationId: wakeAppForGateway
+      summary: Wake a sleeping app for a held request (gateways only)
+      description: Idempotent; exactly one wake happens across all gateways (a compare-and-set).
+      security: [{ gatewaySecret: [] }]
+      responses:
+        "202":
+          description: '"waking" (this call woke it) or "awake" (it was awake or being woken).'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [state]
+                properties:
+                  state: { type: string, enum: [waking, awake] }
+        "404": { description: The app does not exist (or not a gateway). }
+
   /internal/v1/tls/hosts/{host}:
     parameters:
       - name: host
@@ -1895,8 +1945,9 @@ components:
       allOf:
         - $ref: "#/components/schemas/Node"
         - type: object
-          required: [events]
+          required: [events, active_instances]
           properties:
+            active_instances: { type: integer, description: App instances still running or stopping on the node (zero once a drain is complete). }
             events:
               type: array
               description: Most recent first.
@@ -1988,7 +2039,7 @@ components:
         workspace: { type: string }
         app: { type: string }
         access: { type: string, enum: [workspace, restricted, public], description: The effective mode. }
-        state: { type: string, enum: [running, unhealthy, starting, crashed, stopped, not_deployed] }
+        state: { type: string, enum: [running, unhealthy, starting, crashed, stopped, not_deployed, sleeping, waking] }
         upstream: { type: string, description: "The instance's node address:port, when it is served." }
     Certificate:
       type: object
@@ -2012,6 +2063,7 @@ components:
         desired_state: { type: string, enum: [running, stopped] }
         url: { type: string, format: uri, description: "Where visitors open the app: <scheme>://<app>--<workspace>.<apps domain>/" }
         access_mode: { type: string, enum: [workspace, restricted, public] }
+        sleep_after: { type: string, description: 'Idle time before the app sleeps ("15m"), or "never".' }
         deployments: { type: integer, description: Number of deployments so far. }
         created_at: { type: string, format: date-time }
     AppDetail:
@@ -2021,7 +2073,10 @@ components:
           required: [live_deployment, health, instance]
           properties:
             live_deployment: { type: [integer, "null"] }
-            health: { type: string, enum: [running, starting, unhealthy, crashed, stopped, not_deployed] }
+            health: { type: string, enum: [running, starting, unhealthy, crashed, sleeping, waking, stopped, not_deployed] }
+            sleeping_since: { type: [string, "null"], format: date-time }
+            sleep_reason: { type: string, enum: [idle, evicted], description: Set while the app sleeps. }
+            last_request_at: { type: [string, "null"], format: date-time, description: When the gateways last saw a request for the app. }
             instance:
               oneOf:
                 - $ref: "#/components/schemas/Instance"
@@ -2031,7 +2086,7 @@ components:
       required: [node, state, address, host_port, restart_count, last_error, started_at, last_healthy_at, created_at]
       properties:
         node: { type: string }
-        state: { type: string, enum: [starting, healthy, unhealthy, stopping, stopped, crashed, failed] }
+        state: { type: string, enum: [starting, healthy, unhealthy, stopping, stopped, crashed, failed, sleeping] }
         address: { type: string, description: The node's advertise address. }
         host_port: { type: [integer, "null"] }
         restart_count: { type: integer }

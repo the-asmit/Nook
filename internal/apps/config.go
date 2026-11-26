@@ -37,6 +37,12 @@ type Config struct {
 	MaxAppCPUMillicores int32 `env:"NOOK_APP_MAX_CPU_MILLICORES" envDefault:"4000"`
 	// AllowPublicApps lets admins open apps to anyone without sign-in.
 	AllowPublicApps bool `env:"NOOK_ALLOW_PUBLIC_APPS" envDefault:"false"`
+	// Sleeping: apps without requests for their sleep_after are put to
+	// sleep. DefaultSleepAfter applies when nook.toml does not say; apps
+	// may choose between the minimum and the maximum, or "never".
+	DefaultSleepAfter time.Duration `env:"NOOK_APP_DEFAULT_SLEEP_AFTER" envDefault:"15m"`
+	MinSleepAfter     time.Duration `env:"NOOK_APP_MIN_SLEEP_AFTER" envDefault:"1m"`
+	MaxSleepAfter     time.Duration `env:"NOOK_APP_MAX_SLEEP_AFTER" envDefault:"24h"`
 }
 
 // Validate checks the configuration.
@@ -50,6 +56,9 @@ func (c *Config) Validate() error {
 		config.CheckDuration("NOOK_APP_MAX_STARTUP_TIMEOUT", c.MaxStartupTimeout, DefaultStartupTimeout, time.Hour),
 		config.CheckRange("NOOK_APP_MAX_MEMORY_MB", c.MaxAppMemoryMB, DefaultMemoryMB, 1048576),
 		config.CheckRange("NOOK_APP_MAX_CPU_MILLICORES", c.MaxAppCPUMillicores, DefaultCPUMillicores, 1024000),
+		config.CheckDuration("NOOK_APP_MIN_SLEEP_AFTER", c.MinSleepAfter, time.Second, 7*24*time.Hour),
+		config.CheckDuration("NOOK_APP_MAX_SLEEP_AFTER", c.MaxSleepAfter, c.MinSleepAfter, 30*24*time.Hour),
+		config.CheckDuration("NOOK_APP_DEFAULT_SLEEP_AFTER", c.DefaultSleepAfter, c.MinSleepAfter, c.MaxSleepAfter),
 	)
 }
 

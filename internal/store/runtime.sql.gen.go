@@ -54,7 +54,7 @@ const createInstance = `-- name: CreateInstance :one
 
 INSERT INTO app_instances (app_id, deployment_id, workspace_id, node_id, node_name, memory_mb, cpu_millicores, address)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at
+RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason
 `
 
 type CreateInstanceParams struct {
@@ -104,6 +104,9 @@ func (q *Queries) CreateInstance(ctx context.Context, arg CreateInstanceParams) 
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -311,7 +314,7 @@ func (q *Queries) FailRollout(ctx context.Context, arg FailRolloutParams) (Deplo
 }
 
 const getInstance = `-- name: GetInstance :one
-SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at FROM app_instances WHERE id = $1
+SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason FROM app_instances WHERE id = $1
 `
 
 func (q *Queries) GetInstance(ctx context.Context, id uuid.UUID) (AppInstance, error) {
@@ -340,6 +343,9 @@ func (q *Queries) GetInstance(ctx context.Context, id uuid.UUID) (AppInstance, e
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -405,7 +411,7 @@ const instanceCrashed = `-- name: InstanceCrashed :one
 UPDATE app_instances
 SET state = 'crashed', restart_count = $1, last_error = $2, stopped_at = now(), updated_at = now()
 WHERE id = $3 AND state IN ('starting', 'healthy', 'unhealthy')
-RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at
+RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason
 `
 
 type InstanceCrashedParams struct {
@@ -441,6 +447,9 @@ func (q *Queries) InstanceCrashed(ctx context.Context, arg InstanceCrashedParams
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -449,7 +458,7 @@ const instanceFailed = `-- name: InstanceFailed :one
 UPDATE app_instances
 SET state = 'failed', last_error = $1, startup_log = $2, stopped_at = now(), updated_at = now()
 WHERE id = $3 AND state IN ('starting', 'unhealthy')
-RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at
+RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason
 `
 
 type InstanceFailedParams struct {
@@ -485,6 +494,9 @@ func (q *Queries) InstanceFailed(ctx context.Context, arg InstanceFailedParams) 
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -494,7 +506,7 @@ UPDATE app_instances
 SET state = 'healthy', container_id = $1, host_port = $2, restart_count = $3,
     started_at = coalesce(started_at, now()), last_healthy_at = now(), last_error = '', updated_at = now()
 WHERE id = $4 AND state IN ('starting', 'healthy', 'unhealthy')
-RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at
+RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason
 `
 
 type InstanceRunningParams struct {
@@ -537,6 +549,9 @@ func (q *Queries) InstanceRunning(ctx context.Context, arg InstanceRunningParams
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -544,7 +559,7 @@ func (q *Queries) InstanceRunning(ctx context.Context, arg InstanceRunningParams
 const instanceStopped = `-- name: InstanceStopped :one
 UPDATE app_instances SET state = 'stopped', stopped_at = coalesce(stopped_at, now()), updated_at = now()
 WHERE id = $1 AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed')
-RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at
+RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason
 `
 
 func (q *Queries) InstanceStopped(ctx context.Context, id uuid.UUID) (AppInstance, error) {
@@ -573,6 +588,9 @@ func (q *Queries) InstanceStopped(ctx context.Context, id uuid.UUID) (AppInstanc
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -581,7 +599,7 @@ const instanceUnhealthy = `-- name: InstanceUnhealthy :one
 UPDATE app_instances
 SET state = 'unhealthy', restart_count = $1, last_error = $2, updated_at = now()
 WHERE id = $3 AND state IN ('starting', 'healthy', 'unhealthy')
-RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at
+RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason
 `
 
 type InstanceUnhealthyParams struct {
@@ -617,6 +635,9 @@ func (q *Queries) InstanceUnhealthy(ctx context.Context, arg InstanceUnhealthyPa
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -693,7 +714,7 @@ func (q *Queries) LatestBuiltDeployment(ctx context.Context, appID uuid.UUID) (D
 }
 
 const latestInstanceOfApp = `-- name: LatestInstanceOfApp :one
-SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at FROM app_instances WHERE app_id = $1 ORDER BY created_at DESC LIMIT 1
+SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason FROM app_instances WHERE app_id = $1 ORDER BY created_at DESC LIMIT 1
 `
 
 func (q *Queries) LatestInstanceOfApp(ctx context.Context, appID uuid.UUID) (AppInstance, error) {
@@ -722,12 +743,15 @@ func (q *Queries) LatestInstanceOfApp(ctx context.Context, appID uuid.UUID) (App
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
 
 const latestInstanceOfDeployment = `-- name: LatestInstanceOfDeployment :one
-SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at FROM app_instances WHERE deployment_id = $1 ORDER BY created_at DESC LIMIT 1
+SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason FROM app_instances WHERE deployment_id = $1 ORDER BY created_at DESC LIMIT 1
 `
 
 func (q *Queries) LatestInstanceOfDeployment(ctx context.Context, deploymentID uuid.UUID) (AppInstance, error) {
@@ -756,13 +780,16 @@ func (q *Queries) LatestInstanceOfDeployment(ctx context.Context, deploymentID u
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
 
 const latestInstanceWithContainer = `-- name: LatestInstanceWithContainer :one
-SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at FROM app_instances
-WHERE app_id = $1 AND container_id IS NOT NULL AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed')
+SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason FROM app_instances
+WHERE app_id = $1 AND container_id IS NOT NULL AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed', 'sleeping')
 ORDER BY created_at DESC
 LIMIT 1
 `
@@ -794,6 +821,9 @@ func (q *Queries) LatestInstanceWithContainer(ctx context.Context, appID uuid.UU
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }
@@ -887,7 +917,7 @@ WHERE d.status = 'live' AND (d.enqueued_at IS NULL OR d.enqueued_at < $1)
           SELECT 1 FROM app_instances i
           WHERE i.deployment_id = d.id AND i.state IN ('starting', 'healthy', 'unhealthy', 'stopping')
       ))
-      OR (a.desired_state = 'running' AND a.deleted_at IS NULL
+      OR (a.desired_state = 'running' AND a.deleted_at IS NULL AND a.sleeping_since IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM app_instances i
               WHERE i.deployment_id = d.id AND i.state IN ('starting', 'healthy', 'unhealthy', 'stopping')
@@ -908,8 +938,8 @@ type ListDeploymentsToConvergeParams struct {
 
 // Live deployments whose instances disagree with the app's desired state
 // and that were not queued recently: running apps without an instance
-// (unless one crashed or failed since the state was set), stopped or
-// deleted apps with instances still holding resources.
+// (unless one crashed or failed since the state was set, or the app
+// sleeps), stopped or deleted apps with instances still holding resources.
 func (q *Queries) ListDeploymentsToConverge(ctx context.Context, arg ListDeploymentsToConvergeParams) ([]Deployment, error) {
 	rows, err := q.db.Query(ctx, listDeploymentsToConverge, arg.Before, arg.RowLimit)
 	if err != nil {
@@ -962,13 +992,14 @@ func (q *Queries) ListDeploymentsToConverge(ctx context.Context, arg ListDeploym
 }
 
 const listInstancesOnNode = `-- name: ListInstancesOnNode :many
-SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at FROM app_instances
-WHERE node_id = $1 AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed')
+SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason FROM app_instances
+WHERE node_id = $1 AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed', 'sleeping')
 ORDER BY created_at
 `
 
-// Instances whose containers a node should have: running, stopping, or
-// crashed (kept for their logs).
+// Instances whose containers a node should have: running, stopping,
+// crashed (kept for their logs) or sleeping (kept, stopped, for a fast
+// wake).
 func (q *Queries) ListInstancesOnNode(ctx context.Context, nodeID *uuid.UUID) ([]AppInstance, error) {
 	rows, err := q.db.Query(ctx, listInstancesOnNode, nodeID)
 	if err != nil {
@@ -1001,6 +1032,9 @@ func (q *Queries) ListInstancesOnNode(ctx context.Context, nodeID *uuid.UUID) ([
 			&i.StartupLog,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Cause,
+			&i.CauseAt,
+			&i.StopReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1013,7 +1047,7 @@ func (q *Queries) ListInstancesOnNode(ctx context.Context, nodeID *uuid.UUID) ([
 }
 
 const listReservedInstancesOfApp = `-- name: ListReservedInstancesOfApp :many
-SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at FROM app_instances
+SELECT id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason FROM app_instances
 WHERE app_id = $1 AND state IN ('starting', 'healthy', 'unhealthy', 'stopping')
 ORDER BY created_at
 `
@@ -1050,6 +1084,9 @@ func (q *Queries) ListReservedInstancesOfApp(ctx context.Context, appID uuid.UUI
 			&i.StartupLog,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Cause,
+			&i.CauseAt,
+			&i.StopReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1378,13 +1415,18 @@ func (q *Queries) ReencryptSnapshotVar(ctx context.Context, arg ReencryptSnapsho
 }
 
 const requestInstanceStop = `-- name: RequestInstanceStop :one
-UPDATE app_instances SET state = 'stopping', stop_requested_at = now(), updated_at = now()
-WHERE id = $1 AND state IN ('starting', 'healthy', 'unhealthy', 'crashed')
-RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at
+UPDATE app_instances SET state = 'stopping', stop_requested_at = now(), stop_reason = $1, updated_at = now()
+WHERE id = $2 AND state IN ('starting', 'healthy', 'unhealthy', 'crashed')
+RETURNING id, app_id, deployment_id, workspace_id, node_id, node_name, state, memory_mb, cpu_millicores, container_id, address, host_port, restart_count, start_sent_at, started_at, last_healthy_at, stop_requested_at, stopped_at, last_error, startup_log, created_at, updated_at, cause, cause_at, stop_reason
 `
 
-func (q *Queries) RequestInstanceStop(ctx context.Context, id uuid.UUID) (AppInstance, error) {
-	row := q.db.QueryRow(ctx, requestInstanceStop, id)
+type RequestInstanceStopParams struct {
+	StopReason string
+	ID         uuid.UUID
+}
+
+func (q *Queries) RequestInstanceStop(ctx context.Context, arg RequestInstanceStopParams) (AppInstance, error) {
+	row := q.db.QueryRow(ctx, requestInstanceStop, arg.StopReason, arg.ID)
 	var i AppInstance
 	err := row.Scan(
 		&i.ID,
@@ -1409,6 +1451,9 @@ func (q *Queries) RequestInstanceStop(ctx context.Context, id uuid.UUID) (AppIns
 		&i.StartupLog,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Cause,
+		&i.CauseAt,
+		&i.StopReason,
 	)
 	return i, err
 }

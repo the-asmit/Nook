@@ -5,10 +5,13 @@ import (
 	"crypto/rand"
 	"fmt"
 	"strings"
+	"time"
+	"uuid"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/the-asmit/nook/internal/activity"
 	"github.com/the-asmit/nook/internal/agentlink"
 	"github.com/the-asmit/nook/internal/auth"
 	"github.com/the-asmit/nook/internal/device"
@@ -40,7 +43,7 @@ func (s *Server) mountApplication(ctx context.Context, router gin.IRouter, cfg *
 		return err
 	}
 	publicHost := cfg.PublicURLParsed().Hostname()
-	api.RegisterV1(router, &api.V1Deps{
+	api.RegisterV1(router, &api.V1Deps{ //nolint:contextcheck // handlers run on each request's own context.
 		Logger: s.logger, Store: st, Auth: authenticator, Tokens: tokens,
 		Workspaces: workspaces, Devices: devices, Limiter: limiter,
 		VerificationURL: site.Origin + "/device",
@@ -48,8 +51,15 @@ func (s *Server) mountApplication(ctx context.Context, router gin.IRouter, cfg *
 		AgentServer: cfg.GRPC.ResolvePublicAddr(publicHost), CAHash: s.ca.Fingerprint(),
 		Apps: s.apps, Logs: s.logs, AppLogs: s.appLogs, GCWindow: s.gcWindow, RegistryGCSecret: cfg.Registry.GCSecret,
 		RegistryAddr: cfg.Registry.Addr, MaxSourceBytes: cfg.Apps.MaxSourceBytes, AppsBase: cfg.AppsBase(),
+		Releases: s.rollout, LastRequest: func(ctx context.Context, app uuid.UUID) *time.Time {
+			t, lastErr := activity.Last(ctx, s.redis, app)
+			if lastErr != nil {
+				return nil // shown without the live time
+			}
+			return t
+		},
 	})
-	api.RegisterInternal(router, &api.InternalDeps{Logger: s.logger, Visitors: s.visitors, GatewaySecret: cfg.GatewaySecret})
+	api.RegisterInternal(router, &api.InternalDeps{Logger: s.logger, Visitors: s.visitors, GatewaySecret: cfg.GatewaySecret, Releases: s.rollout})
 	pages, err := web.New(&web.Deps{
 		Logger: s.logger, Store: st, Auth: authenticator,
 		Flows: identity.NewFlows(s.redis), Provider: s.provider,

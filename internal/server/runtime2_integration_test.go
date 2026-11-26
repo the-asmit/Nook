@@ -68,6 +68,11 @@ func TestReconciliationAfterAgentRestart(t *testing.T) {
 		return err != nil
 	})
 	eventually(t, time.Minute, "the missing instance to run again", func() bool {
+		// The instance is placed again (its node was dead meanwhile); it
+		// has a published port once it runs.
+		if r.app(r.alice, r.ws, "web").Health != "running" {
+			return false
+		}
 		code, _ := get(r.appBase(r.alice, r.ws, "web") + "/healthz")
 		return code == http.StatusOK && countContainers(t, "nook.app="+appID.String()) == 1
 	})
@@ -270,8 +275,8 @@ func TestPlacementSkipsDrainingNodesAndPicksTheBestFit(t *testing.T) {
 	place := func() (store.AppInstance, error) {
 		var inst store.AppInstance
 		err := st.InTx(context.Background(), func(q *store.Queries) error {
-			var err error
-			inst, err = scheduler.Place(context.Background(), q, &cfg, &ps[0])
+			res, err := scheduler.Place(context.Background(), q, &cfg, &ps[0])
+			inst = res.Instance
 			return err
 		})
 		return inst, err

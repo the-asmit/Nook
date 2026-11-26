@@ -41,6 +41,8 @@ const (
 	StateCrashed     = "crashed"      // crash loop: not restarted
 	StateStopped     = "stopped"      // stopped by its owners
 	StateNotDeployed = "not_deployed" // nothing released yet
+	StateSleeping    = "sleeping"     // idle: the next request wakes it
+	StateWaking      = "waking"       // woken: its instance is starting
 )
 
 // Access modes.
@@ -164,14 +166,16 @@ func Effective(mode string, allowPublic bool) string {
 	return mode
 }
 
-// StateOf derives a route state from an app's desired state and its
-// newest instance.
-func StateOf(desired string, hasDeployment bool, instanceState string) string {
+// StateOf derives a route state from an app's desired state, whether it
+// sleeps or is being woken, and its instance's state.
+func StateOf(desired string, hasDeployment bool, instanceState string, sleeping, waking bool) string {
 	switch {
 	case desired == "stopped":
 		return StateStopped
 	case !hasDeployment:
 		return StateNotDeployed
+	case sleeping:
+		return StateSleeping
 	}
 	switch instanceState {
 	case "healthy":
@@ -180,12 +184,21 @@ func StateOf(desired string, hasDeployment bool, instanceState string) string {
 		return StateUnhealthy
 	case "crashed", "failed":
 		return StateCrashed
-	case "stopping", "stopped":
+	}
+	if waking {
+		return StateWaking
+	}
+	switch instanceState {
+	case "stopping", "stopped", "sleeping":
 		return StateStopped
 	default:
 		return StateStarting
 	}
 }
+
+// Wakeable reports whether requests for a route in state wait for the app
+// to wake (rather than failing at once).
+func Wakeable(state string) bool { return state == StateSleeping || state == StateWaking }
 
 // Describe is a visitor-facing sentence for a route that is not served.
 func Describe(state string) string {
@@ -198,6 +211,8 @@ func Describe(state string) string {
 		return "This app is starting. Try again in a moment."
 	case StateNotDeployed:
 		return "This app has not been deployed yet."
+	case StateSleeping, StateWaking:
+		return "This app is waking up. Try again in a moment."
 	default:
 		return fmt.Sprintf("This app is not available (%s).", state)
 	}

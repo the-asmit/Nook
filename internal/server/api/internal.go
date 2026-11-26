@@ -13,12 +13,13 @@ import (
 
 	"github.com/the-asmit/nook/internal/apperr"
 	"github.com/the-asmit/nook/internal/platform/config"
+	"github.com/the-asmit/nook/internal/rollout"
 	"github.com/the-asmit/nook/internal/routes"
 	"github.com/the-asmit/nook/internal/visitor"
 )
 
-// The internal API serves the gateways: routes, visitor sessions and the
-// certificates they obtain. Gateways authenticate with a shared secret
+// The internal API serves the gateways: routes, waking sleeping apps,
+// visitor sessions and the certificates they obtain. Gateways authenticate with a shared secret
 // (Authorization: Bearer <NOOK_GATEWAY_SECRET>); anything else gets 404,
 // so the API does not reveal itself.
 
@@ -27,6 +28,8 @@ type InternalDeps struct {
 	Logger        *slog.Logger
 	Visitors      *visitor.Service
 	GatewaySecret config.Secret
+	// Releases wakes sleeping apps.
+	Releases *rollout.Controller
 }
 
 // maxCertificateBytes bounds a stored certificate.
@@ -43,6 +46,7 @@ func RegisterInternal(r gin.IRouter, d *InternalDeps) {
 	g.GET("/routes", h.listRoutes)
 	g.GET("/routes/:app_id", h.getRoute)
 	g.GET("/tls/hosts/:host", h.knownHost)
+	g.POST("/apps/:app_id/wake", h.wakeApp)
 	g.POST("/visitor/exchange", h.exchange)
 	g.POST("/visitor/check", h.check)
 	g.POST("/visitor/sign-out", h.signOut)
@@ -58,6 +62,26 @@ func (h *internalAPI) requireGateway(c *gin.Context) {
 		return
 	}
 	c.Next()
+}
+
+// WakeResponse tells a gateway what its wake request found: "waking" (it
+// woke the app) or "awake" (already awake or being woken).
+type WakeResponse struct {
+	State string `json:"state"`
+}
+
+func (h *internalAPI) wakeApp(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("app_id"))
+	if err != nil {
+		writeError(c, h.Logger, apperr.NotFound("app not found"))
+		return
+	}
+	state, err := h.Releases.WakeApp(c.Request.Context(), id)
+	if err != nil {
+		writeError(c, h.Logger, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, WakeResponse{State: string(state)})
 }
 
 // RouteList is every app's route.

@@ -3,9 +3,12 @@ package server
 import (
 	"context"
 	"fmt"
+	"time"
+	"uuid"
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/the-asmit/nook/internal/activity"
 	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/builds"
 	"github.com/the-asmit/nook/internal/nodes"
@@ -42,13 +45,23 @@ func (s *Server) startBuilds(ctx context.Context, st *store.Store, cfg *Config, 
 	regClient := registry.NewClient(&cfg.Registry, issuer, s.ca)
 	queue := builds.NewQueue(s.redis)
 	s.routes = routes.NewPublisher(s.redis)
-	s.apps = apps.NewService(st, objects, queue, keyring, s.routes, cfg.Apps)
+	s.apps = apps.NewService(st, objects, queue, keyring, s.routes, &cfg.Apps)
 	s.visitors = visitor.New(st, keyring, cfg.AppsBase(), cfg.Apps.AllowPublicApps, &cfg.Visitor)
 	s.logs = builds.NewLogs(s.redis, objects, st, s.logger)
-	s.rollout = rollout.New(&rollout.Deps{
+	enqueue := func(ctx context.Context, id uuid.UUID) error {
+		if enqueueErr := queue.Enqueue(ctx, id); enqueueErr != nil {
+			return enqueueErr
+		}
+		return st.MarkEnqueued(ctx, id)
+	}
+	activityOf := func(ctx context.Context) (map[uuid.UUID]time.Time, error) { return activity.Read(ctx, s.redis) }
+	if s.rollout, err = rollout.New(&rollout.Deps{
 		Store: st, Commander: s.hub, Keyring: keyring, Issuer: issuer, RegistryAddr: cfg.Registry.Addr,
-		Notes: s.logs, Quotas: s.apps, Wake: queue.Wake, Routes: s.routes, Scheduler: cfg.Scheduler, Logger: s.logger,
-	}, &cfg.Rollout)
+		Notes: s.logs, Quotas: s.apps, Wake: queue.Wake, Enqueue: enqueue, Activity: activityOf, Routes: s.routes,
+		Scheduler: cfg.Scheduler, Metrics: reg, Logger: s.logger,
+	}, &cfg.Rollout); err != nil {
+		return err
+	}
 	s.appLogs = rollout.NewLogStreams(s.redis, s.hub, &cfg.Rollout, s.logger)
 	deps := &builds.Deps{
 		Store: st, Redis: s.redis, Commander: s.hub, Heartbeats: nodeRegistry, Apps: s.apps,

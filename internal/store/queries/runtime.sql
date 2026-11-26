@@ -75,8 +75,8 @@ LIMIT 1;
 -- name: ListDeploymentsToConverge :many
 -- Live deployments whose instances disagree with the app's desired state
 -- and that were not queued recently: running apps without an instance
--- (unless one crashed or failed since the state was set), stopped or
--- deleted apps with instances still holding resources.
+-- (unless one crashed or failed since the state was set, or the app
+-- sleeps), stopped or deleted apps with instances still holding resources.
 SELECT d.* FROM deployments d
 JOIN apps a ON a.current_deployment_id = d.id
 WHERE d.status = 'live' AND (d.enqueued_at IS NULL OR d.enqueued_at < @before)
@@ -85,7 +85,7 @@ WHERE d.status = 'live' AND (d.enqueued_at IS NULL OR d.enqueued_at < @before)
           SELECT 1 FROM app_instances i
           WHERE i.deployment_id = d.id AND i.state IN ('starting', 'healthy', 'unhealthy', 'stopping')
       ))
-      OR (a.desired_state = 'running' AND a.deleted_at IS NULL
+      OR (a.desired_state = 'running' AND a.deleted_at IS NULL AND a.sleeping_since IS NULL
           AND NOT EXISTS (
               SELECT 1 FROM app_instances i
               WHERE i.deployment_id = d.id AND i.state IN ('starting', 'healthy', 'unhealthy', 'stopping')
@@ -145,10 +145,11 @@ WHERE app_id = @app_id AND state IN ('starting', 'healthy', 'unhealthy', 'stoppi
 ORDER BY created_at;
 
 -- name: ListInstancesOnNode :many
--- Instances whose containers a node should have: running, stopping, or
--- crashed (kept for their logs).
+-- Instances whose containers a node should have: running, stopping,
+-- crashed (kept for their logs) or sleeping (kept, stopped, for a fast
+-- wake).
 SELECT * FROM app_instances
-WHERE node_id = @node_id AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed')
+WHERE node_id = @node_id AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed', 'sleeping')
 ORDER BY created_at;
 
 -- name: LatestInstanceOfApp :one
@@ -157,7 +158,7 @@ SELECT * FROM app_instances WHERE app_id = @app_id ORDER BY created_at DESC LIMI
 -- name: LatestInstanceWithContainer :one
 -- The newest instance whose container may still exist, for `nook logs`.
 SELECT * FROM app_instances
-WHERE app_id = @app_id AND container_id IS NOT NULL AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed')
+WHERE app_id = @app_id AND container_id IS NOT NULL AND state IN ('starting', 'healthy', 'unhealthy', 'stopping', 'crashed', 'sleeping')
 ORDER BY created_at DESC
 LIMIT 1;
 
@@ -195,7 +196,7 @@ WHERE id = @id AND state IN ('starting', 'unhealthy')
 RETURNING *;
 
 -- name: RequestInstanceStop :one
-UPDATE app_instances SET state = 'stopping', stop_requested_at = now(), updated_at = now()
+UPDATE app_instances SET state = 'stopping', stop_requested_at = now(), stop_reason = @stop_reason, updated_at = now()
 WHERE id = @id AND state IN ('starting', 'healthy', 'unhealthy', 'crashed')
 RETURNING *;
 

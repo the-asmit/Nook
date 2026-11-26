@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 	"uuid"
@@ -75,7 +76,10 @@ type NodeEventView struct {
 // NodeDetailView is a node with its recent history.
 type NodeDetailView struct {
 	NodeView
-	Events []NodeEventView `json:"events"`
+	// ActiveInstances counts app instances still running (or stopping) on
+	// the node: zero once a drain is complete.
+	ActiveInstances int64           `json:"active_instances"`
+	Events          []NodeEventView `json:"events"`
 }
 
 func nodeView(n *store.Node, hb *nodes.Sample) NodeView {
@@ -148,7 +152,12 @@ func (h *V1) getNode(c *gin.Context) {
 		writeError(c, h.Logger, err)
 		return
 	}
-	out := NodeDetailView{NodeView: nodeView(&n, hb), Events: make([]NodeEventView, 0, len(evs))}
+	active, err := h.Store.CountActiveInstancesOnNode(ctx, &n.ID)
+	if err != nil {
+		writeError(c, h.Logger, fmt.Errorf("count instances: %w", err))
+		return
+	}
+	out := NodeDetailView{NodeView: nodeView(&n, hb), ActiveInstances: active, Events: make([]NodeEventView, 0, len(evs))}
 	for _, e := range evs {
 		ev := NodeEventView{To: string(e.ToStatus), Reason: e.Reason, At: e.CreatedAt}
 		if e.FromStatus != nil {

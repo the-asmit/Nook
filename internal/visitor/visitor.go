@@ -75,18 +75,18 @@ func New(st *store.Store, keyring *secrets.Keyring, base routes.Base, allowPubli
 // Base is the apps domain.
 func (s *Service) Base() routes.Base { return s.base }
 
-// routeFrom builds a route from a store row.
-func (s *Service) routeFrom(appID uuid.UUID, appSlug, wsSlug string, mode store.AppAccessMode, desired store.AppDesiredState,
-	current *uuid.UUID, inst, address string, port *int32) routes.Route {
-	r := routes.Route{
-		AppID: appID, Host: s.base.Host(wsSlug, appSlug), Workspace: wsSlug, App: appSlug,
-		Access: routes.Effective(string(mode), s.allowPublic),
-		State:  routes.StateOf(string(desired), current != nil, inst),
+// routeFrom builds a route from a store row (GetRouteRow converts to it:
+// both queries select the same columns).
+func (s *Service) routeFrom(r *store.ListRoutesRow) routes.Route {
+	out := routes.Route{
+		AppID: r.AppID, Host: s.base.Host(r.WorkspaceSlug, r.AppSlug), Workspace: r.WorkspaceSlug, App: r.AppSlug,
+		Access: routes.Effective(string(r.AccessMode), s.allowPublic),
+		State:  routes.StateOf(string(r.DesiredState), r.CurrentDeploymentID != nil, r.InstanceState, r.Sleeping, r.Waking),
 	}
-	if address != "" && port != nil {
-		r.Upstream = net.JoinHostPort(address, strconv.Itoa(int(*port)))
+	if r.Address != "" && r.HostPort != nil && (r.InstanceState == "healthy" || r.InstanceState == "unhealthy" || r.InstanceState == "starting") {
+		out.Upstream = net.JoinHostPort(r.Address, strconv.Itoa(int(*r.HostPort)))
 	}
-	return r
+	return out
 }
 
 // Routes returns every app's route.
@@ -97,9 +97,7 @@ func (s *Service) Routes(ctx context.Context) ([]routes.Route, error) {
 	}
 	out := make([]routes.Route, 0, len(rows))
 	for i := range rows {
-		r := &rows[i]
-		out = append(out, s.routeFrom(r.AppID, r.AppSlug, r.WorkspaceSlug, r.AccessMode, r.DesiredState,
-			r.CurrentDeploymentID, r.InstanceState, r.Address, r.HostPort))
+		out = append(out, s.routeFrom(&rows[i]))
 	}
 	return out, nil
 }
@@ -113,8 +111,8 @@ func (s *Service) Route(ctx context.Context, appID uuid.UUID) (routes.Route, err
 	if err != nil {
 		return routes.Route{}, fmt.Errorf("read route: %w", err)
 	}
-	return s.routeFrom(r.AppID, r.AppSlug, r.WorkspaceSlug, r.AccessMode, r.DesiredState,
-		r.CurrentDeploymentID, r.InstanceState, r.Address, r.HostPort), nil
+	row := store.ListRoutesRow(r)
+	return s.routeFrom(&row), nil
 }
 
 // KnownHost reports whether a certificate may be requested for host: an

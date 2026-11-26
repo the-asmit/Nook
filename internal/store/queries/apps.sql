@@ -22,9 +22,9 @@ SELECT count(*) FROM apps WHERE workspace_id = @workspace_id;
 
 -- name: CreateApp :one
 INSERT INTO apps (workspace_id, slug, name, created_by, port, health_check_path, memory_mb, cpu_millicores,
-                  startup_timeout_seconds, read_only_rootfs)
+                  startup_timeout_seconds, read_only_rootfs, sleep_after_seconds)
 VALUES (@workspace_id, @slug, @name, @created_by, @port, @health_check_path, @memory_mb, @cpu_millicores,
-        @startup_timeout_seconds, @read_only_rootfs)
+        @startup_timeout_seconds, @read_only_rootfs, @sleep_after_seconds)
 RETURNING *;
 
 -- name: GetApp :one
@@ -219,7 +219,7 @@ SELECT EXISTS (
 UPDATE apps
 SET port = @port, health_check_path = @health_check_path, memory_mb = @memory_mb,
     cpu_millicores = @cpu_millicores, startup_timeout_seconds = @startup_timeout_seconds,
-    read_only_rootfs = @read_only_rootfs
+    read_only_rootfs = @read_only_rootfs, sleep_after_seconds = @sleep_after_seconds
 WHERE id = @id AND deleted_at IS NULL
 RETURNING *;
 

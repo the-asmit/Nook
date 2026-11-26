@@ -31,6 +31,12 @@ type Config struct {
 	LogMaxBytes int64 `env:"NOOK_APP_LOGS_MAX_BYTES" envDefault:"10485760"`
 	// LogMaxDuration caps how long `nook logs --follow` streams.
 	LogMaxDuration time.Duration `env:"NOOK_APP_LOGS_MAX_DURATION" envDefault:"1h"`
+	// RelocateInterval is how often the leader moves instances off dead
+	// and draining nodes (part of the failover time).
+	RelocateInterval time.Duration `env:"NOOK_ROLLOUT_RELOCATE_INTERVAL" envDefault:"2s"`
+	// IdleInterval is how often the leader puts idle apps to sleep (apps
+	// sleep at most this long after their sleep_after).
+	IdleInterval time.Duration `env:"NOOK_ROLLOUT_IDLE_INTERVAL" envDefault:"10s"`
 }
 
 // Validate checks the configuration.
@@ -40,6 +46,8 @@ func (c *Config) Validate() error {
 		config.CheckDuration("NOOK_ROLLOUT_PULL_TIMEOUT", c.PullTimeout, 10*time.Second, time.Hour),
 		config.CheckRange("NOOK_APP_LOGS_MAX_BYTES", c.LogMaxBytes, 64<<10, 1<<30),
 		config.CheckDuration("NOOK_APP_LOGS_MAX_DURATION", c.LogMaxDuration, 10*time.Second, 24*time.Hour),
+		config.CheckDuration("NOOK_ROLLOUT_RELOCATE_INTERVAL", c.RelocateInterval, 100*time.Millisecond, time.Minute),
+		config.CheckDuration("NOOK_ROLLOUT_IDLE_INTERVAL", c.IdleInterval, 100*time.Millisecond, 10*time.Minute),
 	)
 }
 

@@ -9,6 +9,8 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/the-asmit/nook/internal/apperr"
 	"github.com/the-asmit/nook/internal/registry"
 	"github.com/the-asmit/nook/internal/scheduler"
@@ -54,21 +56,33 @@ type Deps struct {
 	// Wake asks a deployment's owner to look at it again.
 	Wake func(ctx context.Context, deploymentID uuid.UUID)
 	// Routes announces that an app's route (where it is served) changed.
-	Routes    RouteEvents
+	Routes RouteEvents
+	// Enqueue adds a job for a deployment, so an owner picks it up even if
+	// none follows it now (a live deployment waking up or moving).
+	Enqueue func(ctx context.Context, deploymentID uuid.UUID) error
+	// Activity returns when apps last received requests (from the gateways).
+	Activity  func(ctx context.Context) (map[uuid.UUID]time.Time, error)
 	Scheduler scheduler.Config
+	Metrics   prometheus.Registerer
 	Logger    *slog.Logger
 }
 
-// Controller releases deployments and keeps them running.
+// Controller releases deployments and keeps them running, asleep or
+// moving.
 type Controller struct {
 	Deps
-	cfg Config
-	now func() time.Time
+	cfg     Config
+	now     func() time.Time
+	metrics *metrics
 }
 
 // New returns a controller.
-func New(d *Deps, cfg *Config) *Controller {
-	return &Controller{Deps: *d, cfg: *cfg, now: time.Now}
+func New(d *Deps, cfg *Config) (*Controller, error) {
+	m, err := newMetrics(d.Metrics, d.Store)
+	if err != nil {
+		return nil, err
+	}
+	return &Controller{Deps: *d, cfg: *cfg, now: time.Now, metrics: m}, nil
 }
 
 // Step moves a built, deploying or live deployment towards its goal and
@@ -124,8 +138,14 @@ func (c *Controller) stepBuilt(ctx context.Context, dep *store.Deployment, app *
 			snapshot = &s.ID
 		}
 		var err error
-		started, err = q.StartDeploying(ctx, store.StartDeployingParams{ID: dep.ID, EnvSnapshotID: snapshot})
-		return err
+		if started, err = q.StartDeploying(ctx, store.StartDeployingParams{ID: dep.ID, EnvSnapshotID: snapshot}); err != nil {
+			return err
+		}
+		// A release wakes a sleeping app: requests wait for the new version.
+		if _, wakeErr := q.WakeApp(ctx, app.ID); wakeErr != nil && !store.IsNotFound(wakeErr) {
+			return fmt.Errorf("wake app: %w", wakeErr)
+		}
+		return nil
 	})
 	switch {
 	case store.IsUniqueViolation(err, "deployments_one_deploying_per_app"):
@@ -146,7 +166,7 @@ func (c *Controller) stepDeploying(ctx context.Context, dep *store.Deployment, a
 	}
 	inst, err := c.Store.LatestInstanceOfDeployment(ctx, dep.ID)
 	if store.IsNotFound(err) {
-		created, placeErr := c.place(ctx, dep, app)
+		res, placeErr := c.place(ctx, dep, app, &placeOpts{cause: scheduler.CauseRelease})
 		var ae *apperr.Error
 		switch {
 		case errors.Is(placeErr, scheduler.ErrNoCapacity):
@@ -156,8 +176,11 @@ func (c *Controller) stepDeploying(ctx context.Context, dep *store.Deployment, a
 		case placeErr != nil:
 			return false, placeErr
 		}
-		c.Notes.Note(ctx, dep.ID, "", "placed on node "+created.NodeName)
-		inst = created
+		for i := range res.Evicted {
+			c.Notes.Note(ctx, dep.ID, "", fmt.Sprintf("put idle app %s to sleep on node %s to make room", res.Evicted[i].App.Slug, res.Instance.NodeName))
+		}
+		c.Notes.Note(ctx, dep.ID, "", "placed on node "+res.Instance.NodeName)
+		inst = res.Instance
 	} else if err != nil {
 		return false, fmt.Errorf("read instance: %w", err)
 	}
@@ -174,36 +197,6 @@ func (c *Controller) stepDeploying(ctx context.Context, dep *store.Deployment, a
 	default:
 		return c.failRollout(ctx, dep, &inst, "the new version stopped before it became healthy")
 	}
-}
-
-// place records a new instance of dep on a node, within the workspace's
-// memory quota. The previous version of the app does not count against
-// the quota (both run during the rollout).
-func (c *Controller) place(ctx context.Context, dep *store.Deployment, app *store.App) (store.AppInstance, error) {
-	var inst store.AppInstance
-	err := c.Store.InTx(ctx, func(q *store.Queries) error {
-		// Serializes placements in the workspace for the quota check.
-		if _, err := q.LockWorkspace(ctx, app.WorkspaceID); err != nil {
-			return fmt.Errorf("lock workspace: %w", err)
-		}
-		quota, err := c.Quotas.MemoryQuotaMB(ctx, q, app.WorkspaceID)
-		if err != nil {
-			return err
-		}
-		used, err := q.WorkspaceReservedMemory(ctx, store.WorkspaceReservedMemoryParams{WorkspaceID: app.WorkspaceID, ExceptAppID: app.ID})
-		if err != nil {
-			return fmt.Errorf("read workspace reservations: %w", err)
-		}
-		if used+int64(app.MemoryMb) > quota {
-			return apperr.Conflict("memory_quota_exceeded",
-				"the workspace's memory quota is %d MB; %d MB are reserved by other apps and this app needs %d MB", quota, used, app.MemoryMb)
-		}
-		inst, err = scheduler.Place(ctx, q, &c.Scheduler, &scheduler.Placement{
-			AppID: app.ID, DeploymentID: dep.ID, WorkspaceID: app.WorkspaceID, MemoryMB: app.MemoryMb, Millicores: app.CpuMillicores,
-		})
-		return err
-	})
-	return inst, err
 }
 
 // followStart sends the start command once and fails an instance whose
@@ -242,6 +235,9 @@ func (c *Controller) switchOver(ctx context.Context, dep *store.Deployment, app 
 		if _, err := q.MarkLive(ctx, dep.ID); err != nil {
 			return err
 		}
+		if err := q.ClearSleep(ctx, app.ID); err != nil {
+			return fmt.Errorf("clear sleep: %w", err)
+		}
 		return q.SetCurrentDeployment(ctx, store.SetCurrentDeploymentParams{ID: app.ID, DeploymentID: &dep.ID})
 	})
 	if store.IsNotFound(err) {
@@ -261,7 +257,8 @@ func (c *Controller) switchOver(ctx context.Context, dep *store.Deployment, app 
 	return true, nil
 }
 
-// stopOthers stops the app's instances that do not belong to keep.
+// stopOthers stops the app's instances that do not belong to keep, and
+// removes a sleeping instance of an older deployment.
 func (c *Controller) stopOthers(ctx context.Context, appID, keep uuid.UUID, drain time.Duration) {
 	list, err := c.Store.ListReservedInstancesOfApp(ctx, appID)
 	if err != nil {
@@ -270,64 +267,12 @@ func (c *Controller) stopOthers(ctx context.Context, appID, keep uuid.UUID, drai
 	}
 	for i := range list {
 		if list[i].DeploymentID != keep {
-			c.stopInstance(ctx, &list[i], drain)
+			c.stopInstance(ctx, &list[i], drain, stopReplaced)
 		}
 	}
-}
-
-// converge keeps a live deployment's instance in the app's desired state.
-func (c *Controller) converge(ctx context.Context, dep *store.Deployment, app *store.App) (bool, error) {
-	if app.CurrentDeploymentID == nil || *app.CurrentDeploymentID != dep.ID {
-		return true, nil
+	if sleeping, err := c.Store.SleepingInstanceOfApp(ctx, appID); err == nil && sleeping.DeploymentID != keep {
+		c.finishSleeping(ctx, &sleeping)
 	}
-	list, err := c.Store.ListReservedInstancesOfApp(ctx, app.ID)
-	if err != nil {
-		return false, fmt.Errorf("list instances: %w", err)
-	}
-	var mine []store.AppInstance
-	for i := range list {
-		if list[i].DeploymentID == dep.ID {
-			mine = append(mine, list[i])
-		}
-	}
-	if app.DeletedAt != nil || app.DesiredState == store.AppDesiredStateStopped {
-		// Instances already stopping get the request again: the first one
-		// may have been lost (stopping is idempotent on the agent).
-		for i := range mine {
-			c.stopInstance(ctx, &mine[i], 0)
-		}
-		return c.stopCrashed(ctx, dep.ID)
-	}
-	for i := range mine {
-		if mine[i].State == store.InstanceStateStarting {
-			return false, c.followStart(ctx, dep, app, &mine[i])
-		}
-		if mine[i].State != store.InstanceStateStopping {
-			return true, nil // healthy or restarting: running as wanted
-		}
-	}
-	last, err := c.Store.LatestInstanceOfDeployment(ctx, dep.ID)
-	if err == nil && (last.State == store.InstanceStateCrashed || last.State == store.InstanceStateFailed) &&
-		!last.CreatedAt.Before(app.DesiredStateAt) {
-		return true, nil // it crashed since it was started; a user starts it again
-	}
-	if err != nil && !store.IsNotFound(err) {
-		return false, fmt.Errorf("read instance: %w", err)
-	}
-	if err == nil && last.State == store.InstanceStateCrashed {
-		c.stopInstance(ctx, &last, 0)
-	}
-	inst, err := c.place(ctx, dep, app)
-	var ae *apperr.Error
-	if errors.Is(err, scheduler.ErrNoCapacity) || errors.As(err, &ae) {
-		// The janitor retries live deployments without an instance.
-		c.Logger.WarnContext(ctx, "could not start app", "app", app.Slug, "deployment", dep.ID.String(), "reason", err.Error())
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return false, c.sendStart(ctx, dep, app, &inst)
 }
 
 // stopCrashed removes the container of a crashed instance of a deployment
@@ -342,7 +287,7 @@ func (c *Controller) stopCrashed(ctx context.Context, depID uuid.UUID) (bool, er
 		return false, fmt.Errorf("read instance: %w", err)
 	}
 	if last.State == store.InstanceStateCrashed {
-		c.stopInstance(ctx, &last, 0)
+		c.stopInstance(ctx, &last, 0, stopStopped)
 	}
 	return true, nil
 }
@@ -367,7 +312,7 @@ func (c *Controller) failRollout(ctx context.Context, dep *store.Deployment, ins
 	if inst != nil {
 		switch inst.State {
 		case store.InstanceStateStarting, store.InstanceStateHealthy, store.InstanceStateUnhealthy, store.InstanceStateCrashed:
-			c.stopInstance(ctx, inst, 0)
+			c.stopInstance(ctx, inst, 0, stopReplaced)
 		default:
 		}
 		if inst.StartupLog != "" {

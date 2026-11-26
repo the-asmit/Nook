@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 	"uuid"
@@ -31,6 +32,9 @@ type AppView struct {
 	URL string `json:"url"`
 	// AccessMode is workspace, restricted or public.
 	AccessMode string `json:"access_mode"`
+	// SleepAfter is how long the app may go without requests before it
+	// sleeps ("15m"), or "never".
+	SleepAfter string `json:"sleep_after"`
 	// Deployments is how many deployments the app has had.
 	Deployments int32     `json:"deployments"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -41,7 +45,7 @@ func (h *V1) appView(ws string, a *store.App) AppView {
 		URL: h.AppsBase.URL(ws, a.Slug), AccessMode: string(a.AccessMode),
 		ID: a.ID, Slug: a.Slug, Name: a.Name, Port: a.Port, HealthCheckPath: a.HealthCheckPath,
 		MemoryMB: a.MemoryMb, CPUMillicores: a.CpuMillicores, StartupTimeoutSeconds: a.StartupTimeoutSeconds,
-		ReadOnlyRootfs: a.ReadOnlyRootfs, DesiredState: string(a.DesiredState),
+		ReadOnlyRootfs: a.ReadOnlyRootfs, DesiredState: string(a.DesiredState), SleepAfter: apps.FormatSleepAfter(a.SleepAfterSeconds),
 		Deployments: a.NextDeploymentNumber - 1, CreatedAt: a.CreatedAt,
 	}
 }
@@ -52,20 +56,38 @@ type AppDetailView struct {
 	// LiveDeployment is the number of the deployment serving the app.
 	LiveDeployment *int32 `json:"live_deployment"`
 	// Health summarizes the app: "running", "starting", "unhealthy"
-	// (restarting after crashes), "crashed", "stopped" or "not_deployed".
+	// (restarting after crashes), "crashed", "sleeping", "waking",
+	// "stopped" or "not_deployed".
 	Health   string        `json:"health"`
 	Instance *InstanceView `json:"instance"`
+	// SleepingSince and SleepReason ("idle", or "evicted" to make room for
+	// another app) are set while the app sleeps.
+	SleepingSince *time.Time `json:"sleeping_since"`
+	SleepReason   string     `json:"sleep_reason,omitempty"`
+	// LastRequestAt is when the gateways last saw a request for the app.
+	LastRequestAt *time.Time `json:"last_request_at"`
 }
 
-func (h *V1) appDetailView(ws string, rt *apps.Runtime) AppDetailView {
-	v := AppDetailView{AppView: h.appView(ws, &rt.App), Instance: instanceView(rt.Instance), Health: "not_deployed"}
+func (h *V1) appDetailView(ctx context.Context, ws string, rt *apps.Runtime) AppDetailView {
+	v := AppDetailView{AppView: h.appView(ws, &rt.App), Instance: instanceView(rt.Instance), Health: "not_deployed",
+		SleepingSince: rt.App.SleepingSince, SleepReason: rt.App.SleepReason, LastRequestAt: rt.App.LastRequestAt}
+	if h.LastRequest != nil {
+		if t := h.LastRequest(ctx, rt.App.ID); t != nil && (v.LastRequestAt == nil || t.After(*v.LastRequestAt)) {
+			v.LastRequestAt = t
+		}
+	}
 	if rt.Live != nil {
 		v.LiveDeployment = &rt.Live.Number
 	}
+	waking := rt.App.WakeRequestedAt != nil && (rt.Instance == nil || rt.Instance.State != store.InstanceStateHealthy)
 	switch {
 	case rt.App.DesiredState == store.AppDesiredStateStopped:
 		v.Health = "stopped"
 	case rt.Live == nil:
+	case rt.App.SleepingSince != nil:
+		v.Health = "sleeping"
+	case waking:
+		v.Health = "waking"
 	case rt.Instance == nil:
 		v.Health = "starting"
 	default:
@@ -96,6 +118,8 @@ type CreateAppRequest struct {
 	// StartupTimeoutSeconds defaults to 60, up to the instance's maximum.
 	StartupTimeoutSeconds int32 `json:"startup_timeout_seconds"`
 	ReadOnlyRootfs        bool  `json:"read_only_rootfs"`
+	// SleepAfter is a duration ("15m") or "never"; default 15m.
+	SleepAfter string `json:"sleep_after"`
 }
 
 // UpdateAppRequest changes an app's settings; omitted fields stay.
@@ -106,6 +130,7 @@ type UpdateAppRequest struct {
 	CPUMillicores         *int32  `json:"cpu_millicores"`
 	StartupTimeoutSeconds *int32  `json:"startup_timeout_seconds"`
 	ReadOnlyRootfs        *bool   `json:"read_only_rootfs"`
+	SleepAfter            *string `json:"sleep_after"`
 }
 
 type slugCursor struct {
@@ -132,10 +157,10 @@ func (h *V1) createApp(c *gin.Context) {
 	if !decodeJSON(c, &req) {
 		return
 	}
-	app, err := h.Apps.Create(c.Request.Context(), actor(c), c.Param("slug"), apps.Spec{
+	app, err := h.Apps.Create(c.Request.Context(), actor(c), c.Param("slug"), &apps.Spec{
 		Slug: req.Slug, Name: req.Name, Port: req.Port, HealthCheckPath: req.HealthCheckPath,
 		MemoryMB: req.MemoryMB, CPUMillicores: req.CPUMillicores,
-		StartupTimeoutSeconds: req.StartupTimeoutSeconds, ReadOnlyRootfs: req.ReadOnlyRootfs,
+		StartupTimeoutSeconds: req.StartupTimeoutSeconds, ReadOnlyRootfs: req.ReadOnlyRootfs, SleepAfter: req.SleepAfter,
 	})
 	if err != nil {
 		writeError(c, h.Logger, err)
@@ -150,7 +175,34 @@ func (h *V1) getApp(c *gin.Context) {
 		writeError(c, h.Logger, err)
 		return
 	}
-	c.JSON(http.StatusOK, h.appDetailView(c.Param("slug"), &rt))
+	c.JSON(http.StatusOK, h.appDetailView(c.Request.Context(), c.Param("slug"), &rt))
+}
+
+// wakeApp wakes a sleeping app (any member); 202 while it starts.
+func (h *V1) wakeApp(c *gin.Context) {
+	ctx := c.Request.Context()
+	rt, err := h.Apps.GetRuntime(ctx, actor(c), c.Param("slug"), c.Param("app"))
+	if err != nil {
+		writeError(c, h.Logger, err)
+		return
+	}
+	switch {
+	case rt.App.DesiredState == store.AppDesiredStateStopped:
+		writeError(c, h.Logger, apperr.Conflict("app_stopped", "the app is stopped; start it with nook apps start"))
+		return
+	case rt.Live == nil:
+		writeError(c, h.Logger, apperr.Conflict("not_deployed", "the app has not been deployed yet"))
+		return
+	}
+	if _, err = h.Releases.WakeApp(ctx, rt.App.ID); err != nil {
+		writeError(c, h.Logger, err)
+		return
+	}
+	if rt, err = h.Apps.GetRuntime(ctx, actor(c), c.Param("slug"), c.Param("app")); err != nil {
+		writeError(c, h.Logger, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, h.appDetailView(ctx, c.Param("slug"), &rt))
 }
 
 func (h *V1) updateApp(c *gin.Context) {
@@ -160,7 +212,7 @@ func (h *V1) updateApp(c *gin.Context) {
 	}
 	if _, err := h.Apps.Update(c.Request.Context(), actor(c), c.Param("slug"), c.Param("app"), apps.Settings{
 		Port: req.Port, HealthCheckPath: req.HealthCheckPath, MemoryMB: req.MemoryMB, CPUMillicores: req.CPUMillicores,
-		StartupTimeoutSeconds: req.StartupTimeoutSeconds, ReadOnlyRootfs: req.ReadOnlyRootfs,
+		StartupTimeoutSeconds: req.StartupTimeoutSeconds, ReadOnlyRootfs: req.ReadOnlyRootfs, SleepAfter: req.SleepAfter,
 	}); err != nil {
 		writeError(c, h.Logger, err)
 		return

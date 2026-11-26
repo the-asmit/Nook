@@ -13,6 +13,13 @@
 // (in a fixed order) before reading reservations and inserting the
 // instance, so two placements racing for the last capacity of a node are
 // serialized and the second one sees the first one's reservation.
+//
+// Two options refine it. A placement may prefer a node (an app waking up
+// resumes its sleeping instance where its container and image still are,
+// if that node has room). And when nothing fits, a placement may evict:
+// on a single node, the least recently used running apps that may sleep
+// and have been idle long enough are put to sleep, in the same
+// transaction, until the new instance fits (see ChooseEviction).
 package scheduler
 
 import (
@@ -21,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 	"uuid"
 
 	"github.com/the-asmit/nook/internal/platform/config"
@@ -34,6 +42,9 @@ type Config struct {
 	ReservedMemoryMB int64 `env:"NOOK_SCHEDULER_NODE_RESERVED_MEMORY_MB" envDefault:"512"`
 	// ReservedMillicores is CPU per node not given to apps.
 	ReservedMillicores int64 `env:"NOOK_SCHEDULER_NODE_RESERVED_MILLICORES" envDefault:"250"`
+	// EvictMinIdle is how long an app must have gone without requests
+	// before it may be put to sleep to make room for another.
+	EvictMinIdle time.Duration `env:"NOOK_SCHEDULER_EVICT_MIN_IDLE" envDefault:"1m"`
 }
 
 // Validate checks the configuration.
@@ -41,6 +52,7 @@ func (c *Config) Validate() error {
 	return errors.Join(
 		config.CheckRange("NOOK_SCHEDULER_NODE_RESERVED_MEMORY_MB", c.ReservedMemoryMB, 0, 1<<20),
 		config.CheckRange("NOOK_SCHEDULER_NODE_RESERVED_MILLICORES", c.ReservedMillicores, 0, 1<<20),
+		config.CheckDuration("NOOK_SCHEDULER_EVICT_MIN_IDLE", c.EvictMinIdle, 0, 24*time.Hour),
 	)
 }
 
@@ -101,6 +113,59 @@ func Pick(nodes []Node, req Request) (Node, bool) {
 	return *best.node, true
 }
 
+// Evictable is a running instance whose app may be put to sleep to make
+// room, with the time it was last used.
+type Evictable struct {
+	InstanceID uuid.UUID
+	AppID      uuid.UUID
+	NodeID     uuid.UUID
+	MemoryMB   int64
+	Millicores int64
+	LastActive time.Time
+}
+
+// ChooseEviction picks, on a single node, the least recently used
+// candidates idle for at least minIdle whose release makes req fit there.
+// Among nodes where that works it prefers the fewest evictions, then the
+// set whose most recently used member was used least recently, then the
+// node name. It reports false if no node can be freed enough.
+func ChooseEviction(nodes []Node, cands []Evictable, req Request, now time.Time, minIdle time.Duration) (Node, []Evictable, bool) {
+	byNode := map[uuid.UUID][]Evictable{}
+	for _, c := range cands {
+		if now.Sub(c.LastActive) >= minIdle {
+			byNode[c.NodeID] = append(byNode[c.NodeID], c)
+		}
+	}
+	type option struct {
+		node    Node
+		victims []Evictable
+	}
+	var opts []option
+	for _, n := range nodes {
+		list := byNode[n.ID]
+		slices.SortFunc(list, func(a, b Evictable) int {
+			return cmp.Or(a.LastActive.Compare(b.LastActive), cmp.Compare(a.InstanceID.String(), b.InstanceID.String()))
+		})
+		freed := n
+		for i, c := range list {
+			freed.ReservedMemoryMB -= c.MemoryMB
+			freed.ReservedMillicores -= c.Millicores
+			if _, ok := freed.fits(req); ok {
+				opts = append(opts, option{node: n, victims: list[:i+1]})
+				break
+			}
+		}
+	}
+	if len(opts) == 0 {
+		return Node{}, nil, false
+	}
+	best := slices.MinFunc(opts, func(a, b option) int {
+		newestA, newestB := a.victims[len(a.victims)-1].LastActive, b.victims[len(b.victims)-1].LastActive
+		return cmp.Or(cmp.Compare(len(a.victims), len(b.victims)), newestA.Compare(newestB), cmp.Compare(a.node.Name, b.node.Name))
+	})
+	return best.node, best.victims, true
+}
+
 // Placement describes the instance to create.
 type Placement struct {
 	AppID        uuid.UUID
@@ -108,19 +173,87 @@ type Placement struct {
 	WorkspaceID  uuid.UUID
 	MemoryMB     int32
 	Millicores   int32
+	// Cause is why the instance is needed (release, restart, wake,
+	// failover, drain) and CauseAt when that happened.
+	Cause   string
+	CauseAt *time.Time
+	// Resume, if set, is a sleeping instance of the app to start again on
+	// its own node when that node has room (its container and image are
+	// there).
+	Resume *store.AppInstance
+	// Evict, if set, lets the placement put idle apps to sleep when no
+	// node has room.
+	Evict *Eviction
+}
+
+// Eviction is what a placement needs to evict: when each app was last
+// used (activity from the gateways) and the time now.
+type Eviction struct {
+	Activity map[uuid.UUID]time.Time
+	Now      time.Time
+}
+
+// Evicted is an app put to sleep to make room.
+type Evicted struct {
+	App      store.App
+	Instance store.AppInstance
+	// LastActive is when it was last used.
+	LastActive time.Time
+}
+
+// Result is a placement's outcome.
+type Result struct {
+	Instance store.AppInstance
+	// Resumed reports that Placement.Resume was started again in place.
+	Resumed bool
+	// Evicted lists the apps put to sleep for this placement; the caller
+	// stops their containers (keeping them) after committing.
+	Evicted []Evicted
 }
 
 // Place locks the schedulable nodes, picks one and records the instance on
 // it, all within q's transaction (the caller commits). It returns
-// ErrNoCapacity if no node fits.
-func Place(ctx context.Context, q *store.Queries, cfg *Config, p *Placement) (store.AppInstance, error) {
+// ErrNoCapacity if no node fits (after evicting, if allowed).
+func Place(ctx context.Context, q *store.Queries, cfg *Config, p *Placement) (Result, error) {
+	nodes, err := lockNodes(ctx, q, cfg)
+	if err != nil {
+		return Result{}, err
+	}
+	req := Request{MemoryMB: int64(p.MemoryMB), Millicores: int64(p.Millicores)}
+	if p.Resume != nil && p.Resume.NodeID != nil {
+		for i := range nodes {
+			if nodes[i].ID != *p.Resume.NodeID {
+				continue
+			}
+			if _, ok := nodes[i].fits(req); ok {
+				inst, err := q.ResumeInstance(ctx, store.ResumeInstanceParams{ID: p.Resume.ID, Cause: p.Cause, CauseAt: p.CauseAt})
+				if err != nil {
+					return Result{}, fmt.Errorf("resume instance: %w", err)
+				}
+				return Result{Instance: inst, Resumed: true}, nil
+			}
+		}
+	}
+	if node, ok := Pick(nodes, req); ok {
+		inst, err := createOn(ctx, q, &node, p)
+		return Result{Instance: inst}, err
+	}
+	if p.Evict == nil {
+		return Result{}, ErrNoCapacity
+	}
+	return evictAndPlace(ctx, q, cfg, p, nodes, req)
+}
+
+// lockNodes locks the schedulable nodes and returns them with what is
+// reserved on each.
+func lockNodes(ctx context.Context, q *store.Queries, cfg *Config) ([]Node, error) {
 	rows, err := q.LockSchedulableNodes(ctx)
 	if err != nil {
-		return store.AppInstance{}, fmt.Errorf("lock nodes: %w", err)
+		return nil, fmt.Errorf("lock nodes: %w", err)
 	}
 	res, err := q.NodeReservations(ctx)
 	if err != nil {
-		return store.AppInstance{}, fmt.Errorf("read reservations: %w", err)
+		return nil, fmt.Errorf("read reservations: %w", err)
 	}
 	reserved := make(map[uuid.UUID]store.NodeReservationsRow, len(res))
 	for _, r := range res {
@@ -140,10 +273,10 @@ func Place(ctx context.Context, q *store.Queries, cfg *Config, p *Placement) (st
 		}
 		nodes = append(nodes, n)
 	}
-	node, ok := Pick(nodes, Request{MemoryMB: int64(p.MemoryMB), Millicores: int64(p.Millicores)})
-	if !ok {
-		return store.AppInstance{}, ErrNoCapacity
-	}
+	return nodes, nil
+}
+
+func createOn(ctx context.Context, q *store.Queries, node *Node, p *Placement) (store.AppInstance, error) {
 	inst, err := q.CreateInstance(ctx, store.CreateInstanceParams{
 		AppID: p.AppID, DeploymentID: p.DeploymentID, WorkspaceID: p.WorkspaceID, NodeID: &node.ID, NodeName: node.Name,
 		MemoryMb: p.MemoryMB, CpuMillicores: p.Millicores, Address: node.Address,
@@ -151,5 +284,80 @@ func Place(ctx context.Context, q *store.Queries, cfg *Config, p *Placement) (st
 	if err != nil {
 		return store.AppInstance{}, fmt.Errorf("record instance: %w", err)
 	}
+	cause := p.Cause
+	if cause == "" {
+		cause = CauseRelease
+	}
+	if cause != CauseRelease || p.CauseAt != nil {
+		if err := q.SetInstanceCause(ctx, store.SetInstanceCauseParams{ID: inst.ID, Cause: cause, CauseAt: p.CauseAt}); err != nil {
+			return store.AppInstance{}, fmt.Errorf("record instance cause: %w", err)
+		}
+		inst.Cause, inst.CauseAt = cause, p.CauseAt
+	}
 	return inst, nil
 }
+
+// evictAndPlace puts the least recently used idle apps of one node to
+// sleep, within the transaction, and places the instance there.
+func evictAndPlace(ctx context.Context, q *store.Queries, cfg *Config, p *Placement, nodes []Node, req Request) (Result, error) {
+	rows, err := q.ListEvictable(ctx, p.AppID)
+	if err != nil {
+		return Result{}, fmt.Errorf("list evictable apps: %w", err)
+	}
+	cands := make([]Evictable, 0, len(rows))
+	for _, r := range rows {
+		if r.NodeID == nil {
+			continue
+		}
+		last := p.Evict.Activity[r.AppID]
+		for _, t := range []*time.Time{r.LastRequestAt, r.LastHealthyAt} {
+			if t != nil && t.After(last) {
+				last = *t
+			}
+		}
+		cands = append(cands, Evictable{
+			InstanceID: r.InstanceID, AppID: r.AppID, NodeID: *r.NodeID,
+			MemoryMB: int64(r.MemoryMb), Millicores: int64(r.CpuMillicores), LastActive: last,
+		})
+	}
+	node, victims, ok := ChooseEviction(nodes, cands, req, p.Evict.Now, cfg.EvictMinIdle)
+	if !ok {
+		return Result{}, ErrNoCapacity
+	}
+	deps := map[uuid.UUID]uuid.UUID{}
+	for _, r := range rows {
+		deps[r.InstanceID] = r.DeploymentID
+	}
+	out := Result{}
+	for _, v := range victims {
+		last := v.LastActive
+		app, sleepErr := q.SleepApp(ctx, store.SleepAppParams{ID: v.AppID, Reason: SleepEvicted, LastRequestAt: &last, DeploymentID: ptr(deps[v.InstanceID])})
+		if sleepErr != nil {
+			// Changed under us (woken, stopped): the freed capacity is not
+			// certain any more; this placement fails and is retried.
+			return Result{}, fmt.Errorf("%w (an app chosen for eviction changed)", ErrNoCapacity)
+		}
+		inst, sleepErr := q.SleepInstance(ctx, store.SleepInstanceParams{ID: v.InstanceID, StopReason: SleepEvicted})
+		if sleepErr != nil {
+			return Result{}, fmt.Errorf("%w (an instance chosen for eviction changed)", ErrNoCapacity)
+		}
+		out.Evicted = append(out.Evicted, Evicted{App: app, Instance: inst, LastActive: last})
+	}
+	if out.Instance, err = createOn(ctx, q, &node, p); err != nil {
+		return Result{}, err
+	}
+	return out, nil
+}
+
+// Instance causes and sleep reasons (the database's values).
+const (
+	CauseRelease  = "release"
+	CauseRestart  = "restart"
+	CauseWake     = "wake"
+	CauseFailover = "failover"
+	CauseDrain    = "drain"
+	SleepIdle     = "idle"
+	SleepEvicted  = "evicted"
+)
+
+func ptr[T any](v T) *T { return &v }

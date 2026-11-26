@@ -2,6 +2,8 @@ package scheduler
 
 import (
 	"testing"
+	"time"
+	"uuid"
 )
 
 func node(name string, mem, cpu, resMem, resCPU int64, instances int32) Node {
@@ -80,5 +82,56 @@ func TestConfigValidate(t *testing.T) {
 	c.ReservedMemoryMB = -1
 	if err := c.Validate(); err == nil {
 		t.Fatal("negative reserve accepted")
+	}
+}
+
+func TestChooseEvictionPicksLeastRecentlyUsedOnOneNode(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	a, b := uuid.NewV7(), uuid.NewV7()
+	nodes := []Node{
+		{ID: a, Name: "a", MemoryMB: 1000, Millicores: 4000, ReservedMemoryMB: 900},
+		{ID: b, Name: "b", MemoryMB: 1000, Millicores: 4000, ReservedMemoryMB: 950},
+	}
+	cand := func(node uuid.UUID, mem int64, idle time.Duration) Evictable {
+		return Evictable{InstanceID: uuid.NewV7(), AppID: uuid.NewV7(), NodeID: node, MemoryMB: mem, Millicores: 100, LastActive: now.Add(-idle)}
+	}
+	oldest, older, recent := cand(a, 100, time.Hour), cand(a, 100, 10*time.Minute), cand(a, 400, 30*time.Second)
+	onB := cand(b, 300, 2*time.Hour)
+	cands := []Evictable{recent, older, oldest, onB}
+
+	// 250 MB: node a needs two evictions (100 free + 100 + 100), node b one
+	// (50 free + 300): fewer evictions win.
+	node, victims, ok := ChooseEviction(nodes, cands, Request{MemoryMB: 250, Millicores: 100}, now, time.Minute)
+	if !ok || node.ID != b || len(victims) != 1 || victims[0].InstanceID != onB.InstanceID {
+		t.Fatalf("250 MB: node %s, victims %+v, %v", node.Name, victims, ok)
+	}
+	// 150 MB: one eviction on either node; on a the least recently used goes
+	// (the hour-idle one), and b's candidate is even older: b's set wins.
+	node, victims, ok = ChooseEviction(nodes, cands, Request{MemoryMB: 150, Millicores: 100}, now, time.Minute)
+	if !ok || node.ID != b || victims[0].InstanceID != onB.InstanceID {
+		t.Fatalf("150 MB: node %s, victims %+v", node.Name, victims)
+	}
+	// Without b, node a evicts in LRU order: the hour-idle app first, then
+	// the 10-minute one; the app used 30 s ago is below the minimum idle.
+	node, victims, ok = ChooseEviction(nodes[:1], cands, Request{MemoryMB: 250, Millicores: 100}, now, time.Minute)
+	if !ok || node.ID != a || len(victims) != 2 || victims[0].InstanceID != oldest.InstanceID || victims[1].InstanceID != older.InstanceID {
+		t.Fatalf("LRU order on a: %+v", victims)
+	}
+	// The recent app may not go, so 600 MB cannot be freed on a.
+	if _, _, ok = ChooseEviction(nodes[:1], cands, Request{MemoryMB: 600, Millicores: 100}, now, time.Minute); ok {
+		t.Fatal("evicted an app idle for less than the minimum")
+	}
+	// With a shorter minimum idle it can.
+	if _, victims, ok = ChooseEviction(nodes[:1], cands, Request{MemoryMB: 600, Millicores: 100}, now, 10*time.Second); !ok || len(victims) != 3 {
+		t.Fatalf("600 MB with every app evictable: %+v %v", victims, ok)
+	}
+	// Nothing evictable: no.
+	if _, _, ok = ChooseEviction(nodes, nil, Request{MemoryMB: 150, Millicores: 100}, now, time.Minute); ok {
+		t.Fatal("eviction without candidates")
+	}
+	// CPU counts too.
+	cpu := []Node{{ID: a, Name: "a", MemoryMB: 10000, Millicores: 1000, ReservedMillicores: 1000}}
+	if _, _, ok = ChooseEviction(cpu, []Evictable{cand(a, 10, time.Hour)}, Request{MemoryMB: 10, Millicores: 500}, now, time.Minute); ok {
+		t.Fatal("evicting 100 millicores made room for 500")
 	}
 }
