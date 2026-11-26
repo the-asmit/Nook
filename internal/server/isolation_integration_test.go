@@ -244,8 +244,9 @@ func runProbe(t *testing.T, nw string, cmd []string) bool {
 
 // TestAppEgressIsFiltered: from an app container the metadata stand-in,
 // another app's container and the node itself are unreachable, while the
-// public stand-in answers. A plain container on an ordinary network
-// reaches both stand-ins, which shows the block is Nook's firewall.
+// public stand-in answers, and DNS lookups work. A plain container on an
+// ordinary network reaches both stand-ins, which shows the block is
+// Nook's firewall.
 func TestAppEgressIsFiltered(t *testing.T) {
 	startStandIn(t, "nook-test-metadata", "169.254.169.0/24", metadataStandIn)
 	startStandIn(t, "nook-test-public", "198.51.100.0/24", publicStandIn)
@@ -272,6 +273,10 @@ func TestAppEgressIsFiltered(t *testing.T) {
 	if got := fetch("http://" + metadataStandIn + "/"); !strings.HasPrefix(got, "error") {
 		t.Fatalf("metadata stand-in reachable from the app: %q", got)
 	}
+	// DNS works from the app (through the resolvers the agent allows).
+	if dnsName := offlineDNSName(t); dnsName != "" {
+		appResolves(t, base, dnsName)
+	}
 	_, otherID := r.appIDs(r.ws, "other")
 	d := dockerClient(t)
 	list, err := d.ContainerList(context.Background(), client.ContainerListOptions{Filters: client.Filters{}.Add("label", "nook.app="+otherID.String())})
@@ -296,7 +301,8 @@ func TestAppEgressIsFiltered(t *testing.T) {
 // the registry, so it needs no internet) whose RUN steps probe the
 // network: the registry, which builds push to, is reachable; the metadata
 // stand-in and the node itself (the build network's gateway, on a port the
-// node publishes) are not; the public stand-in is. An ordinary container
+// node publishes) are not; the public stand-in is, and DNS lookups work.
+// An ordinary container
 // reaches the metadata stand-in and the node port, which shows the
 // blocks are the agent's firewall.
 func TestBuildEgressIsFiltered(t *testing.T) {
@@ -308,6 +314,7 @@ func TestBuildEgressIsFiltered(t *testing.T) {
 		t.Fatal("the stand-ins are not reachable from an ordinary container; the test proves nothing")
 	}
 	gateway := networkGateway(t, shared.buildNetwork)
+	dnsName := offlineDNSName(t)
 	b.createApp(b.alice, b.ws, "probe")
 	probe := func(name, host, port string) string {
 		return "RUN (nc -z -w 3 " + host + " " + port + " && echo " + name + "-REACHABLE) || echo " + name + "-BLOCKED\n"
@@ -317,7 +324,8 @@ func TestBuildEgressIsFiltered(t *testing.T) {
 			probe("REGISTRY", testinfra.RegistryAlias, "5000") +
 			probe("METADATA", metadataStandIn, "80") +
 			probe("NODE", gateway, nodePort) +
-			probe("PUBLIC", publicStandIn, "80"),
+			probe("PUBLIC", publicStandIn, "80") +
+			dnsProbe(dnsName),
 	}))
 	d := b.waitStatus(b.alice, b.ws, "probe", n, 3*time.Minute, "built", "failed")
 	log := b.buildLog(b.alice, b.ws, "probe", n)
@@ -326,7 +334,11 @@ func TestBuildEgressIsFiltered(t *testing.T) {
 	output := func(marker string) bool {
 		return regexp.MustCompile(`(?m)^#\d+ \d+\.\d+ ` + marker + `$`).MatchString(log)
 	}
-	for _, want := range []string{"REGISTRY-REACHABLE", "METADATA-BLOCKED", "NODE-BLOCKED", "PUBLIC-REACHABLE"} {
+	wants := []string{"REGISTRY-REACHABLE", "METADATA-BLOCKED", "NODE-BLOCKED", "PUBLIC-REACHABLE"}
+	if dnsName != "" {
+		wants = append(wants, "DNS-RESOLVED")
+	}
+	for _, want := range wants {
 		if !output(want) {
 			t.Errorf("no %s in the build output", want)
 		}
@@ -334,6 +346,63 @@ func TestBuildEgressIsFiltered(t *testing.T) {
 	if d.Status != "built" || t.Failed() {
 		t.Fatalf("deployment %s; build log:\n%s", d.Status, log)
 	}
+}
+
+// firstResolvable returns the first candidate that a plain container on
+// an ordinary user-defined network (Docker's embedded resolver, like app
+// and build networks, without Nook's firewall) resolves within 30 s, or ""
+// if none does.
+func firstResolvable(t *testing.T, candidates ...string) string {
+	t.Helper()
+	ctx := context.Background()
+	d := dockerClient(t)
+	name := "nook-test-plain-dns"
+	_, _ = d.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
+	if _, err := d.NetworkCreate(ctx, name, client.NetworkCreateOptions{Driver: "bridge"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = d.NetworkRemove(context.Background(), name, client.NetworkRemoveOptions{}) })
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, candidate := range candidates {
+			if runProbe(t, name, []string{"nslookup", candidate}) {
+				return candidate
+			}
+		}
+	}
+	return ""
+}
+
+// offlineDNSName is a name the node's resolver answers without the
+// internet: host.docker.internal on Docker Desktop. Elsewhere it is "" and
+// the tests below leave the lookup through the node's resolver to
+// TestDNSReachesOnlyTheResolvers (a stand-in resolver) and to the internet
+// suite (public names), so this suite stays deterministic.
+func offlineDNSName(t *testing.T) string {
+	t.Helper()
+	name := firstResolvable(t, "host.docker.internal")
+	if name == "" {
+		t.Log("no name resolves here without the internet; DNS through the node's resolver is covered by the internet suite")
+	}
+	return name
+}
+
+// appResolves waits until the test app at base resolves name.
+func appResolves(t *testing.T, base, name string) {
+	t.Helper()
+	eventually(t, 30*time.Second, "the app to resolve "+name, func() bool {
+		_, body := get(base + "/resolve?name=" + name)
+		return strings.HasPrefix(body, "ok ")
+	})
+}
+
+// dnsProbe is a RUN step that prints DNS-RESOLVED if name resolves ("":
+// no step).
+func dnsProbe(name string) string {
+	if name == "" {
+		return ""
+	}
+	return "RUN (nslookup " + name + " >/dev/null && echo DNS-RESOLVED) || echo DNS-FAILED\n"
 }
 
 // postgresPort is a port the node publishes (the shared Postgres).

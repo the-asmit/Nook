@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/moby/moby/api/types/container"
@@ -69,6 +71,10 @@ type firewallSpec struct {
 	// Gateways are the only sources that may open connections to app
 	// containers (empty: no restriction).
 	Gateways []netip.Prefix
+	// Resolvers are the DNS servers Docker and the node use (read from the
+	// node, see resolvers.go). Containers may send DNS (UDP and TCP port
+	// 53) to them even when they lie in a blocked range, and nothing else.
+	Resolvers []netip.Addr
 }
 
 // rules renders iptables-restore input for IPv4 and IPv6. Each chain is
@@ -110,10 +116,17 @@ func (s *firewallSpec) render(v6 bool) string {
 				}
 			}
 		}
-		// Name resolution through Docker's resolver and the node's.
+		// DNS to the resolvers Docker and the node use, which often sit in
+		// blocked ranges (169.254.169.254 on Oracle Cloud, 169.254.169.253
+		// on AWS, a router on 192.168.x). Only port 53: HTTP to the same
+		// address (the metadata service) still meets the REJECTs below.
 		for _, iface := range ifaces {
-			w("-A %s -i %s -p udp --dport 53 -j RETURN", chain, iface)
-			w("-A %s -i %s -p tcp --dport 53 -j RETURN", chain, iface)
+			for _, r := range s.Resolvers {
+				if r.Is6() == v6 {
+					w("-A %s -i %s -d %s -p udp --dport 53 -j RETURN", chain, iface, netip.PrefixFrom(r, r.BitLen()))
+					w("-A %s -i %s -d %s -p tcp --dport 53 -j RETURN", chain, iface, netip.PrefixFrom(r, r.BitLen()))
+				}
+			}
 		}
 	}
 	for _, iface := range ifaces {
@@ -183,12 +196,15 @@ case "$NOOK_MODE" in
 esac
 `
 
-// firewall installs and removes the egress rules.
+// firewall installs and removes the egress rules. mu serializes applies
+// (startup, Docker reconnects and resolver changes) and guards spec.
 type firewall struct {
 	docker *docker
 	image  string
-	spec   firewallSpec
 	logger *slog.Logger
+
+	mu   sync.Mutex
+	spec firewallSpec
 }
 
 // firewallTimeout bounds one helper run (including pulling its image).
@@ -196,6 +212,8 @@ const firewallTimeout = 5 * time.Minute
 
 // apply installs or refreshes the rules.
 func (f *firewall) apply(ctx context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	v4, v6 := f.spec.rules()
 	out, err := f.run(ctx, "apply", v4, v6)
 	if err != nil {
@@ -203,6 +221,25 @@ func (f *firewall) apply(ctx context.Context) error {
 	}
 	f.logger.InfoContext(ctx, "egress firewall installed", "chain", f.spec.Chain, "result", strings.TrimSpace(out))
 	return nil
+}
+
+// setResolvers replaces the resolver allowances and reports whether they
+// changed (the caller applies the rules then).
+func (f *firewall) setResolvers(rs []netip.Addr) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if slices.Equal(f.spec.Resolvers, rs) {
+		return false
+	}
+	f.spec.Resolvers = rs
+	return true
+}
+
+// resolvers returns the resolvers the rules currently allow DNS to.
+func (f *firewall) resolvers() []netip.Addr {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.spec.Resolvers)
 }
 
 // remove deletes the rules.

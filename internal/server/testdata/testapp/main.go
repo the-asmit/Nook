@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -64,6 +66,18 @@ func main() {
 		}
 		_ = resp.Body.Close()
 		_, _ = fmt.Fprintf(w, "status %d", resp.StatusCode)
+	})
+	// /resolve?name=... looks a name up through the container's resolver
+	// (DNS egress tests).
+	mux.HandleFunc("GET /resolve", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		addrs, err := net.DefaultResolver.LookupHost(ctx, r.URL.Query().Get("name"))
+		if err != nil {
+			_, _ = fmt.Fprintf(w, "error %v", err)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "ok %s", strings.Join(addrs, ","))
 	})
 	mux.HandleFunc("GET /crash", func(http.ResponseWriter, *http.Request) {
 		log.Print("testapp crashes on request")

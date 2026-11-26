@@ -60,11 +60,17 @@ func (a *Agent) prepare(ctx context.Context) error {
 		a.logger.WarnContext(ctx, "NOOK_AGENT_GATEWAY_ADDRS is not set: app ports accept connections from anywhere on the node's network, not only the gateways")
 	}
 	if a.cfg.EgressFilter {
+		// The engine came back: its DNS configuration may have changed too.
 		reapply = func(ctx context.Context) {
+			a.refreshResolvers(ctx, fw)
 			if err := fw.apply(ctx); err != nil {
 				a.logger.ErrorContext(ctx, "could not reinstall the egress firewall", "error", err.Error())
 			}
 		}
+		a.refreshResolvers(ctx, fw)
+		go a.watchResolvers(ctx, fw)
+		// Builds use the same resolvers for RUN steps.
+		a.builder.resolvers = fw.resolvers
 		if err := fw.apply(ctx); err != nil {
 			a.logger.ErrorContext(ctx, "egress firewall not installed yet; apps and builds wait for it", "error", err.Error())
 			go a.installFirewall(ctx, fw)
@@ -110,14 +116,25 @@ func firewallSpecFor(cfg *Config) (firewallSpec, error) {
 }
 
 // FirewallRules returns the iptables rules the agent installs (IPv4 and
-// IPv6, in iptables-restore format), for `nook-agent firewall rules`.
-func FirewallRules(cfg *Config) (string, error) {
+// IPv6, in iptables-restore format), for `nook-agent firewall rules`. The
+// DNS resolvers are read from the node as the agent does; without Docker
+// the rules are printed without them, with a note.
+func FirewallRules(ctx context.Context, cfg *Config) (string, error) {
 	spec, err := firewallSpecFor(cfg)
 	if err != nil {
 		return "", err
 	}
+	note := ""
+	d, err := newDocker()
+	if err == nil {
+		defer func() { _ = d.close() }()
+		spec.Resolvers, err = d.resolvers(ctx, cfg.FirewallImage)
+	}
+	if err != nil {
+		note = "# DNS resolvers could not be read (" + err.Error() + "); the agent adds DNS rules for them at startup\n"
+	}
 	v4, v6 := spec.rules()
-	return "# IPv4\n" + v4 + "# IPv6\n" + v6, nil
+	return note + "# IPv4\n" + v4 + "# IPv6\n" + v6, nil
 }
 
 // RemoveFirewall deletes the agent's egress rules from the node, for

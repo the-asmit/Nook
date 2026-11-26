@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -106,7 +107,11 @@ func (b *builder) runContainer(ctx context.Context, cmd *agentv1.BuildCommand, d
 		}
 	}()
 
-	content := containerFiles(filepath.Join(dir, contextDir), cmd, b.caPEM())
+	var resolvers []netip.Addr
+	if b.resolvers != nil {
+		resolvers = b.resolvers()
+	}
+	content := containerFiles(filepath.Join(dir, contextDir), cmd, b.caPEM(), resolvers)
 	_, err = b.docker.client.CopyToContainer(dockerCtx, created.ID, client.CopyToContainerOptions{DestinationPath: containerHome, Content: content})
 	_ = content.Close()
 	if err != nil {

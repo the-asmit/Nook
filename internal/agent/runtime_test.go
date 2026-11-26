@@ -2,6 +2,7 @@ package agent
 
 import (
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,89 @@ import (
 
 	agentv1 "github.com/the-asmit/nook/proto/nook/agent/v1"
 )
+
+// TestDNSOnlyToTheResolvers: DNS (UDP and TCP 53) is allowed to the
+// resolvers only, in both chains, before the REJECTs that cover their
+// ranges; nothing else is allowed to them, and port 53 is not open to any
+// other address.
+func TestDNSOnlyToTheResolvers(t *testing.T) {
+	s := firewallSpec{
+		Chain: "NOOK", AppBridge: "nka", BuildBridge: "nkbuild0",
+		Resolvers: []netip.Addr{netip.MustParseAddr("169.254.169.254"), netip.MustParseAddr("192.168.65.7"), netip.MustParseAddr("fd00:ec2::253")},
+	}
+	v4, v6 := s.rules()
+	for _, chain := range []string{"NOOK-FWD", "NOOK-IN"} {
+		for _, iface := range []string{"nka+", "nkbuild0"} {
+			for _, r := range []string{"169.254.169.254/32", "192.168.65.7/32"} {
+				for _, proto := range []string{"udp", "tcp"} {
+					rule := "-A " + chain + " -i " + iface + " -d " + r + " -p " + proto + " --dport 53 -j RETURN"
+					if !strings.Contains(v4, rule) {
+						t.Errorf("IPv4 rules lack %q", rule)
+					}
+				}
+			}
+			if rule := "-A " + chain + " -i " + iface + " -d fd00:ec2::253/128 -p udp --dport 53 -j RETURN"; !strings.Contains(v6, rule) {
+				t.Errorf("IPv6 rules lack %q", rule)
+			}
+		}
+	}
+	if strings.Contains(v4, "fd00:ec2") || strings.Contains(v6, "169.254.169.254") {
+		t.Error("resolver rules mix address families")
+	}
+	for _, rules := range []string{v4, v6} {
+		for line := range strings.SplitSeq(rules, "\n") {
+			if strings.Contains(line, "--dport 53") && !strings.Contains(line, " -d ") {
+				t.Errorf("port 53 is open to every address: %q", line)
+			}
+			if strings.Contains(line, "169.254.169.254") && !strings.Contains(line, "--dport 53") {
+				t.Errorf("more than DNS is allowed to a resolver: %q", line)
+			}
+		}
+	}
+	allow := strings.Index(v4, "-d 169.254.169.254/32 -p udp --dport 53 -j RETURN")
+	if block := strings.Index(v4, "-d 169.254.0.0/16 -j REJECT"); allow < 0 || block < 0 || allow > block {
+		t.Error("the DNS allowance must come before the link-local REJECT")
+	}
+	// Without resolvers there is no DNS allowance at all (public resolvers
+	// stay reachable as public destinations).
+	s.Resolvers = nil
+	if v4, _ = s.rules(); strings.Contains(v4, "--dport 53") {
+		t.Errorf("DNS rules without resolvers:\n%s", v4)
+	}
+}
+
+func TestParseResolvConf(t *testing.T) {
+	got := parseResolvConf(`# generated
+nameserver 192.168.65.7
+nameserver 127.0.0.53
+nameserver 127.0.0.11
+nameserver ::1
+nameserver fe80::1%eth0
+nameserver 0.0.0.0
+nameserver not-an-ip
+search example.internal
+options ndots:0
+nameserver ::ffff:10.0.0.2
+   nameserver   169.254.169.254   `)
+	want := []netip.Addr{
+		netip.MustParseAddr("192.168.65.7"), netip.MustParseAddr("fe80::1"),
+		netip.MustParseAddr("10.0.0.2"), netip.MustParseAddr("169.254.169.254"),
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parseResolvConf = %v, want %v", got, want)
+	}
+	merged := mergeResolvers(got, []netip.Addr{netip.MustParseAddr("10.0.0.2"), netip.MustParseAddr("8.8.8.8")})
+	if len(merged) != 5 || merged[0] != netip.MustParseAddr("8.8.8.8") {
+		t.Fatalf("mergeResolvers = %v", merged)
+	}
+	many := make([]netip.Addr, 40)
+	for i := range many {
+		many[i] = netip.AddrFrom4([4]byte{10, 0, 1, byte(i)})
+	}
+	if n := len(mergeResolvers(many)); n != maxResolvers {
+		t.Fatalf("merged %d resolvers, want at most %d", n, maxResolvers)
+	}
+}
 
 func TestFirewallRules(t *testing.T) {
 	s := firewallSpec{
@@ -22,7 +106,6 @@ func TestFirewallRules(t *testing.T) {
 		":NOOK-FWD - [0:0]", ":NOOK-IN - [0:0]",
 		"-A NOOK-FWD -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN",
 		"-A NOOK-FWD -i nkbuild0 -d 10.0.0.5/32 -j RETURN",
-		"-A NOOK-FWD -i nka+ -p udp --dport 53 -j RETURN",
 		"-A NOOK-FWD -i nka+ -d 169.254.0.0/16 -j REJECT --reject-with icmp-admin-prohibited",
 		"-A NOOK-FWD -i nka+ -d 10.0.0.0/8 -j REJECT",
 		"-A NOOK-FWD -i nkbuild0 -d 172.16.0.0/12 -j REJECT",
@@ -228,5 +311,22 @@ func TestGatewayOnlyRules(t *testing.T) {
 	s.Gateways = nil
 	if v4, _ = s.rules(); strings.Contains(v4, "-o nka+") {
 		t.Error("no gateways configured must not restrict app ports")
+	}
+}
+
+// TestBuildKitUsesTheNodesResolvers: RUN steps get the node's resolvers
+// (which the firewall allows) instead of BuildKit's public fallback.
+func TestBuildKitUsesTheNodesResolvers(t *testing.T) {
+	toml := buildkitdConfig("registry:5000", []netip.Addr{netip.MustParseAddr("169.254.169.254"), netip.MustParseAddr("fd00:ec2::253")})
+	for _, want := range []string{
+		`[registry."registry:5000"]`, `ca = ["/home/user/.config/buildkit/registry-ca.crt"]`,
+		"[dns]\n  nameservers = [\"169.254.169.254\", \"fd00:ec2::253\"]\n",
+	} {
+		if !strings.Contains(toml, want) {
+			t.Errorf("buildkitd.toml lacks %q:\n%s", want, toml)
+		}
+	}
+	if toml = buildkitdConfig("registry:5000", nil); strings.Contains(toml, "[dns]") {
+		t.Errorf("a [dns] section without resolvers:\n%s", toml)
 	}
 }

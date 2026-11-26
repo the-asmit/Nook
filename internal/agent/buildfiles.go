@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	agentv1 "github.com/the-asmit/nook/proto/nook/agent/v1"
@@ -20,16 +23,38 @@ const buildUID = 1000
 // containerFiles streams, as a tar archive for CopyToContainer, the files
 // the build container needs under /home/user: the extracted build
 // context, the registry credentials (a short-lived token for one
-// repository) and the CA that signs the registry's certificate.
-func containerFiles(ctxDir string, cmd *agentv1.BuildCommand, caPEM []byte) io.ReadCloser {
+// repository), the CA that signs the registry's certificate and the
+// BuildKit configuration.
+func containerFiles(ctxDir string, cmd *agentv1.BuildCommand, caPEM []byte, resolvers []netip.Addr) io.ReadCloser {
 	pr, pw := io.Pipe()
 	go func() {
-		pw.CloseWithError(writeContainerFiles(pw, ctxDir, cmd, caPEM))
+		pw.CloseWithError(writeContainerFiles(pw, ctxDir, cmd, caPEM, resolvers))
 	}()
 	return pr
 }
 
-func writeContainerFiles(w io.Writer, ctxDir string, cmd *agentv1.BuildCommand, caPEM []byte) error {
+// buildkitdConfig is buildkitd.toml: the registry's CA, and the node's DNS
+// resolvers for RUN steps. Without [dns], rootless BuildKit sees Docker's
+// loopback resolver (127.0.0.11), which its own network namespace cannot
+// reach, and falls back to Google's public DNS: names only the node's
+// resolvers know (private registries, mirrors, VPC-internal names) would
+// not resolve, and builds would fail wherever outbound DNS to Google is
+// blocked. The egress firewall allows DNS to exactly these resolvers.
+func buildkitdConfig(registry string, resolvers []netip.Addr) string {
+	// The registry address was validated (validateBuild), so it cannot
+	// break out of the quoted TOML key.
+	toml := fmt.Sprintf("[registry.%q]\n  ca = [%q]\n", registry, containerHome+"/.config/buildkit/registry-ca.crt")
+	if len(resolvers) > 0 {
+		names := make([]string, len(resolvers))
+		for i, r := range resolvers {
+			names[i] = strconv.Quote(r.String())
+		}
+		toml += "[dns]\n  nameservers = [" + strings.Join(names, ", ") + "]\n"
+	}
+	return toml
+}
+
+func writeContainerFiles(w io.Writer, ctxDir string, cmd *agentv1.BuildCommand, caPEM []byte, resolvers []netip.Addr) error {
 	tw := tar.NewWriter(w)
 	now := time.Now()
 	header := func(name string, typ byte, mode int64, size int64) *tar.Header {
@@ -46,9 +71,7 @@ func writeContainerFiles(w io.Writer, ctxDir string, cmd *agentv1.BuildCommand, 
 	if err != nil {
 		return fmt.Errorf("encode registry credentials: %w", err)
 	}
-	// The registry address was validated (validateBuild), so it cannot
-	// break out of the quoted TOML key.
-	toml := fmt.Sprintf("[registry.%q]\n  ca = [%q]\n", cmd.GetRegistry(), containerHome+"/.config/buildkit/registry-ca.crt")
+	toml := buildkitdConfig(cmd.GetRegistry(), resolvers)
 	for _, f := range []struct {
 		name string
 		data []byte

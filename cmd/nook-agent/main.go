@@ -169,12 +169,12 @@ func firewallCommand(environ map[string]string, stdout io.Writer) *cobra.Command
 	}
 	fw.AddCommand(&cobra.Command{
 		Use: "rules", Short: "Print the iptables rules the agent installs", Args: cobra.NoArgs,
-		RunE: func(*cobra.Command, []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := load()
 			if err != nil {
 				return err
 			}
-			rules, err := agent.FirewallRules(&cfg)
+			rules, err := agent.FirewallRules(cmd.Context(), &cfg)
 			if err != nil {
 				return err
 			}

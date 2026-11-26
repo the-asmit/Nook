@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -58,6 +59,9 @@ type builder struct {
 	caPEM  func() []byte
 	// ready reports whether builds may run on the node now.
 	ready func() error
+	// resolvers returns the node's DNS resolvers for RUN steps (nil: not
+	// known; BuildKit then uses its defaults).
+	resolvers func() []netip.Addr
 
 	mu      sync.Mutex
 	running map[string]*runningBuild
