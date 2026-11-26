@@ -25,8 +25,9 @@ import (
 )
 
 // startGateway runs a gateway on the fixed gateway port (the one Dex
-// knows) against the env's primary instance, until the test ends.
-func (e *env) startGateway(overrides map[string]string) {
+// knows; overrides may move it) against the env's primary instance, until
+// the test ends.
+func (e *env) startGateway(overrides map[string]string) *gateway.Gateway {
 	t := e.t
 	t.Helper()
 	environ := map[string]string{
@@ -71,6 +72,7 @@ func (e *env) startGateway(overrides map[string]string) {
 		})
 	}
 	t.Cleanup(stop)
+	return g
 }
 
 // appOrigin is an app's origin on the test gateway.
