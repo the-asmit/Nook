@@ -66,6 +66,9 @@ type firewallSpec struct {
 	BuildAllow []netip.Prefix
 	// Block are extra blocked destinations (other nodes' public addresses).
 	Block []netip.Prefix
+	// Gateways are the only sources that may open connections to app
+	// containers (empty: no restriction).
+	Gateways []netip.Prefix
 }
 
 // rules renders iptables-restore input for IPv4 and IPv6. Each chain is
@@ -119,6 +122,17 @@ func (s *firewallSpec) render(v6 bool) string {
 		}
 		// Nothing on the node itself is for containers.
 		w("-A %s -i %s -j REJECT --reject-with %s", in, iface, reject)
+	}
+	// Apps are reached only through the gateways: new connections into
+	// app bridges from anywhere else (other containers, other hosts) are
+	// refused, so the identity headers the gateway sets can be trusted.
+	if len(s.Gateways) > 0 {
+		for _, p := range s.Gateways {
+			if p.Addr().Is6() == v6 {
+				w("-A %s -o %s -m conntrack --ctstate NEW -s %s -j RETURN", fwd, s.AppBridge+"+", p)
+			}
+		}
+		w("-A %s -o %s -m conntrack --ctstate NEW -j REJECT --reject-with %s", fwd, s.AppBridge+"+", reject)
 	}
 	w("COMMIT")
 	return b.String()

@@ -84,6 +84,9 @@ type Config struct {
 	// BuildEgressAllow lists addresses (IPs or CIDRs) build containers may
 	// reach although private: the registry.
 	BuildEgressAllow []string `env:"NOOK_AGENT_BUILD_EGRESS_ALLOW" envSeparator:","`
+	// GatewayAddrs are the gateways' addresses (IPs or CIDRs); only they may
+	// connect to app ports. Empty means no restriction (the agent warns).
+	GatewayAddrs []string `env:"NOOK_AGENT_GATEWAY_ADDRS" envSeparator:","`
 	// EgressBlock lists more blocked destinations (IPs or CIDRs), such as
 	// other nodes' public addresses.
 	EgressBlock []string `env:"NOOK_AGENT_EGRESS_BLOCK" envSeparator:","`
@@ -193,6 +196,9 @@ func (c *Config) Validate() error {
 		errs = append(errs, err)
 	}
 	if _, err := parsePrefixes("NOOK_AGENT_EGRESS_BLOCK", c.EgressBlock); err != nil {
+		errs = append(errs, err)
+	}
+	if _, err := parsePrefixes("NOOK_AGENT_GATEWAY_ADDRS", c.GatewayAddrs); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

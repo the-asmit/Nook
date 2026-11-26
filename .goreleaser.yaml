@@ -1,6 +1,6 @@
 # GoReleaser builds the `nook` CLI for every supported platform.
 #   make release-snapshot   builds everything into dist/ without publishing
-# The server ships as a container image instead (make docker-build).
+# The server, agent and gateway ship as container images instead (make docker-build).
 version: 2
 
 project_name: nook

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}}</title>
+<style>{{.Style}}</style>
+</head>
+<body>
+<main>
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+{{with .Link}}<p><a href="{{.URL}}">{{.Text}}</a></p>{{end}}
+<p class="id">Request ID: <code>{{.RequestID}}</code></p>
+</main>
+</body>
+</html>

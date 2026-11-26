@@ -56,6 +56,7 @@ COMPOSE := docker compose --env-file .env -f deploy/compose/docker-compose.dev.y
 
 IMAGE ?= nook-server
 AGENT_IMAGE ?= nook-agent
+GATEWAY_IMAGE ?= nook-gateway
 PLATFORMS ?= linux/amd64,linux/arm64
 # --load imports the multi-platform image into the local image store (needs
 # Docker's containerd image store, the default in Docker Desktop). CI sets
@@ -107,6 +108,10 @@ dev-down: env ## Stop the development stack (data volumes are kept)
 dev-logs: env ## Follow the development stack's logs
 	$(COMPOSE) logs --follow --tail=100
 
+.PHONY: run-gateway
+run-gateway: build env ## Run nook-gateway against the dev control plane (apps at http://<app>--<ws>.apps.localhost:<GATEWAY_PORT>)
+	set -a; source ./.env; set +a; exec $(BIN_DIR)/nook-gateway
+
 .PHONY: run-agent
 run-agent: build env ## Run nook-agent for this machine against the dev stack (join it first; see README)
 	set -a; source ./.env; set +a; exec $(BIN_DIR)/nook-agent run
@@ -132,6 +137,7 @@ docker-run: env ## Run the nook-server image against the dev stack on 127.0.0.1:
 		--env NOOK_POSTGRES_URL --env NOOK_REDIS_URL \
 		--env NOOK_OIDC_ISSUER_URL --env NOOK_OIDC_CLIENT_ID --env NOOK_OIDC_CLIENT_SECRET \
 		--env NOOK_ALLOWED_EMAIL_DOMAINS --env NOOK_BOOTSTRAP_ADMIN_EMAILS \
+		--env NOOK_APPS_BASE_URL --env NOOK_GATEWAY_SECRET \
 		$(IMAGE):$(VERSION)
 
 .PHONY: migrate-new
@@ -146,6 +152,7 @@ build: ## Build bin/nook-server, bin/nook (the CLI) and bin/nook-agent for this 
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook-server ./cmd/nook-server
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook ./cmd/nook
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook-agent ./cmd/nook-agent
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nook-gateway ./cmd/nook-gateway
 
 .PHONY: proto
 proto: $(BUF) $(PROTOC_PLUGINS) ## Regenerate the gRPC/protobuf Go code in proto/ (committed)
@@ -211,7 +218,7 @@ vuln: $(GOVULNCHECK) ## Scan production code, then test code, for known vulnerab
 	$(GOVULNCHECK) -test -tags=integration ./...
 
 .PHONY: docker-build
-docker-build: ## Build the nook-server and nook-agent images for linux/amd64 and linux/arm64
+docker-build: ## Build the nook-server, nook-agent and nook-gateway images for linux/amd64 and linux/arm64
 	docker buildx build \
 		--platform $(PLATFORMS) \
 		--file deploy/docker/nook-server.Dockerfile \
@@ -227,6 +234,14 @@ docker-build: ## Build the nook-server and nook-agent images for linux/amd64 and
 		--build-arg COMMIT=$(COMMIT) \
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		--tag $(AGENT_IMAGE):$(VERSION) \
+		$(DOCKER_OUTPUT) .
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--file deploy/docker/nook-gateway.Dockerfile \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--tag $(GATEWAY_IMAGE):$(VERSION) \
 		$(DOCKER_OUTPUT) .
 
 .PHONY: tools

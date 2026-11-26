@@ -1,5 +1,6 @@
 // Command hello-go is a minimal web app for trying out Nook: it answers
-// "/" with a greeting (the GREETING environment variable, if set),
+// "/" with a greeting (the GREETING environment variable, if set, and the
+// visitor's email from the gateway),
 // "/healthz" with "ok", and "/env" with the names of the environment
 // variables it received (never their values). It logs every request.
 package main
@@ -27,12 +28,17 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprintln(w, "ok")
 	})
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		greeting := os.Getenv("GREETING")
 		if greeting == "" {
 			greeting = "Hello from a Nook app written in Go!"
 		}
 		_, _ = fmt.Fprintln(w, greeting)
+		// The gateway sets X-Nook-Email for signed-in visitors (and strips
+		// any value a client sends).
+		if email := r.Header.Get("X-Nook-Email"); email != "" {
+			_, _ = fmt.Fprintf(w, "Signed in as %s (X-Nook-Email)\n", email)
+		}
 	})
 	mux.HandleFunc("GET /env", func(w http.ResponseWriter, _ *http.Request) {
 		names := make([]string, 0)

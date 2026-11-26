@@ -56,6 +56,9 @@ func (a *Agent) prepare(ctx context.Context) error {
 	}
 	fw := &firewall{docker: a.docker, image: a.cfg.FirewallImage, logger: a.logger, spec: spec}
 	reapply := func(context.Context) {}
+	if len(spec.Gateways) == 0 {
+		a.logger.WarnContext(ctx, "NOOK_AGENT_GATEWAY_ADDRS is not set: app ports accept connections from anywhere on the node's network, not only the gateways")
+	}
 	if a.cfg.EgressFilter {
 		reapply = func(ctx context.Context) {
 			if err := fw.apply(ctx); err != nil {
@@ -95,7 +98,11 @@ func firewallSpecFor(cfg *Config) (firewallSpec, error) {
 	if err != nil {
 		return firewallSpec{}, err
 	}
-	spec := firewallSpec{Chain: cfg.FirewallChain, AppBridge: appBridgePrefix, BuildAllow: allow, Block: block}
+	gateways, err := parsePrefixes("NOOK_AGENT_GATEWAY_ADDRS", cfg.GatewayAddrs)
+	if err != nil {
+		return firewallSpec{}, err
+	}
+	spec := firewallSpec{Chain: cfg.FirewallChain, AppBridge: appBridgePrefix, BuildAllow: allow, Block: block, Gateways: gateways}
 	if cfg.BuildSlots > 0 {
 		spec.BuildBridge = buildBridge(cfg.BuildNetwork)
 	}

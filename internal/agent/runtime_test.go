@@ -207,3 +207,26 @@ func TestRestoreRestartCounts(t *testing.T) {
 		t.Fatalf("restarts: adopted %d, fresh %d", m.m["adopted"].restarts, m.m["fresh"].restarts)
 	}
 }
+
+func TestGatewayOnlyRules(t *testing.T) {
+	s := firewallSpec{Chain: "NOOK", AppBridge: "nka", Gateways: []netip.Prefix{netip.MustParsePrefix("10.0.0.7/32")}}
+	v4, v6 := s.rules()
+	for _, want := range []string{
+		"-A NOOK-FWD -o nka+ -m conntrack --ctstate NEW -s 10.0.0.7/32 -j RETURN",
+		"-A NOOK-FWD -o nka+ -m conntrack --ctstate NEW -j REJECT --reject-with icmp-admin-prohibited",
+	} {
+		if !strings.Contains(v4, want) {
+			t.Errorf("IPv4 rules lack %q:\n%s", want, v4)
+		}
+	}
+	if strings.Index(v4, "-s 10.0.0.7/32 -j RETURN") > strings.Index(v4, "-o nka+ -m conntrack --ctstate NEW -j REJECT") {
+		t.Error("the gateway allowance comes after the reject")
+	}
+	if !strings.Contains(v6, "-A NOOK-FWD -o nka+ -m conntrack --ctstate NEW -j REJECT --reject-with icmp6-adm-prohibited") || strings.Contains(v6, "10.0.0.7") {
+		t.Errorf("IPv6 rules:\n%s", v6)
+	}
+	s.Gateways = nil
+	if v4, _ = s.rules(); strings.Contains(v4, "-o nka+") {
+		t.Error("no gateways configured must not restrict app ports")
+	}
+}
