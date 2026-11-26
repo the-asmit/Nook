@@ -48,8 +48,15 @@ Nook is built in stages. So far:
    anyone), and the app receives the visitor's email in `X-Nook-Email`.
    WebSockets and server-sent events pass through; app ports accept
    connections only from the gateways.
+7. **Sleep, wake and failover**: an app idle for its `sleep_after`
+   (default 15 minutes, or `never`) goes to sleep and frees its memory;
+   the next request wakes it (one start however many requests arrive)
+   and is answered once it is healthy. Full nodes put their least recently
+   used idle apps to sleep to make room. Apps on a dead node come back on
+   another node by themselves, and `nook node drain` moves apps without a
+   failed request. Apps must be stateless: keep state in a database.
 
-Sleeping apps, moving apps between nodes and the dashboard come later.
+The dashboard and managed databases come later.
 
 ## Prerequisites
 
@@ -138,14 +145,15 @@ cd examples/hello-go
 ../../bin/nook open hello-go              # sign in as alice@nook.test: "Signed in as alice@nook.test"
 ../../bin/nook access grant hello-go bob@partner.test   # let someone else in (by email)
 ../../bin/nook access set hello-go --mode public        # or: workspace (default), restricted
-../../bin/nook apps info hello-go         # URL, access, live deployment, instance, restarts
+../../bin/nook apps info hello-go         # URL, access, live deployment, instance, restarts, sleep state
+../../bin/nook apps wake hello-go         # wake it now (requests wake it too)
 ../../bin/nook env set hello-go GREETING=hi        # releases the change without a rebuild
 ../../bin/nook logs hello-go --follow
 ../../bin/nook rollback hello-go
 ```
 
 `nook init` writes a `nook.toml` for your own project (port, health check
-path, memory, CPU, startup timeout, read-only root file system);
+path, memory, CPU, startup timeout, `sleep_after`, read-only root file system);
 `nook apps`, `nook deployments`, `nook build-logs` and `nook env` cover
 the rest. Secrets: `nook env set <app> KEY=- --secret` reads the value
 from standard input (workspace admins and owners only). The master key

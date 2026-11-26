@@ -196,6 +196,22 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
   refusing a public advertise/publish address without
   `NOOK_AGENT_ALLOW_PUBLIC_ADVERTISE_ADDR`; this is the one documented
   exception to TLS outside localhost (ADR 0028). Keep both guards.
+- **Sleep and wake**: apps are stateless in v1 (they may stop, move or
+  briefly run twice). Sleeping releases the reservation and keeps the
+  stopped container (`keep_container`); a wake is the compare-and-set
+  `WakeApp`, never a direct start, and resumes on the previous node when
+  it fits (`scheduler.Place` with `Resume`). Gateways record activity only
+  through `activity.Recorder` and hold requests only through the waker
+  (singleflight, bounded, timeout → 503 + `Retry-After`). Eviction happens
+  only inside `scheduler.Place`'s transaction and is audited
+  (`app.evict`); never evict `sleep_after = never` apps.
+- **Failover and draining** are the leader's relocation pass (on the lock
+  connection; agent commands and events run afterwards as `FollowUps`).
+  Replacements always go through the owner's converge and the normal
+  rollout path; draining is make-before-break. What serves is decided only
+  by `app_instances` rows (fencing): never route to or trust an instance
+  because its container runs. Record why an instance exists in
+  `cause`/`cause_at` and why it stopped in `stop_reason`.
 - **Spelling**: code and prose use US English (`canceled`); the API and
   database status value is `cancelled`, as specified.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
@@ -259,16 +275,18 @@ nook/
 │   ├── archive/               # reproducible source archives (ignore files) and hostile-archive-safe extraction (os.Root)
 │   ├── apps/                  # apps, quotas, deployments, verified uploads, settings, stop/start, rollback, encrypted env, access policies (tenant-scoped)
 │   ├── builds/                # deployment queue (Redis Streams), dispatcher, agent results, live logs, janitor, registry GC windows
-│   ├── rollout/               # releases: placement → StartInstance → health-gated switch → drain; desired state, reconciliation, app log streams
+│   ├── rollout/               # releases: placement → StartInstance → health-gated switch → drain; desired state, reconciliation, app log streams,
+│   │                          #   sleeping idle apps, waking (one per app), failover of dead nodes' instances, draining (leader passes)
 │   ├── secrets/               # AES-256-GCM keyring (versioned master key), key checks, rotation
 │   ├── cli/                   # Cobra commands, API client, config file (0600) for the nook CLI
 │   ├── version/               # build info set via ldflags
 │   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex, MinIO, registry (integration build tag only)
-│   ├── scheduler/             # best-fit placement on reserved memory/CPU, serialized by node row locks (failover: planned)
+│   ├── scheduler/             # best-fit placement on reserved memory/CPU, serialized by node row locks; LRU eviction of idle apps on one node
 │   ├── agent/                 # worker agent: state dir, join, mTLS stream, heartbeats, Docker client, renewal, local health,
 │   │                          #   builds in locked-down rootless BuildKit containers (custom seccomp, userns check),
 │   │                          #   app instances (pull by digest, hardened containers, health checks, crash backoff,
 │   │                          #   adoption), log streaming, egress firewall (iptables via a helper container)
+│   ├── activity/              # apps' last request times: gateways' batched writes to a Redis sorted set (ZADD GT), reads for sleep and eviction
 │   ├── routes/                # app host scheme (<app>--<ws>.<domain>), route records, nook:routes Pub/Sub events
 │   ├── visitor/               # visitor sign-in: auth-host sessions, single-use host-bound codes, access checks, sealed certificates
 │   └── gateway/               # nook-gateway: route table, reverse proxy, visitor sessions, TLS modes, rate limits, pages, drain
