@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/the-asmit/nook/internal/platform/config"
+	platformmetrics "github.com/the-asmit/nook/internal/platform/metrics"
 	"github.com/the-asmit/nook/internal/routes"
 )
 
@@ -32,6 +34,8 @@ type fakeCP struct {
 	known    map[string]bool        // hosts for the TLS check
 	checks   int
 	failNext bool
+	// wakes counts wake calls.
+	wakes int
 }
 
 type fakeSession struct {
@@ -83,6 +87,17 @@ func newFakeCP(t *testing.T) *fakeCP {
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("POST /internal/v1/apps/{id}/wake", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := uuid.Parse(r.PathValue("id")); err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		f.mu.Lock()
+		f.wakes++
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+		writeJSON(w, map[string]string{"state": "waking"})
 	})
 	mux.HandleFunc("POST /internal/v1/visitor/exchange", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{ Code, Host string }
@@ -150,6 +165,28 @@ func (f *fakeCP) session(token string, s fakeSession) {
 	f.sessions[token] = s
 }
 
+// waitFor polls cond until it holds or the deadline passes.
+func waitFor(t *testing.T, within time.Duration, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(within)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		select {
+		case <-t.Context().Done():
+			t.Fatal(t.Context().Err())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+func (f *fakeCP) wakeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.wakes
+}
+
 func (f *fakeCP) checkCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -187,6 +224,9 @@ func testConfig(cpURL string) *Config {
 		RatePerApp:            1000,
 		BurstPerApp:           1000,
 		DrainTimeout:          5 * time.Second,
+		WakeTimeout:           10 * time.Second,
+		WakeMaxHeld:           200,
+		ActivityFlush:         time.Second,
 	}
 }
 
@@ -198,6 +238,25 @@ type fixture struct {
 	table *table
 	h     *handler
 	srv   *httptest.Server
+	reg   *prometheus.Registry
+}
+
+// metric returns the value of an exposed metric line (name with labels as
+// /metrics shows it), or -1 if absent.
+func (f *fixture) metric(line string) float64 {
+	f.t.Helper()
+	rec := httptest.NewRecorder()
+	platformmetrics.Handler(f.reg).ServeHTTP(rec, httptest.NewRequestWithContext(f.t.Context(), http.MethodGet, "/metrics", http.NoBody))
+	for l := range strings.SplitSeq(rec.Body.String(), "\n") {
+		if rest, ok := strings.CutPrefix(l, line+" "); ok {
+			v, err := strconv.ParseFloat(rest, 64)
+			if err != nil {
+				f.t.Fatal(err)
+			}
+			return v
+		}
+	}
+	return -1
 }
 
 func newFixture(t *testing.T, adjust func(*Config)) *fixture {
@@ -207,7 +266,8 @@ func newFixture(t *testing.T, adjust func(*Config)) *fixture {
 	if adjust != nil {
 		adjust(cfg)
 	}
-	m, err := newMetrics(prometheus.NewRegistry())
+	reg := prometheus.NewRegistry()
+	m, err := newMetrics(reg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +280,7 @@ func newFixture(t *testing.T, adjust func(*Config)) *fixture {
 	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return &fixture{t: t, cp: cp, cfg: cfg, table: tbl, h: h, srv: srv}
+	return &fixture{t: t, cp: cp, cfg: cfg, table: tbl, h: h, srv: srv, reg: reg}
 }
 
 // addApp registers a route served by upstream (empty: not serving).

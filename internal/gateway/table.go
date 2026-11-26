@@ -33,11 +33,27 @@ type table struct {
 	mu     sync.RWMutex
 	byHost map[string]routes.Route
 	byApp  map[uuid.UUID]string
-	loaded atomic.Bool
+	// changed is closed (and replaced) whenever routes change, so requests
+	// waiting for an app to wake see its route at once.
+	changed chan struct{}
+	loaded  atomic.Bool
 }
 
 func newTable(src source, logger *slog.Logger, m *metrics) *table {
-	return &table{src: src, logger: logger, m: m, byHost: map[string]routes.Route{}, byApp: map[uuid.UUID]string{}}
+	return &table{src: src, logger: logger, m: m, byHost: map[string]routes.Route{}, byApp: map[uuid.UUID]string{}, changed: make(chan struct{})}
+}
+
+// Changed returns a channel closed at the next change of the table.
+func (t *table) Changed() <-chan struct{} {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.changed
+}
+
+// notify wakes the waiters; t.mu must be held for writing.
+func (t *table) notify() {
+	close(t.changed)
+	t.changed = make(chan struct{})
 }
 
 // lookup returns the route for a host.
@@ -69,6 +85,7 @@ func (t *table) resync(ctx context.Context) error {
 	}
 	t.mu.Lock()
 	t.byHost, t.byApp = byHost, byApp
+	t.notify()
 	t.mu.Unlock()
 	t.loaded.Store(true)
 	t.m.routes.Set(float64(len(byHost)))
@@ -76,24 +93,25 @@ func (t *table) resync(ctx context.Context) error {
 	return nil
 }
 
-// refresh reloads one app's route after an event.
+// refresh reloads one app's route after an event. A failed fetch keeps
+// the route as it was (the next resync catches up); only a confirmed
+// deletion removes it.
 func (t *table) refresh(ctx context.Context, appID uuid.UUID) error {
 	r, err := t.src.route(ctx, appID)
+	if err != nil && !errors.Is(err, routes.ErrNotFound) {
+		return err
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	defer t.notify()
 	if old, ok := t.byApp[appID]; ok {
 		delete(t.byHost, old)
 		delete(t.byApp, appID)
 	}
-	if errors.Is(err, routes.ErrNotFound) {
-		t.m.routes.Set(float64(len(t.byHost)))
-		return nil // the app is gone
+	if err == nil {
+		t.byHost[r.Host] = r
+		t.byApp[r.AppID] = r.Host
 	}
-	if err != nil {
-		return err
-	}
-	t.byHost[r.Host] = r
-	t.byApp[r.AppID] = r.Host
 	t.m.routes.Set(float64(len(t.byHost)))
 	return nil
 }

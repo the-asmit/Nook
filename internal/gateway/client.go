@@ -118,6 +118,12 @@ func (c *controlPlane) knownHost(ctx context.Context, host string) (bool, error)
 	return err == nil, err
 }
 
+// wake asks the control plane to wake a sleeping app (idempotent: one
+// wake happens however many gateways ask).
+func (c *controlPlane) wake(ctx context.Context, appID uuid.UUID) error {
+	return c.do(ctx, http.MethodPost, "/internal/v1/apps/"+appID.String()+"/wake", map[string]string{}, nil)
+}
+
 type exchanged struct {
 	Token      string    `json:"token"`
 	ExpiresAt  time.Time `json:"expires_at"`

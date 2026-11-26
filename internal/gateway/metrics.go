@@ -17,6 +17,10 @@ type metrics struct {
 	resyncs   prometheus.Counter
 	limited   *prometheus.CounterVec
 	authCheck *prometheus.CounterVec
+	// Waking sleeping apps.
+	wake        prometheus.Histogram
+	wakeRefused *prometheus.CounterVec
+	wakeHeld    prometheus.Gauge
 }
 
 func newMetrics(reg prometheus.Registerer) (*metrics, error) {
@@ -41,8 +45,18 @@ func newMetrics(reg prometheus.Registerer) (*metrics, error) {
 		authCheck: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "nook_gateway_session_checks_total", Help: "Visitor session checks by result and whether the cache answered.",
 		}, []string{"result", "cached"}),
+		wake: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "nook_gateway_wake_seconds", Help: "Cold start seen by visitors: first held request for a sleeping app until it is routed.",
+			Buckets: []float64{0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 30, 60},
+		}),
+		wakeRefused: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "nook_gateway_wake_refused_total", Help: "Requests for a waking app answered 503, by reason (limit of held requests, timeout).",
+		}, []string{"reason"}),
+		wakeHeld: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "nook_gateway_wake_held_requests", Help: "Requests waiting for an app to wake.",
+		}),
 	}
-	for _, c := range []prometheus.Collector{m.requests, m.duration, m.upgraded, m.routes, m.resyncs, m.limited, m.authCheck} {
+	for _, c := range []prometheus.Collector{m.requests, m.duration, m.upgraded, m.routes, m.resyncs, m.limited, m.authCheck, m.wake, m.wakeRefused, m.wakeHeld} {
 		if err := reg.Register(c); err != nil {
 			return nil, fmt.Errorf("register gateway metrics: %w", err)
 		}

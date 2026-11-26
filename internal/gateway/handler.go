@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/the-asmit/nook/internal/auth"
 	"github.com/the-asmit/nook/internal/routes"
@@ -62,6 +63,11 @@ type handler struct {
 	conns    *connTracker
 	m        *metrics
 	logger   *slog.Logger
+	// waker holds requests for sleeping apps until they wake.
+	waker *waker
+	// touch records a request for an app (activity, for sleeping idle
+	// apps); a no-op until the gateway sets its recorder.
+	touch func(app uuid.UUID)
 }
 
 type ctxRoute struct{}
@@ -84,8 +90,9 @@ func newHandler(cfg *Config, tbl *table, cp *controlPlane, m *metrics, conns *co
 	h := &handler{
 		cfg: cfg, base: base, authHost: base.AuthHost(), table: tbl, cp: cp, cache: newAccessCache(cfg.AccessCacheTTL),
 		ipLimit: newLimiter(cfg.RatePerIP, cfg.BurstPerIP), appLimit: newLimiter(cfg.RatePerApp, cfg.BurstPerApp),
-		trusted: trusted, conns: conns, m: m, logger: logger,
+		trusted: trusted, conns: conns, m: m, logger: logger, touch: func(uuid.UUID) {},
 	}
+	h.waker = newWaker(cp.wake, tbl, cfg.WakeTimeout, cfg.WakeMaxHeld, m)
 	transport := &http.Transport{
 		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		MaxIdleConns:          1000,
@@ -202,6 +209,7 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 	label = route.Workspace + "/" + route.App
+	h.touch(route.AppID)
 	if !h.appLimit.allow(route.AppID.String()) {
 		h.m.limited.WithLabelValues("app").Inc()
 		w.Header().Set("Retry-After", "1")
@@ -220,6 +228,22 @@ func (h *handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		if stop {
 			return
 		}
+	}
+	if routes.Wakeable(route.State) {
+		// Only visitors allowed in (above) wake an app.
+		woken, err := h.waker.hold(r.Context(), &route)
+		switch {
+		case errors.Is(err, context.Canceled):
+			return // the visitor went away
+		case errors.Is(err, routes.ErrNotFound):
+			page(w, r, http.StatusNotFound, "App not found", "There is no app at this address.", nil)
+			return
+		case err != nil:
+			w.Header().Set("Retry-After", wakeRetryAfter)
+			page(w, r, http.StatusServiceUnavailable, "App waking up", "This app was asleep and is starting. Try again in a few seconds.", nil)
+			return
+		}
+		route = woken
 	}
 	if !route.Serving() {
 		page(w, r, http.StatusServiceUnavailable, "App unavailable", routes.Describe(route.State), nil)

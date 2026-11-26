@@ -84,6 +84,15 @@ type Config struct {
 	RatePerApp   float64       `env:"NOOK_GATEWAY_RATE_PER_APP" envDefault:"500"`
 	BurstPerApp  int           `env:"NOOK_GATEWAY_BURST_PER_APP" envDefault:"1000"`
 	DrainTimeout time.Duration `env:"NOOK_GATEWAY_DRAIN_TIMEOUT" envDefault:"30s"`
+	// WakeTimeout is how long a request for a sleeping app waits for it to
+	// wake before 503 with Retry-After.
+	WakeTimeout time.Duration `env:"NOOK_GATEWAY_WAKE_TIMEOUT" envDefault:"30s"`
+	// WakeMaxHeld bounds the requests per app waiting on this gateway for
+	// it to wake; more get 503 with Retry-After.
+	WakeMaxHeld int `env:"NOOK_GATEWAY_WAKE_MAX_HELD" envDefault:"200"`
+	// ActivityFlush is how often request activity (for sleeping idle apps)
+	// is written to Redis: one write per active app per interval.
+	ActivityFlush time.Duration `env:"NOOK_GATEWAY_ACTIVITY_FLUSH" envDefault:"5s"`
 }
 
 // Validate checks the configuration.
@@ -120,6 +129,9 @@ func (c *Config) Validate() error {
 		config.CheckRange("NOOK_GATEWAY_RATE_PER_APP", c.RatePerApp, 0.1, 1e7),
 		config.CheckRange("NOOK_GATEWAY_BURST_PER_APP", c.BurstPerApp, 1, 10_000_000),
 		config.CheckDuration("NOOK_GATEWAY_DRAIN_TIMEOUT", c.DrainTimeout, time.Second, 10*time.Minute),
+		config.CheckDuration("NOOK_GATEWAY_WAKE_TIMEOUT", c.WakeTimeout, time.Second, 10*time.Minute),
+		config.CheckRange("NOOK_GATEWAY_WAKE_MAX_HELD", c.WakeMaxHeld, 1, 100_000),
+		config.CheckDuration("NOOK_GATEWAY_ACTIVITY_FLUSH", c.ActivityFlush, 100*time.Millisecond, time.Minute),
 	)
 	return errors.Join(errs...)
 }

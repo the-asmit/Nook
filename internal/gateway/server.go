@@ -14,6 +14,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	goredis "github.com/redis/go-redis/v9"
 
+	"github.com/the-asmit/nook/internal/activity"
 	platformmetrics "github.com/the-asmit/nook/internal/platform/metrics"
 	"github.com/the-asmit/nook/internal/platform/redis"
 	"github.com/the-asmit/nook/internal/version"
@@ -27,13 +28,14 @@ const startupTimeout = 30 * time.Second
 
 // Gateway is a running nook-gateway.
 type Gateway struct {
-	cfg     Config
-	logger  *slog.Logger
-	redis   *goredis.Client
-	table   *table
-	handler *handler
-	conns   *connTracker
-	reg     *prometheus.Registry
+	cfg      Config
+	logger   *slog.Logger
+	redis    *goredis.Client
+	table    *table
+	handler  *handler
+	conns    *connTracker
+	reg      *prometheus.Registry
+	activity *activity.Recorder
 
 	servers   []*http.Server
 	listeners []net.Listener
@@ -63,6 +65,8 @@ func New(ctx context.Context, cfg *Config, logger *slog.Logger) (*Gateway, error
 		g.Close()
 		return nil, err
 	}
+	g.activity = activity.NewRecorder(rdb, logger)
+	g.handler.touch = g.activity.Touch
 	loadCtx, cancel := context.WithTimeout(ctx, startupTimeout)
 	defer cancel()
 	if err := g.waitForRoutes(loadCtx); err != nil {
@@ -179,6 +183,15 @@ func (g *Gateway) Serve(ctx context.Context) error {
 	tableCtx, stopTable := context.WithCancel(context.WithoutCancel(ctx))
 	defer stopTable()
 	go g.table.run(tableCtx, g.redis, g.cfg.ResyncInterval)
+	activityDone := make(chan struct{})
+	go func() {
+		defer close(activityDone)
+		g.activity.Run(tableCtx, g.cfg.ActivityFlush)
+	}()
+	defer func() {
+		stopTable()
+		<-activityDone // the final flush, before the Redis client closes
+	}()
 	errs := make(chan error, len(g.servers)+1)
 	for i, srv := range g.servers {
 		go func() { errs <- srv.Serve(g.listeners[i]) }()
