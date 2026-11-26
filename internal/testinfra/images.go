@@ -27,17 +27,27 @@ import (
 // need no internet access).
 const BusyboxImage = "busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
 
+// busybox caches the exported layer. Only success is cached: a failed
+// pull (the network is flaky) is tried again by the next caller.
 var busybox struct {
-	once  sync.Once
+	mu    sync.Mutex
 	layer []byte
-	err   error
 }
 
 // BusyboxLayer returns the busybox root file system as one uncompressed
 // layer (exported from a container of BusyboxImage), built once.
 func BusyboxLayer(ctx context.Context) ([]byte, error) {
-	busybox.once.Do(func() { busybox.layer, busybox.err = exportBusybox(ctx) })
-	return busybox.layer, busybox.err
+	busybox.mu.Lock()
+	defer busybox.mu.Unlock()
+	if busybox.layer != nil {
+		return busybox.layer, nil
+	}
+	layer, err := exportBusybox(ctx)
+	if err != nil {
+		return nil, err
+	}
+	busybox.layer = layer
+	return layer, nil
 }
 
 func exportBusybox(ctx context.Context) ([]byte, error) {
@@ -48,12 +58,16 @@ func exportBusybox(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 	defer func() { _ = d.Close() }()
-	pull, err := d.ImagePull(ctx, BusyboxImage, client.ImagePullOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("pull %s: %w", BusyboxImage, err)
-	}
-	if err = pull.Wait(ctx); err != nil {
-		return nil, fmt.Errorf("pull %s: %w", BusyboxImage, err)
+	// The reference is pinned by digest, so a local copy is the same
+	// image; pull only when there is none.
+	if _, inspectErr := d.ImageInspect(ctx, BusyboxImage); inspectErr != nil {
+		pull, pullErr := d.ImagePull(ctx, BusyboxImage, client.ImagePullOptions{})
+		if pullErr != nil {
+			return nil, fmt.Errorf("pull %s: %w", BusyboxImage, pullErr)
+		}
+		if pullErr = pull.Wait(ctx); pullErr != nil {
+			return nil, fmt.Errorf("pull %s: %w", BusyboxImage, pullErr)
+		}
 	}
 	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{Image: BusyboxImage, Cmd: []string{"true"}}})
 	if err != nil {

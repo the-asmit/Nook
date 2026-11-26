@@ -177,12 +177,15 @@ func startStandIn(t *testing.T, name, subnet, ip string) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	pull, err := d.ImagePull(ctx, standInImage, client.ImagePullOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err = pull.Wait(ctx); err != nil {
-		t.Fatal(err)
+	// Pinned by digest: a local copy is the same image.
+	if _, inspectErr := d.ImageInspect(ctx, standInImage); inspectErr != nil {
+		pull, err := d.ImagePull(ctx, standInImage, client.ImagePullOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = pull.Wait(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name:       name,
@@ -304,7 +307,7 @@ func TestBuildEgressIsFiltered(t *testing.T) {
 	if !fetchFrom(t, "bridge", "http://"+metadataStandIn+"/") || !tcpFrom(t, "bridge", "172.17.0.1", nodePort) {
 		t.Fatal("the stand-ins are not reachable from an ordinary container; the test proves nothing")
 	}
-	gateway := networkGateway(t, "nook-builds")
+	gateway := networkGateway(t, shared.buildNetwork)
 	b.createApp(b.alice, b.ws, "probe")
 	probe := func(name, host, port string) string {
 		return "RUN (nc -z -w 3 " + host + " " + port + " && echo " + name + "-REACHABLE) || echo " + name + "-BLOCKED\n"

@@ -101,7 +101,7 @@ func agentConfig(t *testing.T, stateDir string) agent.Config {
 
 // agentConfigWith is agentConfig with overrides. Every test agent installs
 // the egress firewall under chains of its own, removed when the test ends.
-// Builds run on the filtered nook-builds network, as in production, and
+// Builds run on a filtered build network of this package (shared.buildNetwork), as in production, and
 // reach the registry by its address on the shared network (allowed).
 func agentConfigWith(t *testing.T, stateDir string, overrides map[string]string) agent.Config {
 	t.Helper()
@@ -112,7 +112,7 @@ func agentConfigWith(t *testing.T, stateDir string, overrides map[string]string)
 		"NOOK_AGENT_BUILD_HOSTS":          testinfra.RegistryAlias + "=" + registryIP(t),
 		"NOOK_AGENT_BUILD_EGRESS_ALLOW":   registryIP(t),
 		"NOOK_AGENT_ADVERTISE_ADDR":       "127.0.0.1", "NOOK_AGENT_REGISTRY_PULL_ADDR": shared.storage.Registry.Addr,
-		"NOOK_AGENT_FIREWALL_CHAIN": testChain(),
+		"NOOK_AGENT_FIREWALL_CHAIN": testChain(), "NOOK_AGENT_BUILD_NETWORK": shared.buildNetwork,
 	}
 	maps.Copy(environ, overrides)
 	cfg, err := config.Load[agent.Config](environ)

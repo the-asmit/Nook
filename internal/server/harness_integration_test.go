@@ -5,6 +5,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/moby/moby/client"
 	goredis "github.com/redis/go-redis/v9"
 	"github.com/testcontainers/testcontainers-go"
 
@@ -48,6 +50,11 @@ var shared struct {
 	caPath string
 	// storage is MinIO and the image registry (TLS from the shared CA).
 	storage *testinfra.StorageT
+	// buildNetwork is the build network of this package's agents. It is
+	// not nook-builds: an agent running on the same Docker engine (the
+	// developer's own, or another package's tests) filters nook-builds
+	// with its own registry allowed, which would block this package's.
+	buildNetwork string
 }
 
 func TestMain(m *testing.M) {
@@ -102,6 +109,8 @@ func runIntegration(m *testing.M) int {
 
 	shared.pgAdminURL, shared.redisURL, shared.dex, shared.serverPort = pgURL, redisURL, dex, serverPort
 	shared.gatewayPort = gatewayPort
+	shared.buildNetwork = "nook-builds-it-" + strings.ToLower(rand.Text()[:8])
+	defer removeNetwork(shared.buildNetwork)
 	shared.caPath = filepath.Join(caDir, "ca.pem")
 
 	// The registry's certificate comes from the same CA the control plane
@@ -127,6 +136,18 @@ func runIntegration(m *testing.M) int {
 	defer stopStorage()
 	shared.storage = storage
 	return m.Run()
+}
+
+// removeNetwork deletes a Docker network once the tests are done with it.
+func removeNetwork(name string) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	c, err := client.New(client.FromEnv)
+	if err != nil {
+		return
+	}
+	defer func() { _ = c.Close() }()
+	_, _ = c.NetworkRemove(ctx, name, client.NetworkRemoveOptions{})
 }
 
 // syncBuffer is a goroutine-safe log sink.
