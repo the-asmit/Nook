@@ -23,7 +23,7 @@ import (
 // through two gateways wake it with exactly one container start (its own
 // container, on its own node) and all get the app's answer.
 func TestIdleAppsSleepAndOneWakeServesEveryone(t *testing.T) {
-	r := startRuntimeEnv(t, nil)
+	r := startRuntimeEnv(t, noIdlePass)
 	r.newRuntimeApp(r.alice, r.ws, "sleepy", map[string]any{"sleep_after": "1m"})
 	r.newRuntimeApp(r.alice, r.ws, "awake", map[string]any{"sleep_after": "never"})
 	r.waitLive(r.alice, r.ws, "sleepy", r.release(r.ws, "sleepy"))
@@ -134,7 +134,7 @@ func TestIdleAppsSleepAndOneWakeServesEveryone(t *testing.T) {
 // release that eviction cannot make room for fails cleanly and evicts
 // nothing.
 func TestEvictionSleepsLeastRecentlyUsedApps(t *testing.T) {
-	r := startRuntimeEnv(t, map[string]string{"NOOK_QUOTA_MAX_MEMORY_MB": "1048576"})
+	r := startRuntimeEnv(t, map[string]string{"NOOK_QUOTA_MAX_MEMORY_MB": "1048576", "NOOK_ROLLOUT_IDLE_INTERVAL": noIdlePass["NOOK_ROLLOUT_IDLE_INTERVAL"]})
 	for _, app := range []struct{ slug, sleepAfter string }{{"older", "1m"}, {"newer", "1m"}, {"pinned", "never"}} {
 		r.newRuntimeApp(r.alice, r.ws, app.slug, map[string]any{"sleep_after": app.sleepAfter})
 		r.waitLive(r.alice, r.ws, app.slug, r.release(r.ws, app.slug))

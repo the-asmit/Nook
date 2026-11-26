@@ -17,7 +17,7 @@ import (
 // same instance and container) when the node has room; when it is full,
 // it wakes on another node and its kept container on the full node goes.
 func TestWakePrefersThePreviousNode(t *testing.T) {
-	r := startRuntimeEnv(t, map[string]string{"NOOK_QUOTA_MAX_MEMORY_MB": "1048576"})
+	r := startRuntimeEnv(t, map[string]string{"NOOK_QUOTA_MAX_MEMORY_MB": "1048576", "NOOK_ROLLOUT_IDLE_INTERVAL": noIdlePass["NOOK_ROLLOUT_IDLE_INTERVAL"]})
 	r.joinBuilder("node-b", r.primary.grpc)
 	r.newRuntimeApp(r.alice, r.ws, "web", map[string]any{"sleep_after": "1m"})
 	r.waitLive(r.alice, r.ws, "web", r.release(r.ws, "web"))

@@ -21,6 +21,11 @@ import (
 	"github.com/the-asmit/nook/internal/activity"
 )
 
+// noIdlePass configures a control plane whose own idle pass does not run
+// during a test (the longest interval allowed), so only the test's
+// sleepIdle, with its injected clock, puts apps to sleep.
+var noIdlePass = map[string]string{"NOOK_ROLLOUT_IDLE_INTERVAL": "10m"}
+
 // setActivity records that app last received a request at t (as gateways
 // do).
 func setActivity(t *testing.T, app uuid.UUID, at time.Time) {
