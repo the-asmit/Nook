@@ -1,0 +1,36 @@
+# End-to-end tests that need the public internet (base images from Docker
+# Hub and gcr.io, public DNS): `make test-e2e-internet`. They are kept out
+# of the per-commit CI (`make test-integration`), which must not depend on
+# anything outside the runner. They run every night, before every release
+# (a pushed version tag) and on demand.
+name: e2e-internet
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-internet-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  e2e-internet:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      # As in ci.yml: rootless BuildKit needs unprivileged user namespaces.
+      - name: Allow unprivileged user namespaces for rootless BuildKit
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - run: make test-e2e-internet

@@ -6,6 +6,7 @@ run:
   # Lint integration tests too; they are code we maintain.
   build-tags:
     - integration
+    - internet # the tests that need the public internet (make test-e2e-internet)
   tests: true
 
 linters:

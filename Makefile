@@ -192,8 +192,14 @@ test: ## Run unit tests with the race detector
 	go test -race -shuffle=on -count=1 ./...
 
 .PHONY: test-integration
-test-integration: ## Run unit + integration tests (needs Docker) with the race detector
+test-integration: ## Run unit + integration tests (needs Docker, no internet) with the race detector
 	go test -race -shuffle=on -count=1 -tags=integration -timeout=40m ./...
+
+.PHONY: test-e2e-internet
+test-e2e-internet: ## Run the end-to-end tests that need the public internet (Docker Hub, public DNS)
+	@# Files tagged `integration && internet`, tests named TestE2E*; CI runs
+	@# them on a schedule and before releases (.github/workflows/e2e-internet.yml).
+	go test -race -count=1 -tags=integration,internet -timeout=40m -run '^TestE2E' ./...
 
 .PHONY: lint
 lint: $(GOLANGCI_LINT) ## Run golangci-lint (including integration-tagged files)
