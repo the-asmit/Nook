@@ -98,14 +98,30 @@ func containerState(t *testing.T, id string) string {
 	return string(info.Container.State.Status)
 }
 
-// containerStarts counts the "start" events of app's containers between
-// since and now.
+// containerFinishedAt is when the container last exited, by the Docker
+// daemon's clock.
+func containerFinishedAt(t *testing.T, id string) time.Time {
+	t.Helper()
+	info, err := dockerClient(t).ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at, err := time.Parse(time.RFC3339Nano, info.Container.State.FinishedAt)
+	if err != nil {
+		t.Fatalf("container %s finished at %q: %v", id, info.Container.State.FinishedAt, err)
+	}
+	return at
+}
+
+// containerStarts counts the "start" events of app's containers after
+// since (by the daemon's clock, to the nanosecond: a start a moment
+// before must not count) and until now.
 func containerStarts(t *testing.T, app uuid.UUID, since time.Time) int {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	res := dockerClient(t).Events(ctx, client.EventsListOptions{
-		Since: strconv.FormatInt(since.Unix(), 10), Until: strconv.FormatInt(time.Now().Add(time.Second).Unix(), 10),
+		Since: fmt.Sprintf("%d.%09d", since.Unix(), since.Nanosecond()), Until: strconv.FormatInt(time.Now().Add(time.Second).Unix(), 10),
 		Filters: client.Filters{}.Add("type", string(events.ContainerEventType)).Add("event", "start").Add("label", "nook.app="+app.String()),
 	})
 	n := 0

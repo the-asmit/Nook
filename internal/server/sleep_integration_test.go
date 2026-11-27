@@ -65,6 +65,7 @@ func TestIdleAppsSleepAndOneWakeServesEveryone(t *testing.T) {
 		t.Fatalf("%d instances of the sleeping app still reserve resources", n)
 	}
 	eventually(t, 30*time.Second, "the container to stop", func() bool { return containerState(t, before.ContainerID) == "exited" })
+	stoppedAt := containerFinishedAt(t, before.ContainerID)
 	if v := metricValue(t, r.base+"/metrics", "nook_apps_sleeping"); v != 1 {
 		t.Fatalf("nook_apps_sleeping = %v", v)
 	}
@@ -80,7 +81,6 @@ func TestIdleAppsSleepAndOneWakeServesEveryone(t *testing.T) {
 	}
 	g2 := r.startGateway(map[string]string{"NOOK_GATEWAY_HTTP_ADDR": "127.0.0.1:" + strconv.Itoa(port2)})
 	host := "sleepy--" + r.ws + ".apps.localhost"
-	since := time.Now().Add(-time.Second)
 	const n = 100
 	results := make([]response, n)
 	var wg sync.WaitGroup
@@ -101,7 +101,7 @@ func TestIdleAppsSleepAndOneWakeServesEveryone(t *testing.T) {
 			t.Fatalf("request %d: %d %.200s", i, res.status, res.body)
 		}
 	}
-	if starts := containerStarts(t, sleepy, since); starts != 1 {
+	if starts := containerStarts(t, sleepy, stoppedAt); starts != 1 {
 		t.Fatalf("%d container starts for %d concurrent requests, want exactly 1", starts, n)
 	}
 	after := r.newestInstance(sleepy)
