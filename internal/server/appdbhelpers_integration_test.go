@@ -301,21 +301,52 @@ func (d *dbEnv) servers() []serverRow {
 	return out
 }
 
-// waitServer waits until generation gen runs and returns it.
+// waitServer waits until generation gen runs and returns it. On a timeout
+// it shows the server rows and the database containers' recent logs,
+// which are all there is to go on in CI.
 func (d *dbEnv) waitServer(gen int32, within time.Duration) serverRow {
 	d.t.Helper()
-	var s serverRow
-	eventually(d.t, within, fmt.Sprintf("server generation %d to run", gen), func() bool {
+	deadline := time.Now().Add(within)
+	for {
 		rows := d.servers()
 		for i := range rows {
 			if rows[i].Generation == gen && rows[i].State == "running" {
-				s = rows[i]
-				return true
+				return rows[i]
 			}
 		}
-		return false
-	})
-	return s
+		if time.Now().After(deadline) {
+			for i := range rows {
+				d.t.Logf("server generation %d: %s on %s, cause %s", rows[i].Generation, rows[i].State, rows[i].Node, rows[i].Cause)
+			}
+			d.logDatabaseContainers()
+			d.t.Fatalf("timed out after %s waiting for server generation %d to run", within, gen)
+		}
+		timer := time.NewTimer(100 * time.Millisecond)
+		<-timer.C
+	}
+}
+
+// logDatabaseContainers logs each database container's state and the end
+// of its output.
+func (d *dbEnv) logDatabaseContainers() {
+	d.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	docker := dockerClient(d.t)
+	list, err := docker.ContainerList(ctx, dockerclient.ContainerListOptions{All: true, Filters: dockerclient.Filters{}.Add("name", "nook-db-")})
+	if err != nil {
+		d.t.Logf("list database containers: %v", err)
+		return
+	}
+	for i := range list.Items {
+		c := &list.Items[i]
+		var out bytes.Buffer
+		if logs, err := docker.ContainerLogs(ctx, c.ID, dockerclient.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: "40"}); err == nil {
+			_, _ = stdcopy.StdCopy(&out, &out, logs)
+			_ = logs.Close()
+		}
+		d.t.Logf("container %v (%s): %s\n%s", c.Names, c.State, c.Status, out.String())
+	}
 }
 
 // lastArchived is the server's last archived segment and when.
