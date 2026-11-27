@@ -2,6 +2,7 @@
 // into a one-file image without going through a build). TESTAPP_MODE
 // selects its behavior: "serve" (default), "unhealthy" (health check
 // answers 500), "exit" (exits at once), "slow" (never listens).
+// With DATABASE_URL it can query its database (/db).
 package main
 
 import (
@@ -16,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func main() {
@@ -78,6 +81,29 @@ func main() {
 			return
 		}
 		_, _ = fmt.Fprintf(w, "ok %s", strings.Join(addrs, ","))
+	})
+	// /db?sql=... runs one statement on the app's database (DATABASE_URL,
+	// or url= to try another) and answers "ok <first column of the first
+	// row>" or "error ...": proves the app reaches its database.
+	mux.HandleFunc("GET /db", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		dsn := r.URL.Query().Get("url")
+		if dsn == "" {
+			dsn = os.Getenv("DATABASE_URL")
+		}
+		conn, err := pgx.Connect(ctx, dsn)
+		if err != nil {
+			_, _ = fmt.Fprintf(w, "error %v", err)
+			return
+		}
+		defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+		var out string
+		if err := conn.QueryRow(ctx, r.URL.Query().Get("sql")).Scan(&out); err != nil {
+			_, _ = fmt.Fprintf(w, "error %v", err)
+			return
+		}
+		_, _ = fmt.Fprintf(w, "ok %s", out)
 	})
 	mux.HandleFunc("GET /crash", func(http.ResponseWriter, *http.Request) {
 		log.Print("testapp crashes on request")

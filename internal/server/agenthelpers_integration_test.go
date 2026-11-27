@@ -77,6 +77,7 @@ func joinAgent(t *testing.T, grpcAddr, token, caHash, name string) string {
 // against the machine's real Docker engine.
 type runningAgent struct {
 	*agent.Agent
+	cfg  *agent.Config
 	stop context.CancelFunc
 	done chan struct{}
 	err  error
@@ -149,7 +150,7 @@ func runConfiguredAgent(t *testing.T, cfg *agent.Config, logger *slog.Logger) *r
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	ra := &runningAgent{Agent: a, stop: cancel, done: make(chan struct{})}
+	ra := &runningAgent{Agent: a, cfg: cfg, stop: cancel, done: make(chan struct{})}
 	go func() {
 		ra.err = a.Run(ctx)
 		close(ra.done)
