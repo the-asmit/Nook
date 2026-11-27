@@ -7,4 +7,5 @@
 !internal/
 !migrations/
 !proto/
+!deploy/docker/nook-db.sh
 **/*_test.go

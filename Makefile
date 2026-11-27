@@ -57,6 +57,7 @@ COMPOSE := docker compose --env-file .env -f deploy/compose/docker-compose.dev.y
 IMAGE ?= nook-server
 AGENT_IMAGE ?= nook-agent
 GATEWAY_IMAGE ?= nook-gateway
+POSTGRES_IMAGE ?= nook-postgres
 PLATFORMS ?= linux/amd64,linux/arm64
 # --load imports the multi-platform image into the local image store (needs
 # Docker's containerd image store, the default in Docker Desktop). CI sets
@@ -216,7 +217,7 @@ vuln: $(GOVULNCHECK) ## Scan production code, then test code, for known vulnerab
 	$(GOVULNCHECK) -test -tags=integration ./...
 
 .PHONY: docker-build
-docker-build: ## Build the nook-server, nook-agent and nook-gateway images for linux/amd64 and linux/arm64
+docker-build: ## Build the nook-server, nook-agent, nook-gateway and nook-postgres images for linux/amd64 and linux/arm64
 	docker buildx build \
 		--platform $(PLATFORMS) \
 		--file deploy/docker/nook-server.Dockerfile \
@@ -241,6 +242,21 @@ docker-build: ## Build the nook-server, nook-agent and nook-gateway images for l
 		--build-arg BUILD_DATE=$(BUILD_DATE) \
 		--tag $(GATEWAY_IMAGE):$(VERSION) \
 		$(DOCKER_OUTPUT) .
+	docker buildx build \
+		--platform $(PLATFORMS) \
+		--file deploy/docker/nook-postgres.Dockerfile \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		--tag $(POSTGRES_IMAGE):$(VERSION) \
+		$(DOCKER_OUTPUT) .
+
+.PHONY: docker-postgres
+docker-postgres: ## Build nook-postgres:dev (the app database server) for this machine, for the dev stack
+	docker buildx build --load \
+		--file deploy/docker/nook-postgres.Dockerfile \
+		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg BUILD_DATE=$(BUILD_DATE) \
+		--tag $(POSTGRES_IMAGE):dev .
 
 .PHONY: tools
 tools: $(GOLANGCI_LINT) $(GOVULNCHECK) $(GOOSE) $(SQLC) $(GORELEASER) $(BUF) $(PROTOC_PLUGINS) ## Install the pinned developer tools into bin/

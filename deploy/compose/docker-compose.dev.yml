@@ -67,6 +67,12 @@ services:
       - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
+    networks:
+      default:
+        # A fixed address lets the app database server (in its own network
+        # on the agent) reach its backups: NOOK_APPDB_S3_ENDPOINT and
+        # NOOK_AGENT_DB_EGRESS_ALLOW.
+        ipv4_address: 172.31.250.11
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
