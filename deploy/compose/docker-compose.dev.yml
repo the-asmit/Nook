@@ -55,7 +55,7 @@ services:
     # this is Chainguard's build from the MinIO source (amd64 + arm64).
     # Chainguard publishes only a moving "latest" tag for free, so the
     # digest is the pin. See docs/decisions/0007-dev-stack-images.md.
-    image: cgr.dev/chainguard/minio:latest@sha256:bd92a45b821c0d85772c607ed7b49693efe78b3ffffae301b5d1b0981660de22
+    image: cgr.dev/chainguard/minio:latest@sha256:b9b1cce81a4a6cc9bf250e68d621cc0b9fb8ed15aefe18fcd1840525eab6a81a
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in .env}
@@ -83,7 +83,7 @@ services:
 
   minio-init:
     # Creates the buckets once MinIO is up, then exits.
-    image: cgr.dev/chainguard/minio:latest@sha256:bd92a45b821c0d85772c607ed7b49693efe78b3ffffae301b5d1b0981660de22
+    image: cgr.dev/chainguard/minio:latest@sha256:b9b1cce81a4a6cc9bf250e68d621cc0b9fb8ed15aefe18fcd1840525eab6a81a
     entrypoint: ["mc"]
     # mc keeps its config under /tmp: the root file system is read-only.
     command: ["--config-dir", "/tmp/mc", "mb", "--ignore-existing", "local/nook", "local/nook-registry"]
