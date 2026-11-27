@@ -22,6 +22,13 @@ import (
 //go:embed seccomp_build.json
 var buildSeccompProfile string
 
+// buildSecurityOpts are the build container's (and its probe's) security
+// options: the build seccomp profile, and no AppArmor profile (Docker's
+// default denies the mounts rootless BuildKit makes in its user namespace).
+func buildSecurityOpts() []string {
+	return []string{"seccomp=" + buildSeccompProfile, "apparmor=unconfined"}
+}
+
 // notReadyError means the node cannot run containers yet or at all.
 type notReadyError struct{ reason string }
 
@@ -263,7 +270,7 @@ func (a *Agent) probeBuilds(ctx context.Context) string {
 			NetworkMode: "none",
 			CapDrop:     []string{"ALL"},
 			CapAdd:      []string{"SETUID", "SETGID"},
-			SecurityOpt: []string{"seccomp=" + buildSeccompProfile},
+			SecurityOpt: buildSecurityOpts(),
 			Resources:   container.Resources{Memory: 256 << 20, PidsLimit: &pids},
 		},
 	})

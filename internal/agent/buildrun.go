@@ -228,7 +228,10 @@ func cacheArgs(cmd *agentv1.BuildCommand) []string {
 // namespace of its own, with every capability dropped except the two that
 // map that namespace, no host mounts, no Docker socket and hard limits.
 // Its seccomp profile is Docker's default plus the system calls that
-// creating the user namespace needs (see the build-isolation ADR).
+// creating the user namespace needs, and it runs without Docker's AppArmor
+// profile, whose "deny mount" stops rootlesskit from setting up the
+// namespace's mounts on AppArmor hosts such as Ubuntu (see the
+// build-isolation ADR; ignored where AppArmor is absent).
 func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) client.ContainerCreateOptions {
 	// Validated at startup.
 	pairs, _ := parseBuildHosts(b.cfg.BuildHosts)
@@ -262,7 +265,7 @@ func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) cl
 			ExtraHosts:  hosts.extraHosts(),
 			CapDrop:     []string{"ALL"},
 			CapAdd:      []string{"SETUID", "SETGID"},
-			SecurityOpt: []string{"seccomp=" + buildSeccompProfile},
+			SecurityOpt: buildSecurityOpts(),
 			Resources: container.Resources{
 				Memory: memory, MemorySwap: memory, NanoCPUs: millicores * 1_000_000, PidsLimit: &pids,
 			},

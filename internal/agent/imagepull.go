@@ -303,12 +303,28 @@ func writeLayout(w io.Writer, dir, ref, manDigest, mediaType string, rawManifest
 	if err != nil {
 		return fmt.Errorf("encode index: %w", err)
 	}
+	// Docker's classic image store (no containerd snapshotter) loads only
+	// the docker-archive manifest; the containerd store reads index.json.
+	// `docker save` writes both for the same reason.
+	layers := make([]string, 0, len(blobs)-1)
+	for _, b := range blobs[1:] {
+		layers = append(layers, "blobs/sha256/"+strings.TrimPrefix(b.Digest, "sha256:"))
+	}
+	legacy, err := json.Marshal([]map[string]any{{
+		"Config":   "blobs/sha256/" + strings.TrimPrefix(blobs[0].Digest, "sha256:"),
+		"RepoTags": []string{ref},
+		"Layers":   layers,
+	}})
+	if err != nil {
+		return fmt.Errorf("encode manifest: %w", err)
+	}
 	files := []struct {
 		name string
 		data []byte
 	}{
 		{"oci-layout", []byte(`{"imageLayoutVersion":"1.0.0"}`)},
 		{"index.json", index},
+		{"manifest.json", legacy},
 		{"blobs/sha256/" + strings.TrimPrefix(manDigest, "sha256:"), rawManifest},
 	}
 	for _, f := range files {
