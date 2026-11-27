@@ -151,7 +151,7 @@ func (r *runner) nodeCommand() *cobra.Command {
 	undrain := r.nodeAction("undrain", "Make a drained node available again", http.MethodPost, "/undrain")
 	remove := r.nodeAction("remove", "Remove a node: revoke its certificates and disconnect its agent", http.MethodDelete, "")
 
-	cmd.AddCommand(list, inspect, drain, undrain, remove, r.joinTokenCommand())
+	cmd.AddCommand(list, inspect, drain, undrain, remove, r.nodeLabelCommand(), r.joinTokenCommand())
 	return cmd
 }
 
