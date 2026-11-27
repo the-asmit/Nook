@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -20,10 +21,12 @@ import (
 )
 
 // secondInstance starts another control plane on the env's database with
-// its own HTTP and gRPC ports.
-func (e *env) secondInstance() *instance {
+// its own HTTP and gRPC ports, and overrides.
+func (e *env) secondInstance(overrides map[string]string) *instance {
 	e.t.Helper()
-	return e.startInstance(map[string]string{"NOOK_HTTP_ADDR": "127.0.0.1:0"})
+	cfg := map[string]string{"NOOK_HTTP_ADDR": "127.0.0.1:0"}
+	maps.Copy(cfg, overrides)
+	return e.startInstance(cfg)
 }
 
 // lockHolder returns the backend PID holding the failure-detector lock, or 0.
@@ -65,10 +68,16 @@ func (e *env) history(name string) []string {
 // stops, the other instance takes over within a bounded time and keeps
 // detecting failures.
 func TestLeaderFailover(t *testing.T) {
-	e := startEnv(t)
+	// The exact history below needs the first heartbeat within the dead
+	// threshold of the join. The agent's startup (its firewall helper
+	// container) can take longer than the harness's 4 s on a busy machine,
+	// so this test allows as long as it allows the agent to connect.
+	const deadAfter = 15 * time.Second
+	timing := map[string]string{"NOOK_NODE_DEAD_AFTER": deadAfter.String()}
+	e := startEnvWith(t, timing)
 	a := e.primary
 	eventually(t, 5*time.Second, "instance A to lead", a.srv.IsLeader)
-	b := e.secondInstance()
+	b := e.secondInstance(timing)
 	if b.srv.IsLeader() {
 		t.Fatal("two leaders")
 	}
@@ -112,7 +121,7 @@ func TestLeaderFailover(t *testing.T) {
 
 	ag.stop()
 	eventually(t, 10*time.Second, "the node becomes suspect", func() bool { return e.nodeStatus(alice, "on-b") == "suspect" })
-	eventually(t, 10*time.Second, "the node becomes dead", func() bool { return e.nodeStatus(alice, "on-b") == "dead" })
+	eventually(t, deadAfter+5*time.Second, "the node becomes dead", func() bool { return e.nodeStatus(alice, "on-b") == "dead" })
 	want := []string{"->joining", "joining->ready", "ready->suspect", "suspect->dead"}
 	if got := e.history("on-b"); !slices.Equal(got, want) {
 		t.Fatalf("node_events = %v, want %v", got, want)
