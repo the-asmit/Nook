@@ -286,10 +286,10 @@ func (m *instances) hostPort(ctx context.Context, id string, port int32) (int, e
 }
 
 // tailLog returns the container's last lines of output.
-func (m *instances) tailLog(ctx context.Context, id string) []string {
+func (d *docker) tailLog(ctx context.Context, id string) []string {
 	ctx, cancel := context.WithTimeout(ctx, dockerTimeout)
 	defer cancel()
-	rc, err := m.docker.client.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(startupLogLines)})
+	rc, err := d.client.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Tail: strconv.Itoa(startupLogLines)})
 	if err != nil {
 		return nil
 	}

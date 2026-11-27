@@ -37,6 +37,9 @@ func (a *Agent) prepare(ctx context.Context) error {
 	a.instances.mu.Lock()
 	a.instances.ctx = ctx
 	a.instances.mu.Unlock()
+	a.databases.mu.Lock()
+	a.databases.ctx = ctx
+	a.databases.mu.Unlock()
 
 	if err := os.RemoveAll(a.instances.puller.tmpDir); err != nil {
 		a.logger.WarnContext(ctx, "could not remove leftover image downloads", "error", err.Error())
@@ -55,6 +58,15 @@ func (a *Agent) prepare(ctx context.Context) error {
 		return err
 	}
 	fw := &firewall{docker: a.docker, image: a.cfg.FirewallImage, logger: a.logger, spec: spec}
+	if a.cfg.EgressFilter {
+		a.databases.fw = fw
+	}
+	a.databases.setup(ctx, &a.cfg, a.instances.advertise, a.instances.publish)
+	if a.databases.unavailable != "" {
+		a.logger.InfoContext(ctx, "this node cannot host the app database server", "reason", a.databases.unavailable)
+	} else if len(spec.DBClients) == 0 {
+		a.logger.WarnContext(ctx, "NOOK_AGENT_DB_CLIENT_ADDRS is not set: an app database server on this node accepts connections from anywhere on the node's network (passwords and TLS still apply)")
+	}
 	reapply := func(context.Context) {}
 	if len(spec.Gateways) == 0 {
 		a.logger.WarnContext(ctx, "NOOK_AGENT_GATEWAY_ADDRS is not set: app ports accept connections from anywhere on the node's network, not only the gateways")
@@ -89,6 +101,7 @@ func (a *Agent) prepare(ctx context.Context) error {
 		}
 	}
 	a.instances.adopt(ctx)
+	a.databases.adopt(ctx)
 	go a.instances.watch(ctx, reapply)
 	return nil
 }
@@ -108,7 +121,18 @@ func firewallSpecFor(cfg *Config) (firewallSpec, error) {
 	if err != nil {
 		return firewallSpec{}, err
 	}
-	spec := firewallSpec{Chain: cfg.FirewallChain, AppBridge: appBridgePrefix, BuildAllow: allow, Block: block, Gateways: gateways}
+	dbAllow, err := parsePrefixes("NOOK_AGENT_DB_EGRESS_ALLOW", cfg.Database.EgressAllow)
+	if err != nil {
+		return firewallSpec{}, err
+	}
+	dbClients, err := parsePrefixes("NOOK_AGENT_DB_CLIENT_ADDRS", cfg.Database.ClientAddrs)
+	if err != nil {
+		return firewallSpec{}, err
+	}
+	spec := firewallSpec{
+		Chain: cfg.FirewallChain, AppBridge: appBridgePrefix, BuildAllow: allow, Block: block, Gateways: gateways,
+		DBBridge: dbBridge(cfg.Database.Network), DBAllow: dbAllow, DBClients: dbClients,
+	}
 	if cfg.BuildSlots > 0 {
 		spec.BuildBridge = buildBridge(cfg.BuildNetwork)
 	}

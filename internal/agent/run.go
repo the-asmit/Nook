@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"net/http"
 	"net/netip"
 	"path/filepath"
 	"regexp"
@@ -108,6 +109,8 @@ type Config struct {
 	// EgressBlock lists more blocked destinations (IPs or CIDRs), such as
 	// other nodes' public addresses.
 	EgressBlock []string `env:"NOOK_AGENT_EGRESS_BLOCK" envSeparator:","`
+	// Database configures hosting the app database server (dbconfig.go).
+	Database DatabaseConfig
 }
 
 // defaultBuildNetwork is the default build network.
@@ -233,6 +236,7 @@ func (c *Config) Validate() error {
 	if _, err := parsePrefixes("NOOK_AGENT_GATEWAY_ADDRS", c.GatewayAddrs); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, c.Database.validate(c.AllowPublicAdvertise))
 	return errors.Join(errs...)
 }
 
@@ -258,6 +262,7 @@ type Agent struct {
 	outbox    *outbox
 	builder   *builder
 	instances *instances
+	databases *databases
 	// firewallReady is set once the egress firewall is installed (or
 	// disabled); app and build containers wait for it.
 	firewallReady atomic.Bool
@@ -303,6 +308,12 @@ func New(cfg *Config, logger *slog.Logger) (*Agent, error) {
 		puller: &puller{docker: d, caPEM: caPEM, override: cfg.RegistryPullAddr, tmpDir: filepath.Join(cfg.StateDir, "pulls")},
 		policy: crashPolicy{Limit: cfg.CrashLimit, Window: cfg.CrashWindow, MinBackoff: cfg.RestartBackoffMin, MaxBackoff: cfg.RestartBackoffMax},
 		m:      map[string]*instance{}, logs: map[string]context.CancelFunc{},
+	}
+	a.databases = &databases{
+		docker: d, outbox: a.outbox, logger: logger, nodeID: a.NodeID, ready: a.containersReady,
+		netName: cfg.Database.Network, port: cfg.Database.Port, dumpDir: filepath.Join(cfg.StateDir, "dumps"),
+		http: &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 30 * time.Second}},
+		busy: map[string]string{}, stopping: map[string]bool{},
 	}
 	empty := ""
 	a.buildsUnavailable.Store(&empty)
@@ -376,6 +387,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	defer a.instances.close()
+	defer a.databases.close()
 	// Builds still running when the agent stops report an infrastructure
 	// error (delivered by the last session if it is still open), so the
 	// control plane retries them on another node.
@@ -499,7 +511,8 @@ func (a *Agent) connectOnce(ctx context.Context) error {
 	info.BuildSlots = int32(a.cfg.BuildSlots) //nolint:gosec // G115: validated to be at most 64.
 	info.AdvertiseAddress = a.cfg.AdvertiseAddr
 	info.BuildsUnavailableReason = *a.buildsUnavailable.Load()
-	hello := &agentv1.Hello{Info: info, ActiveBuildIds: a.builder.activeIDs(), Instances: a.instances.reports(ctx)}
+	a.databases.describe(info)
+	hello := &agentv1.Hello{Info: info, ActiveBuildIds: a.builder.activeIDs(), Instances: a.instances.reports(ctx), Databases: a.databases.reports(ctx)}
 	if err = stream.Send(&agentv1.ConnectRequest{Message: &agentv1.ConnectRequest_Hello{Hello: hello}}); err != nil {
 		return streamStatus(stream, err)
 	}
@@ -527,6 +540,9 @@ func (a *Agent) connectOnce(ctx context.Context) error {
 	}
 	interval := max(acc.GetHeartbeatInterval().AsDuration(), time.Second)
 	a.instances.restore(acc.GetInstances())
+	if err := a.databases.setEndpoint(ctx, acc.GetDatabaseEndpoint()); err != nil {
+		a.logger.ErrorContext(ctx, "could not allow the app database endpoint", "error", err.Error())
+	}
 	a.connected.Store(true)
 	a.logger.InfoContext(ctx, "connected to the control plane", "server", a.serverAddr(), "heartbeat_interval", interval.String())
 

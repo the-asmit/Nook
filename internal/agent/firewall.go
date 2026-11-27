@@ -75,6 +75,20 @@ type firewallSpec struct {
 	// node, see resolvers.go). Containers may send DNS (UDP and TCP port
 	// 53) to them even when they lie in a blocked range, and nothing else.
 	Resolvers []netip.Addr
+	// DBBridge is the bridge of the app database server's network; its
+	// container is filtered like apps and builds.
+	DBBridge string
+	// DBAllow are destinations the database server may reach although
+	// blocked (the object store its backups go to).
+	DBAllow []netip.Prefix
+	// DBClients are the only remote sources that may open connections to
+	// the database server (empty: no restriction); this node's apps reach
+	// it through DBEndpoint.
+	DBClients []netip.Prefix
+	// DBEndpoint is the current app database server (invalid: none). App
+	// containers may connect to exactly this address and port, and to no
+	// earlier server: a replaced (fenced) server is unreachable for apps.
+	DBEndpoint netip.AddrPort
 }
 
 // rules renders iptables-restore input for IPv4 and IPv6. Each chain is
@@ -100,6 +114,9 @@ func (s *firewallSpec) render(v6 bool) string {
 	if s.BuildBridge != "" {
 		ifaces = append(ifaces, s.BuildBridge)
 	}
+	if s.DBBridge != "" {
+		ifaces = append(ifaces, s.DBBridge)
+	}
 	var b strings.Builder
 	w := func(format string, args ...any) { fmt.Fprintf(&b, format+"\n", args...) }
 	w("*filter")
@@ -115,6 +132,20 @@ func (s *firewallSpec) render(v6 bool) string {
 					w("-A %s -i %s -d %s -j RETURN", chain, s.BuildBridge, p)
 				}
 			}
+		}
+		if s.DBBridge != "" {
+			for _, p := range s.DBAllow {
+				if p.Addr().Is6() == v6 {
+					w("-A %s -i %s -d %s -j RETURN", chain, s.DBBridge, p)
+				}
+			}
+		}
+		// Apps reach the current database server, wherever it runs: the
+		// match is on the address they connected to, before Docker's
+		// port mapping rewrote it.
+		if ep := s.DBEndpoint; ep.IsValid() && ep.Addr().Is6() == v6 {
+			dst := netip.PrefixFrom(ep.Addr(), ep.Addr().BitLen())
+			w("-A %s -i %s -p tcp -m conntrack --ctorigdst %s --ctorigdstport %d -j RETURN", chain, s.AppBridge+"+", dst, ep.Port())
 		}
 		// DNS to the resolvers Docker and the node use, which often sit in
 		// blocked ranges (169.254.169.254 on Oracle Cloud, 169.254.169.253
@@ -146,6 +177,17 @@ func (s *firewallSpec) render(v6 bool) string {
 			}
 		}
 		w("-A %s -o %s -m conntrack --ctstate NEW -j REJECT --reject-with %s", fwd, s.AppBridge+"+", reject)
+	}
+	// The database server accepts new connections only from the listed
+	// clients (other nodes' apps arrive with their node's address, and the
+	// control plane); this node's apps were let through above.
+	if s.DBBridge != "" && len(s.DBClients) > 0 {
+		for _, p := range s.DBClients {
+			if p.Addr().Is6() == v6 {
+				w("-A %s -o %s -m conntrack --ctstate NEW -s %s -j RETURN", fwd, s.DBBridge, p)
+			}
+		}
+		w("-A %s -o %s -m conntrack --ctstate NEW -j REJECT --reject-with %s", fwd, s.DBBridge, reject)
 	}
 	w("COMMIT")
 	return b.String()
@@ -232,6 +274,18 @@ func (f *firewall) setResolvers(rs []netip.Addr) bool {
 		return false
 	}
 	f.spec.Resolvers = rs
+	return true
+}
+
+// setDatabaseEndpoint replaces the database endpoint apps may reach and
+// reports whether it changed (the caller applies the rules then).
+func (f *firewall) setDatabaseEndpoint(ep netip.AddrPort) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.spec.DBEndpoint == ep {
+		return false
+	}
+	f.spec.DBEndpoint = ep
 	return true
 }
 

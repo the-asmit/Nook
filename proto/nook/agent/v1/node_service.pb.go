@@ -219,6 +219,114 @@ func (InstanceState) EnumDescriptor() ([]byte, []int) {
 	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{2}
 }
 
+type DatabaseState int32
+
+const (
+	DatabaseState_DATABASE_STATE_UNSPECIFIED DatabaseState = 0
+	// Starting or restoring.
+	DatabaseState_DATABASE_STATE_STARTING DatabaseState = 1
+	// Accepting connections, recovery finished.
+	DatabaseState_DATABASE_STATE_RUNNING DatabaseState = 2
+	// The container was stopped (and removed, if asked).
+	DatabaseState_DATABASE_STATE_STOPPED DatabaseState = 3
+	// The server could not start, or exited.
+	DatabaseState_DATABASE_STATE_FAILED DatabaseState = 4
+)
+
+// Enum value maps for DatabaseState.
+var (
+	DatabaseState_name = map[int32]string{
+		0: "DATABASE_STATE_UNSPECIFIED",
+		1: "DATABASE_STATE_STARTING",
+		2: "DATABASE_STATE_RUNNING",
+		3: "DATABASE_STATE_STOPPED",
+		4: "DATABASE_STATE_FAILED",
+	}
+	DatabaseState_value = map[string]int32{
+		"DATABASE_STATE_UNSPECIFIED": 0,
+		"DATABASE_STATE_STARTING":    1,
+		"DATABASE_STATE_RUNNING":     2,
+		"DATABASE_STATE_STOPPED":     3,
+		"DATABASE_STATE_FAILED":      4,
+	}
+)
+
+func (x DatabaseState) Enum() *DatabaseState {
+	p := new(DatabaseState)
+	*p = x
+	return p
+}
+
+func (x DatabaseState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DatabaseState) Descriptor() protoreflect.EnumDescriptor {
+	return file_nook_agent_v1_node_service_proto_enumTypes[3].Descriptor()
+}
+
+func (DatabaseState) Type() protoreflect.EnumType {
+	return &file_nook_agent_v1_node_service_proto_enumTypes[3]
+}
+
+func (x DatabaseState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DatabaseState.Descriptor instead.
+func (DatabaseState) EnumDescriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{3}
+}
+
+type DumpStage int32
+
+const (
+	DumpStage_DUMP_STAGE_UNSPECIFIED DumpStage = 0
+	DumpStage_DUMP_STAGE_DUMPED      DumpStage = 1
+	DumpStage_DUMP_STAGE_UPLOADED    DumpStage = 2
+)
+
+// Enum value maps for DumpStage.
+var (
+	DumpStage_name = map[int32]string{
+		0: "DUMP_STAGE_UNSPECIFIED",
+		1: "DUMP_STAGE_DUMPED",
+		2: "DUMP_STAGE_UPLOADED",
+	}
+	DumpStage_value = map[string]int32{
+		"DUMP_STAGE_UNSPECIFIED": 0,
+		"DUMP_STAGE_DUMPED":      1,
+		"DUMP_STAGE_UPLOADED":    2,
+	}
+)
+
+func (x DumpStage) Enum() *DumpStage {
+	p := new(DumpStage)
+	*p = x
+	return p
+}
+
+func (x DumpStage) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DumpStage) Descriptor() protoreflect.EnumDescriptor {
+	return file_nook_agent_v1_node_service_proto_enumTypes[4].Descriptor()
+}
+
+func (DumpStage) Type() protoreflect.EnumType {
+	return &file_nook_agent_v1_node_service_proto_enumTypes[4]
+}
+
+func (x DumpStage) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DumpStage.Descriptor instead.
+func (DumpStage) EnumDescriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{4}
+}
+
 // NodeInfo describes a node's fixed properties, reported at join and on
 // every connection.
 type NodeInfo struct {
@@ -243,8 +351,15 @@ type NodeInfo struct {
 	// Why the node cannot run builds even though it has build slots (with
 	// the fix), or empty when it can.
 	BuildsUnavailableReason string `protobuf:"bytes,12,opt,name=builds_unavailable_reason,json=buildsUnavailableReason,proto3" json:"builds_unavailable_reason,omitempty"`
-	unknownFields           protoimpl.UnknownFields
-	sizeCache               protoimpl.SizeCache
+	// Where app containers reach an app database server on this node, the
+	// port it is published on, and why the node cannot host one (with the
+	// fix), or empty when it can.
+	DatabaseAddress           string `protobuf:"bytes,13,opt,name=database_address,json=databaseAddress,proto3" json:"database_address,omitempty"`
+	DatabasePublishAddress    string `protobuf:"bytes,14,opt,name=database_publish_address,json=databasePublishAddress,proto3" json:"database_publish_address,omitempty"`
+	DatabasePort              int32  `protobuf:"varint,15,opt,name=database_port,json=databasePort,proto3" json:"database_port,omitempty"`
+	DatabaseUnavailableReason string `protobuf:"bytes,16,opt,name=database_unavailable_reason,json=databaseUnavailableReason,proto3" json:"database_unavailable_reason,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *NodeInfo) Reset() {
@@ -357,6 +472,34 @@ func (x *NodeInfo) GetAdvertiseAddress() string {
 func (x *NodeInfo) GetBuildsUnavailableReason() string {
 	if x != nil {
 		return x.BuildsUnavailableReason
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetDatabaseAddress() string {
+	if x != nil {
+		return x.DatabaseAddress
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetDatabasePublishAddress() string {
+	if x != nil {
+		return x.DatabasePublishAddress
+	}
+	return ""
+}
+
+func (x *NodeInfo) GetDatabasePort() int32 {
+	if x != nil {
+		return x.DatabasePort
+	}
+	return 0
+}
+
+func (x *NodeInfo) GetDatabaseUnavailableReason() string {
+	if x != nil {
+		return x.DatabaseUnavailableReason
 	}
 	return ""
 }
@@ -621,6 +764,9 @@ type ConnectRequest struct {
 	//	*ConnectRequest_BuildFinished
 	//	*ConnectRequest_InstanceStatus
 	//	*ConnectRequest_AppLog
+	//	*ConnectRequest_DatabaseStatus
+	//	*ConnectRequest_DatabaseBackupFinished
+	//	*ConnectRequest_DatabaseDumpFinished
 	Message       isConnectRequest_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -726,6 +872,33 @@ func (x *ConnectRequest) GetAppLog() *AppLog {
 	return nil
 }
 
+func (x *ConnectRequest) GetDatabaseStatus() *DatabaseStatus {
+	if x != nil {
+		if x, ok := x.Message.(*ConnectRequest_DatabaseStatus); ok {
+			return x.DatabaseStatus
+		}
+	}
+	return nil
+}
+
+func (x *ConnectRequest) GetDatabaseBackupFinished() *DatabaseBackupFinished {
+	if x != nil {
+		if x, ok := x.Message.(*ConnectRequest_DatabaseBackupFinished); ok {
+			return x.DatabaseBackupFinished
+		}
+	}
+	return nil
+}
+
+func (x *ConnectRequest) GetDatabaseDumpFinished() *DatabaseDumpFinished {
+	if x != nil {
+		if x, ok := x.Message.(*ConnectRequest_DatabaseDumpFinished); ok {
+			return x.DatabaseDumpFinished
+		}
+	}
+	return nil
+}
+
 type isConnectRequest_Message interface {
 	isConnectRequest_Message()
 }
@@ -764,6 +937,21 @@ type ConnectRequest_AppLog struct {
 	AppLog *AppLog `protobuf:"bytes,7,opt,name=app_log,json=appLog,proto3,oneof"`
 }
 
+type ConnectRequest_DatabaseStatus struct {
+	// A change in the state of the app database server on the node.
+	DatabaseStatus *DatabaseStatus `protobuf:"bytes,8,opt,name=database_status,json=databaseStatus,proto3,oneof"`
+}
+
+type ConnectRequest_DatabaseBackupFinished struct {
+	// How a base backup ended.
+	DatabaseBackupFinished *DatabaseBackupFinished `protobuf:"bytes,9,opt,name=database_backup_finished,json=databaseBackupFinished,proto3,oneof"`
+}
+
+type ConnectRequest_DatabaseDumpFinished struct {
+	// How a step of a database dump ended.
+	DatabaseDumpFinished *DatabaseDumpFinished `protobuf:"bytes,10,opt,name=database_dump_finished,json=databaseDumpFinished,proto3,oneof"`
+}
+
 func (*ConnectRequest_Hello) isConnectRequest_Message() {}
 
 func (*ConnectRequest_Heartbeat) isConnectRequest_Message() {}
@@ -777,6 +965,12 @@ func (*ConnectRequest_BuildFinished) isConnectRequest_Message() {}
 func (*ConnectRequest_InstanceStatus) isConnectRequest_Message() {}
 
 func (*ConnectRequest_AppLog) isConnectRequest_Message() {}
+
+func (*ConnectRequest_DatabaseStatus) isConnectRequest_Message() {}
+
+func (*ConnectRequest_DatabaseBackupFinished) isConnectRequest_Message() {}
+
+func (*ConnectRequest_DatabaseDumpFinished) isConnectRequest_Message() {}
 
 // ConnectResponse is one message from the control plane on the Connect stream.
 type ConnectResponse struct {
@@ -871,7 +1065,11 @@ type Hello struct {
 	// App instances whose containers exist on the node. The control plane
 	// removes those it no longer wants and restarts those it wants that are
 	// missing or not running.
-	Instances     []*InstanceReport `protobuf:"bytes,3,rep,name=instances,proto3" json:"instances,omitempty"`
+	Instances []*InstanceReport `protobuf:"bytes,3,rep,name=instances,proto3" json:"instances,omitempty"`
+	// App database server containers on the node. The control plane stops
+	// those that are no longer current (fencing) and starts the current one
+	// if it is not running.
+	Databases     []*DatabaseReport `protobuf:"bytes,4,rep,name=databases,proto3" json:"databases,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -927,6 +1125,13 @@ func (x *Hello) GetInstances() []*InstanceReport {
 	return nil
 }
 
+func (x *Hello) GetDatabases() []*DatabaseReport {
+	if x != nil {
+		return x.Databases
+	}
+	return nil
+}
+
 type ConnectAccepted struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	NodeId string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
@@ -934,9 +1139,12 @@ type ConnectAccepted struct {
 	HeartbeatInterval *durationpb.Duration `protobuf:"bytes,2,opt,name=heartbeat_interval,json=heartbeatInterval,proto3" json:"heartbeat_interval,omitempty"`
 	// The instances the control plane has on the node, with their restart
 	// counts, so a restarted agent continues counting where it left off.
-	Instances     []*KnownInstance `protobuf:"bytes,3,rep,name=instances,proto3" json:"instances,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Instances []*KnownInstance `protobuf:"bytes,3,rep,name=instances,proto3" json:"instances,omitempty"`
+	// The app database server app containers may connect to (none if
+	// unset); the egress firewall allows exactly this address and port.
+	DatabaseEndpoint *DatabaseEndpoint `protobuf:"bytes,4,opt,name=database_endpoint,json=databaseEndpoint,proto3" json:"database_endpoint,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ConnectAccepted) Reset() {
@@ -986,6 +1194,13 @@ func (x *ConnectAccepted) GetHeartbeatInterval() *durationpb.Duration {
 func (x *ConnectAccepted) GetInstances() []*KnownInstance {
 	if x != nil {
 		return x.Instances
+	}
+	return nil
+}
+
+func (x *ConnectAccepted) GetDatabaseEndpoint() *DatabaseEndpoint {
+	if x != nil {
+		return x.DatabaseEndpoint
 	}
 	return nil
 }
@@ -1163,6 +1378,13 @@ type Command struct {
 	//	*Command_StopInstance
 	//	*Command_StreamLogs
 	//	*Command_StopLogs
+	//	*Command_StartDatabase
+	//	*Command_StopDatabase
+	//	*Command_BackupDatabase
+	//	*Command_DumpDatabase
+	//	*Command_UploadDump
+	//	*Command_UpdateDatabaseTls
+	//	*Command_SetDatabaseEndpoint
 	Kind          isCommand_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1282,6 +1504,69 @@ func (x *Command) GetStopLogs() *StopLogsCommand {
 	return nil
 }
 
+func (x *Command) GetStartDatabase() *StartDatabaseCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_StartDatabase); ok {
+			return x.StartDatabase
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetStopDatabase() *StopDatabaseCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_StopDatabase); ok {
+			return x.StopDatabase
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetBackupDatabase() *BackupDatabaseCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_BackupDatabase); ok {
+			return x.BackupDatabase
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetDumpDatabase() *DumpDatabaseCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_DumpDatabase); ok {
+			return x.DumpDatabase
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetUploadDump() *UploadDumpCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_UploadDump); ok {
+			return x.UploadDump
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetUpdateDatabaseTls() *UpdateDatabaseTLSCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_UpdateDatabaseTls); ok {
+			return x.UpdateDatabaseTls
+		}
+	}
+	return nil
+}
+
+func (x *Command) GetSetDatabaseEndpoint() *SetDatabaseEndpointCommand {
+	if x != nil {
+		if x, ok := x.Kind.(*Command_SetDatabaseEndpoint); ok {
+			return x.SetDatabaseEndpoint
+		}
+	}
+	return nil
+}
+
 type isCommand_Kind interface {
 	isCommand_Kind()
 }
@@ -1314,6 +1599,34 @@ type Command_StopLogs struct {
 	StopLogs *StopLogsCommand `protobuf:"bytes,9,opt,name=stop_logs,json=stopLogs,proto3,oneof"`
 }
 
+type Command_StartDatabase struct {
+	StartDatabase *StartDatabaseCommand `protobuf:"bytes,10,opt,name=start_database,json=startDatabase,proto3,oneof"`
+}
+
+type Command_StopDatabase struct {
+	StopDatabase *StopDatabaseCommand `protobuf:"bytes,11,opt,name=stop_database,json=stopDatabase,proto3,oneof"`
+}
+
+type Command_BackupDatabase struct {
+	BackupDatabase *BackupDatabaseCommand `protobuf:"bytes,12,opt,name=backup_database,json=backupDatabase,proto3,oneof"`
+}
+
+type Command_DumpDatabase struct {
+	DumpDatabase *DumpDatabaseCommand `protobuf:"bytes,13,opt,name=dump_database,json=dumpDatabase,proto3,oneof"`
+}
+
+type Command_UploadDump struct {
+	UploadDump *UploadDumpCommand `protobuf:"bytes,14,opt,name=upload_dump,json=uploadDump,proto3,oneof"`
+}
+
+type Command_UpdateDatabaseTls struct {
+	UpdateDatabaseTls *UpdateDatabaseTLSCommand `protobuf:"bytes,15,opt,name=update_database_tls,json=updateDatabaseTls,proto3,oneof"`
+}
+
+type Command_SetDatabaseEndpoint struct {
+	SetDatabaseEndpoint *SetDatabaseEndpointCommand `protobuf:"bytes,16,opt,name=set_database_endpoint,json=setDatabaseEndpoint,proto3,oneof"`
+}
+
 func (*Command_InspectNode) isCommand_Kind() {}
 
 func (*Command_Build) isCommand_Kind() {}
@@ -1327,6 +1640,20 @@ func (*Command_StopInstance) isCommand_Kind() {}
 func (*Command_StreamLogs) isCommand_Kind() {}
 
 func (*Command_StopLogs) isCommand_Kind() {}
+
+func (*Command_StartDatabase) isCommand_Kind() {}
+
+func (*Command_StopDatabase) isCommand_Kind() {}
+
+func (*Command_BackupDatabase) isCommand_Kind() {}
+
+func (*Command_DumpDatabase) isCommand_Kind() {}
+
+func (*Command_UploadDump) isCommand_Kind() {}
+
+func (*Command_UpdateDatabaseTls) isCommand_Kind() {}
+
+func (*Command_SetDatabaseEndpoint) isCommand_Kind() {}
 
 // InspectNodeCommand asks for live Docker engine information and the
 // containers Nook manages on the node.
@@ -2937,11 +3264,821 @@ func (x *LogLine) GetText() string {
 	return ""
 }
 
+// DatabaseEndpoint is where the current app database server listens.
+type DatabaseEndpoint struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseEndpoint) Reset() {
+	*x = DatabaseEndpoint{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseEndpoint) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseEndpoint) ProtoMessage() {}
+
+func (x *DatabaseEndpoint) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseEndpoint.ProtoReflect.Descriptor instead.
+func (*DatabaseEndpoint) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *DatabaseEndpoint) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *DatabaseEndpoint) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+// StartDatabaseCommand asks the agent to run the app database server
+// (image nook-postgres) on its volume, publishing it on the node's
+// database address and port, and to report RUNNING once it accepts
+// connections and has finished recovering, or FAILED. Idempotent by
+// server_id: a server that runs is left alone; a stopped one is
+// recreated with this command's settings on the same volume.
+type StartDatabaseCommand struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ServerId string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	// Image reference (pinned by digest outside development).
+	Image string `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
+	// "init", "restore" or "existing" (see nook-db.sh).
+	Mode          string `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	MemoryBytes   int64  `protobuf:"varint,4,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
+	CpuMillicores int64  `protobuf:"varint,5,opt,name=cpu_millicores,json=cpuMillicores,proto3" json:"cpu_millicores,omitempty"`
+	// The server's environment (settings, certificate and key, storage
+	// credentials, backup encryption key), built by the control plane for
+	// this command only. Never logged by either side.
+	Env           []*EnvVar `protobuf:"bytes,6,rep,name=env,proto3" json:"env,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartDatabaseCommand) Reset() {
+	*x = StartDatabaseCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartDatabaseCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartDatabaseCommand) ProtoMessage() {}
+
+func (x *StartDatabaseCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartDatabaseCommand.ProtoReflect.Descriptor instead.
+func (*StartDatabaseCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *StartDatabaseCommand) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *StartDatabaseCommand) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
+func (x *StartDatabaseCommand) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *StartDatabaseCommand) GetMemoryBytes() int64 {
+	if x != nil {
+		return x.MemoryBytes
+	}
+	return 0
+}
+
+func (x *StartDatabaseCommand) GetCpuMillicores() int64 {
+	if x != nil {
+		return x.CpuMillicores
+	}
+	return 0
+}
+
+func (x *StartDatabaseCommand) GetEnv() []*EnvVar {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+// StopDatabaseCommand stops the server's container and reports STOPPED.
+// With final_archive, the server is shut down cleanly and the WAL it had
+// not archived yet is pushed (no data loss), and the report names the
+// last segment. With remove, the container and its volume are deleted.
+type StopDatabaseCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	FinalArchive  bool                   `protobuf:"varint,2,opt,name=final_archive,json=finalArchive,proto3" json:"final_archive,omitempty"`
+	Remove        bool                   `protobuf:"varint,3,opt,name=remove,proto3" json:"remove,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopDatabaseCommand) Reset() {
+	*x = StopDatabaseCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopDatabaseCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopDatabaseCommand) ProtoMessage() {}
+
+func (x *StopDatabaseCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopDatabaseCommand.ProtoReflect.Descriptor instead.
+func (*StopDatabaseCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *StopDatabaseCommand) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *StopDatabaseCommand) GetFinalArchive() bool {
+	if x != nil {
+		return x.FinalArchive
+	}
+	return false
+}
+
+func (x *StopDatabaseCommand) GetRemove() bool {
+	if x != nil {
+		return x.Remove
+	}
+	return false
+}
+
+// BackupDatabaseCommand asks for a base backup, then deletes backups and
+// WAL no longer needed to restore any point after retain_after (keeping
+// at least one backup). Reported with DatabaseBackupFinished.
+type BackupDatabaseCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	RetainAfter   *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=retain_after,json=retainAfter,proto3" json:"retain_after,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BackupDatabaseCommand) Reset() {
+	*x = BackupDatabaseCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BackupDatabaseCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BackupDatabaseCommand) ProtoMessage() {}
+
+func (x *BackupDatabaseCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BackupDatabaseCommand.ProtoReflect.Descriptor instead.
+func (*BackupDatabaseCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *BackupDatabaseCommand) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *BackupDatabaseCommand) GetRetainAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.RetainAfter
+	}
+	return nil
+}
+
+// DumpDatabaseCommand asks for a plain-SQL pg_dump of one database into a
+// file on the node (at most max_bytes); reported with DatabaseDumpFinished
+// (stage DUMPED) carrying its size and SHA-256.
+type DumpDatabaseCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DumpId        string                 `protobuf:"bytes,1,opt,name=dump_id,json=dumpId,proto3" json:"dump_id,omitempty"`
+	ServerId      string                 `protobuf:"bytes,2,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Database      string                 `protobuf:"bytes,3,opt,name=database,proto3" json:"database,omitempty"`
+	MaxBytes      int64                  `protobuf:"varint,4,opt,name=max_bytes,json=maxBytes,proto3" json:"max_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DumpDatabaseCommand) Reset() {
+	*x = DumpDatabaseCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DumpDatabaseCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DumpDatabaseCommand) ProtoMessage() {}
+
+func (x *DumpDatabaseCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DumpDatabaseCommand.ProtoReflect.Descriptor instead.
+func (*DumpDatabaseCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *DumpDatabaseCommand) GetDumpId() string {
+	if x != nil {
+		return x.DumpId
+	}
+	return ""
+}
+
+func (x *DumpDatabaseCommand) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *DumpDatabaseCommand) GetDatabase() string {
+	if x != nil {
+		return x.Database
+	}
+	return ""
+}
+
+func (x *DumpDatabaseCommand) GetMaxBytes() int64 {
+	if x != nil {
+		return x.MaxBytes
+	}
+	return 0
+}
+
+// UploadDumpCommand sends a finished dump to the presigned URL (which
+// accepts exactly that file) and deletes it from the node; reported with
+// DatabaseDumpFinished (stage UPLOADED).
+type UploadDumpCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DumpId        string                 `protobuf:"bytes,1,opt,name=dump_id,json=dumpId,proto3" json:"dump_id,omitempty"`
+	Url           string                 `protobuf:"bytes,2,opt,name=url,proto3" json:"url,omitempty"`
+	Headers       map[string]string      `protobuf:"bytes,3,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UploadDumpCommand) Reset() {
+	*x = UploadDumpCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UploadDumpCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UploadDumpCommand) ProtoMessage() {}
+
+func (x *UploadDumpCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UploadDumpCommand.ProtoReflect.Descriptor instead.
+func (*UploadDumpCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *UploadDumpCommand) GetDumpId() string {
+	if x != nil {
+		return x.DumpId
+	}
+	return ""
+}
+
+func (x *UploadDumpCommand) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *UploadDumpCommand) GetHeaders() map[string]string {
+	if x != nil {
+		return x.Headers
+	}
+	return nil
+}
+
+// UpdateDatabaseTLSCommand replaces the running server's certificate.
+type UpdateDatabaseTLSCommand struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ServerId       string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	CertificatePem string                 `protobuf:"bytes,2,opt,name=certificate_pem,json=certificatePem,proto3" json:"certificate_pem,omitempty"`
+	PrivateKeyPem  string                 `protobuf:"bytes,3,opt,name=private_key_pem,json=privateKeyPem,proto3" json:"private_key_pem,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *UpdateDatabaseTLSCommand) Reset() {
+	*x = UpdateDatabaseTLSCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateDatabaseTLSCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateDatabaseTLSCommand) ProtoMessage() {}
+
+func (x *UpdateDatabaseTLSCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateDatabaseTLSCommand.ProtoReflect.Descriptor instead.
+func (*UpdateDatabaseTLSCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *UpdateDatabaseTLSCommand) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *UpdateDatabaseTLSCommand) GetCertificatePem() string {
+	if x != nil {
+		return x.CertificatePem
+	}
+	return ""
+}
+
+func (x *UpdateDatabaseTLSCommand) GetPrivateKeyPem() string {
+	if x != nil {
+		return x.PrivateKeyPem
+	}
+	return ""
+}
+
+// SetDatabaseEndpointCommand changes the endpoint app containers may
+// reach (an empty address: none).
+type SetDatabaseEndpointCommand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Endpoint      *DatabaseEndpoint      `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetDatabaseEndpointCommand) Reset() {
+	*x = SetDatabaseEndpointCommand{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetDatabaseEndpointCommand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetDatabaseEndpointCommand) ProtoMessage() {}
+
+func (x *SetDatabaseEndpointCommand) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetDatabaseEndpointCommand.ProtoReflect.Descriptor instead.
+func (*SetDatabaseEndpointCommand) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *SetDatabaseEndpointCommand) GetEndpoint() *DatabaseEndpoint {
+	if x != nil {
+		return x.Endpoint
+	}
+	return nil
+}
+
+// DatabaseStatus reports a change of the server's state.
+type DatabaseStatus struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ServerId string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	State    DatabaseState          `protobuf:"varint,2,opt,name=state,proto3,enum=nook.agent.v1.DatabaseState" json:"state,omitempty"`
+	// Where apps reach it (RUNNING).
+	Address string `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	Port    int32  `protobuf:"varint,4,opt,name=port,proto3" json:"port,omitempty"`
+	// Why it failed (user-facing).
+	Message string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	// STOPPED with final_archive: the last WAL segment pushed.
+	FinalWal      string `protobuf:"bytes,6,opt,name=final_wal,json=finalWal,proto3" json:"final_wal,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseStatus) Reset() {
+	*x = DatabaseStatus{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseStatus) ProtoMessage() {}
+
+func (x *DatabaseStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseStatus.ProtoReflect.Descriptor instead.
+func (*DatabaseStatus) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *DatabaseStatus) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *DatabaseStatus) GetState() DatabaseState {
+	if x != nil {
+		return x.State
+	}
+	return DatabaseState_DATABASE_STATE_UNSPECIFIED
+}
+
+func (x *DatabaseStatus) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *DatabaseStatus) GetPort() int32 {
+	if x != nil {
+		return x.Port
+	}
+	return 0
+}
+
+func (x *DatabaseStatus) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *DatabaseStatus) GetFinalWal() string {
+	if x != nil {
+		return x.FinalWal
+	}
+	return ""
+}
+
+type DatabaseBackupFinished struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ServerId      string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Ok            bool                   `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
+	BackupName    string                 `protobuf:"bytes,3,opt,name=backup_name,json=backupName,proto3" json:"backup_name,omitempty"`
+	Message       string                 `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseBackupFinished) Reset() {
+	*x = DatabaseBackupFinished{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseBackupFinished) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseBackupFinished) ProtoMessage() {}
+
+func (x *DatabaseBackupFinished) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseBackupFinished.ProtoReflect.Descriptor instead.
+func (*DatabaseBackupFinished) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *DatabaseBackupFinished) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *DatabaseBackupFinished) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *DatabaseBackupFinished) GetBackupName() string {
+	if x != nil {
+		return x.BackupName
+	}
+	return ""
+}
+
+func (x *DatabaseBackupFinished) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type DatabaseDumpFinished struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DumpId        string                 `protobuf:"bytes,1,opt,name=dump_id,json=dumpId,proto3" json:"dump_id,omitempty"`
+	Stage         DumpStage              `protobuf:"varint,2,opt,name=stage,proto3,enum=nook.agent.v1.DumpStage" json:"stage,omitempty"`
+	Ok            bool                   `protobuf:"varint,3,opt,name=ok,proto3" json:"ok,omitempty"`
+	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Sha256        []byte                 `protobuf:"bytes,5,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Message       string                 `protobuf:"bytes,6,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseDumpFinished) Reset() {
+	*x = DatabaseDumpFinished{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseDumpFinished) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseDumpFinished) ProtoMessage() {}
+
+func (x *DatabaseDumpFinished) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseDumpFinished.ProtoReflect.Descriptor instead.
+func (*DatabaseDumpFinished) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *DatabaseDumpFinished) GetDumpId() string {
+	if x != nil {
+		return x.DumpId
+	}
+	return ""
+}
+
+func (x *DatabaseDumpFinished) GetStage() DumpStage {
+	if x != nil {
+		return x.Stage
+	}
+	return DumpStage_DUMP_STAGE_UNSPECIFIED
+}
+
+func (x *DatabaseDumpFinished) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *DatabaseDumpFinished) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *DatabaseDumpFinished) GetSha256() []byte {
+	if x != nil {
+		return x.Sha256
+	}
+	return nil
+}
+
+func (x *DatabaseDumpFinished) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+// DatabaseReport describes an app database server container on the node.
+type DatabaseReport struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ServerId string                 `protobuf:"bytes,1,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	Running  bool                   `protobuf:"varint,2,opt,name=running,proto3" json:"running,omitempty"`
+	// A base backup of this server is running on the node.
+	BackupRunning bool `protobuf:"varint,3,opt,name=backup_running,json=backupRunning,proto3" json:"backup_running,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DatabaseReport) Reset() {
+	*x = DatabaseReport{}
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DatabaseReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DatabaseReport) ProtoMessage() {}
+
+func (x *DatabaseReport) ProtoReflect() protoreflect.Message {
+	mi := &file_nook_agent_v1_node_service_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DatabaseReport.ProtoReflect.Descriptor instead.
+func (*DatabaseReport) Descriptor() ([]byte, []int) {
+	return file_nook_agent_v1_node_service_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *DatabaseReport) GetServerId() string {
+	if x != nil {
+		return x.ServerId
+	}
+	return ""
+}
+
+func (x *DatabaseReport) GetRunning() bool {
+	if x != nil {
+		return x.Running
+	}
+	return false
+}
+
+func (x *DatabaseReport) GetBackupRunning() bool {
+	if x != nil {
+		return x.BackupRunning
+	}
+	return false
+}
+
 var File_nook_agent_v1_node_service_proto protoreflect.FileDescriptor
 
 const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\n" +
-	" nook/agent/v1/node_service.proto\x12\rnook.agent.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb3\x03\n" +
+	" nook/agent/v1/node_service.proto\x12\rnook.agent.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xfd\x04\n" +
 	"\bNodeInfo\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1c\n" +
 	"\taddresses\x18\x02 \x03(\tR\taddresses\x12\x1b\n" +
@@ -2956,7 +4093,11 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	" \x01(\x05R\n" +
 	"buildSlots\x12+\n" +
 	"\x11advertise_address\x18\v \x01(\tR\x10advertiseAddress\x12:\n" +
-	"\x19builds_unavailable_reason\x18\f \x01(\tR\x17buildsUnavailableReason\"\x81\x02\n" +
+	"\x19builds_unavailable_reason\x18\f \x01(\tR\x17buildsUnavailableReason\x12)\n" +
+	"\x10database_address\x18\r \x01(\tR\x0fdatabaseAddress\x128\n" +
+	"\x18database_publish_address\x18\x0e \x01(\tR\x16databasePublishAddress\x12#\n" +
+	"\rdatabase_port\x18\x0f \x01(\x05R\fdatabasePort\x12>\n" +
+	"\x1bdatabase_unavailable_reason\x18\x10 \x01(\tR\x19databaseUnavailableReason\"\x81\x02\n" +
 	"\vJoinRequest\x12\x1d\n" +
 	"\n" +
 	"join_token\x18\x01 \x01(\tR\tjoinToken\x12\x17\n" +
@@ -2976,7 +4117,7 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\acsr_der\x18\x01 \x01(\fR\x06csrDer\"q\n" +
 	"\x18RenewCertificateResponse\x12'\n" +
 	"\x0fcertificate_der\x18\x01 \x01(\fR\x0ecertificateDer\x12,\n" +
-	"\x12ca_certificate_der\x18\x02 \x01(\fR\x10caCertificateDer\"\xc5\x03\n" +
+	"\x12ca_certificate_der\x18\x02 \x01(\fR\x10caCertificateDer\"\xcf\x05\n" +
 	"\x0eConnectRequest\x12,\n" +
 	"\x05hello\x18\x01 \x01(\v2\x14.nook.agent.v1.HelloH\x00R\x05hello\x128\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x18.nook.agent.v1.HeartbeatH\x00R\theartbeat\x12E\n" +
@@ -2984,20 +4125,26 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\tbuild_log\x18\x04 \x01(\v2\x17.nook.agent.v1.BuildLogH\x00R\bbuildLog\x12E\n" +
 	"\x0ebuild_finished\x18\x05 \x01(\v2\x1c.nook.agent.v1.BuildFinishedH\x00R\rbuildFinished\x12H\n" +
 	"\x0finstance_status\x18\x06 \x01(\v2\x1d.nook.agent.v1.InstanceStatusH\x00R\x0einstanceStatus\x120\n" +
-	"\aapp_log\x18\a \x01(\v2\x15.nook.agent.v1.AppLogH\x00R\x06appLogB\t\n" +
+	"\aapp_log\x18\a \x01(\v2\x15.nook.agent.v1.AppLogH\x00R\x06appLog\x12H\n" +
+	"\x0fdatabase_status\x18\b \x01(\v2\x1d.nook.agent.v1.DatabaseStatusH\x00R\x0edatabaseStatus\x12a\n" +
+	"\x18database_backup_finished\x18\t \x01(\v2%.nook.agent.v1.DatabaseBackupFinishedH\x00R\x16databaseBackupFinished\x12[\n" +
+	"\x16database_dump_finished\x18\n" +
+	" \x01(\v2#.nook.agent.v1.DatabaseDumpFinishedH\x00R\x14databaseDumpFinishedB\t\n" +
 	"\amessage\"\x8e\x01\n" +
 	"\x0fConnectResponse\x12<\n" +
 	"\baccepted\x18\x01 \x01(\v2\x1e.nook.agent.v1.ConnectAcceptedH\x00R\baccepted\x122\n" +
 	"\acommand\x18\x02 \x01(\v2\x16.nook.agent.v1.CommandH\x00R\acommandB\t\n" +
-	"\amessage\"\x9b\x01\n" +
+	"\amessage\"\xd8\x01\n" +
 	"\x05Hello\x12+\n" +
 	"\x04info\x18\x01 \x01(\v2\x17.nook.agent.v1.NodeInfoR\x04info\x12(\n" +
 	"\x10active_build_ids\x18\x02 \x03(\tR\x0eactiveBuildIds\x12;\n" +
-	"\tinstances\x18\x03 \x03(\v2\x1d.nook.agent.v1.InstanceReportR\tinstances\"\xb0\x01\n" +
+	"\tinstances\x18\x03 \x03(\v2\x1d.nook.agent.v1.InstanceReportR\tinstances\x12;\n" +
+	"\tdatabases\x18\x04 \x03(\v2\x1d.nook.agent.v1.DatabaseReportR\tdatabases\"\xfe\x01\n" +
 	"\x0fConnectAccepted\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12H\n" +
 	"\x12heartbeat_interval\x18\x02 \x01(\v2\x19.google.protobuf.DurationR\x11heartbeatInterval\x12:\n" +
-	"\tinstances\x18\x03 \x03(\v2\x1c.nook.agent.v1.KnownInstanceR\tinstances\"U\n" +
+	"\tinstances\x18\x03 \x03(\v2\x1c.nook.agent.v1.KnownInstanceR\tinstances\x12L\n" +
+	"\x11database_endpoint\x18\x04 \x01(\v2\x1f.nook.agent.v1.DatabaseEndpointR\x10databaseEndpoint\"U\n" +
 	"\rKnownInstance\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12#\n" +
@@ -3010,7 +4157,7 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\ragent_version\x18\x05 \x01(\tR\fagentVersion\x121\n" +
 	"\x06uptime\x18\x06 \x01(\v2\x19.google.protobuf.DurationR\x06uptime\x12)\n" +
 	"\x10docker_reachable\x18\a \x01(\bR\x0fdockerReachable\x12:\n" +
-	"\x19builds_unavailable_reason\x18\b \x01(\tR\x17buildsUnavailableReason\"\xc7\x04\n" +
+	"\x19builds_unavailable_reason\x18\b \x01(\tR\x17buildsUnavailableReason\"\xfd\b\n" +
 	"\aCommand\x12\x1d\n" +
 	"\n" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x123\n" +
@@ -3022,7 +4169,16 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\rstop_instance\x18\a \x01(\v2\".nook.agent.v1.StopInstanceCommandH\x00R\fstopInstance\x12C\n" +
 	"\vstream_logs\x18\b \x01(\v2 .nook.agent.v1.StreamLogsCommandH\x00R\n" +
 	"streamLogs\x12=\n" +
-	"\tstop_logs\x18\t \x01(\v2\x1e.nook.agent.v1.StopLogsCommandH\x00R\bstopLogsB\x06\n" +
+	"\tstop_logs\x18\t \x01(\v2\x1e.nook.agent.v1.StopLogsCommandH\x00R\bstopLogs\x12L\n" +
+	"\x0estart_database\x18\n" +
+	" \x01(\v2#.nook.agent.v1.StartDatabaseCommandH\x00R\rstartDatabase\x12I\n" +
+	"\rstop_database\x18\v \x01(\v2\".nook.agent.v1.StopDatabaseCommandH\x00R\fstopDatabase\x12O\n" +
+	"\x0fbackup_database\x18\f \x01(\v2$.nook.agent.v1.BackupDatabaseCommandH\x00R\x0ebackupDatabase\x12I\n" +
+	"\rdump_database\x18\r \x01(\v2\".nook.agent.v1.DumpDatabaseCommandH\x00R\fdumpDatabase\x12C\n" +
+	"\vupload_dump\x18\x0e \x01(\v2 .nook.agent.v1.UploadDumpCommandH\x00R\n" +
+	"uploadDump\x12Y\n" +
+	"\x13update_database_tls\x18\x0f \x01(\v2'.nook.agent.v1.UpdateDatabaseTLSCommandH\x00R\x11updateDatabaseTls\x12_\n" +
+	"\x15set_database_endpoint\x18\x10 \x01(\v2).nook.agent.v1.SetDatabaseEndpointCommandH\x00R\x13setDatabaseEndpointB\x06\n" +
 	"\x04kind\"\x14\n" +
 	"\x12InspectNodeCommand\"\xeb\x01\n" +
 	"\rCommandResult\x12\x1d\n" +
@@ -3168,7 +4324,67 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\aLogLine\x12.\n" +
 	"\x04time\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04time\x12\x16\n" +
 	"\x06stream\x18\x02 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04text\x18\x03 \x01(\tR\x04text*\xe1\x01\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\"@\n" +
+	"\x10DatabaseEndpoint\x12\x18\n" +
+	"\aaddress\x18\x01 \x01(\tR\aaddress\x12\x12\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\"\xd0\x01\n" +
+	"\x14StartDatabaseCommand\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x14\n" +
+	"\x05image\x18\x02 \x01(\tR\x05image\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\x12!\n" +
+	"\fmemory_bytes\x18\x04 \x01(\x03R\vmemoryBytes\x12%\n" +
+	"\x0ecpu_millicores\x18\x05 \x01(\x03R\rcpuMillicores\x12'\n" +
+	"\x03env\x18\x06 \x03(\v2\x15.nook.agent.v1.EnvVarR\x03env\"o\n" +
+	"\x13StopDatabaseCommand\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12#\n" +
+	"\rfinal_archive\x18\x02 \x01(\bR\ffinalArchive\x12\x16\n" +
+	"\x06remove\x18\x03 \x01(\bR\x06remove\"s\n" +
+	"\x15BackupDatabaseCommand\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12=\n" +
+	"\fretain_after\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\vretainAfter\"\x84\x01\n" +
+	"\x13DumpDatabaseCommand\x12\x17\n" +
+	"\adump_id\x18\x01 \x01(\tR\x06dumpId\x12\x1b\n" +
+	"\tserver_id\x18\x02 \x01(\tR\bserverId\x12\x1a\n" +
+	"\bdatabase\x18\x03 \x01(\tR\bdatabase\x12\x1b\n" +
+	"\tmax_bytes\x18\x04 \x01(\x03R\bmaxBytes\"\xc3\x01\n" +
+	"\x11UploadDumpCommand\x12\x17\n" +
+	"\adump_id\x18\x01 \x01(\tR\x06dumpId\x12\x10\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\x12G\n" +
+	"\aheaders\x18\x03 \x03(\v2-.nook.agent.v1.UploadDumpCommand.HeadersEntryR\aheaders\x1a:\n" +
+	"\fHeadersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x88\x01\n" +
+	"\x18UpdateDatabaseTLSCommand\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12'\n" +
+	"\x0fcertificate_pem\x18\x02 \x01(\tR\x0ecertificatePem\x12&\n" +
+	"\x0fprivate_key_pem\x18\x03 \x01(\tR\rprivateKeyPem\"Y\n" +
+	"\x1aSetDatabaseEndpointCommand\x12;\n" +
+	"\bendpoint\x18\x01 \x01(\v2\x1f.nook.agent.v1.DatabaseEndpointR\bendpoint\"\xc6\x01\n" +
+	"\x0eDatabaseStatus\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x122\n" +
+	"\x05state\x18\x02 \x01(\x0e2\x1c.nook.agent.v1.DatabaseStateR\x05state\x12\x18\n" +
+	"\aaddress\x18\x03 \x01(\tR\aaddress\x12\x12\n" +
+	"\x04port\x18\x04 \x01(\x05R\x04port\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\x12\x1b\n" +
+	"\tfinal_wal\x18\x06 \x01(\tR\bfinalWal\"\x80\x01\n" +
+	"\x16DatabaseBackupFinished\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x0e\n" +
+	"\x02ok\x18\x02 \x01(\bR\x02ok\x12\x1f\n" +
+	"\vbackup_name\x18\x03 \x01(\tR\n" +
+	"backupName\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"\xc0\x01\n" +
+	"\x14DatabaseDumpFinished\x12\x17\n" +
+	"\adump_id\x18\x01 \x01(\tR\x06dumpId\x12.\n" +
+	"\x05stage\x18\x02 \x01(\x0e2\x18.nook.agent.v1.DumpStageR\x05stage\x12\x0e\n" +
+	"\x02ok\x18\x03 \x01(\bR\x02ok\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\x12\x16\n" +
+	"\x06sha256\x18\x05 \x01(\fR\x06sha256\x12\x18\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage\"n\n" +
+	"\x0eDatabaseReport\x12\x1b\n" +
+	"\tserver_id\x18\x01 \x01(\tR\bserverId\x12\x18\n" +
+	"\arunning\x18\x02 \x01(\bR\arunning\x12%\n" +
+	"\x0ebackup_running\x18\x03 \x01(\bR\rbackupRunning*\xe1\x01\n" +
 	"\x10CommandErrorCode\x12\"\n" +
 	"\x1eCOMMAND_ERROR_CODE_UNSPECIFIED\x10\x00\x12\"\n" +
 	"\x1eCOMMAND_ERROR_CODE_UNSUPPORTED\x10\x01\x12)\n" +
@@ -3190,7 +4406,17 @@ const file_nook_agent_v1_node_service_proto_rawDesc = "" +
 	"\x18INSTANCE_STATE_UNHEALTHY\x10\x03\x12\x1a\n" +
 	"\x16INSTANCE_STATE_STOPPED\x10\x04\x12\x1a\n" +
 	"\x16INSTANCE_STATE_CRASHED\x10\x05\x12\x19\n" +
-	"\x15INSTANCE_STATE_FAILED\x10\x062\x81\x02\n" +
+	"\x15INSTANCE_STATE_FAILED\x10\x06*\x9f\x01\n" +
+	"\rDatabaseState\x12\x1e\n" +
+	"\x1aDATABASE_STATE_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17DATABASE_STATE_STARTING\x10\x01\x12\x1a\n" +
+	"\x16DATABASE_STATE_RUNNING\x10\x02\x12\x1a\n" +
+	"\x16DATABASE_STATE_STOPPED\x10\x03\x12\x19\n" +
+	"\x15DATABASE_STATE_FAILED\x10\x04*W\n" +
+	"\tDumpStage\x12\x1a\n" +
+	"\x16DUMP_STAGE_UNSPECIFIED\x10\x00\x12\x15\n" +
+	"\x11DUMP_STAGE_DUMPED\x10\x01\x12\x17\n" +
+	"\x13DUMP_STAGE_UPLOADED\x10\x022\x81\x02\n" +
 	"\vNodeService\x12?\n" +
 	"\x04Join\x12\x1a.nook.agent.v1.JoinRequest\x1a\x1b.nook.agent.v1.JoinResponse\x12L\n" +
 	"\aConnect\x12\x1d.nook.agent.v1.ConnectRequest\x1a\x1e.nook.agent.v1.ConnectResponse(\x010\x01\x12c\n" +
@@ -3209,103 +4435,136 @@ func file_nook_agent_v1_node_service_proto_rawDescGZIP() []byte {
 	return file_nook_agent_v1_node_service_proto_rawDescData
 }
 
-var file_nook_agent_v1_node_service_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_nook_agent_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
+var file_nook_agent_v1_node_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_nook_agent_v1_node_service_proto_msgTypes = make([]protoimpl.MessageInfo, 47)
 var file_nook_agent_v1_node_service_proto_goTypes = []any{
-	(CommandErrorCode)(0),            // 0: nook.agent.v1.CommandErrorCode
-	(BuildResult)(0),                 // 1: nook.agent.v1.BuildResult
-	(InstanceState)(0),               // 2: nook.agent.v1.InstanceState
-	(*NodeInfo)(nil),                 // 3: nook.agent.v1.NodeInfo
-	(*JoinRequest)(nil),              // 4: nook.agent.v1.JoinRequest
-	(*JoinResponse)(nil),             // 5: nook.agent.v1.JoinResponse
-	(*RenewCertificateRequest)(nil),  // 6: nook.agent.v1.RenewCertificateRequest
-	(*RenewCertificateResponse)(nil), // 7: nook.agent.v1.RenewCertificateResponse
-	(*ConnectRequest)(nil),           // 8: nook.agent.v1.ConnectRequest
-	(*ConnectResponse)(nil),          // 9: nook.agent.v1.ConnectResponse
-	(*Hello)(nil),                    // 10: nook.agent.v1.Hello
-	(*ConnectAccepted)(nil),          // 11: nook.agent.v1.ConnectAccepted
-	(*KnownInstance)(nil),            // 12: nook.agent.v1.KnownInstance
-	(*Heartbeat)(nil),                // 13: nook.agent.v1.Heartbeat
-	(*Command)(nil),                  // 14: nook.agent.v1.Command
-	(*InspectNodeCommand)(nil),       // 15: nook.agent.v1.InspectNodeCommand
-	(*CommandResult)(nil),            // 16: nook.agent.v1.CommandResult
-	(*Accepted)(nil),                 // 17: nook.agent.v1.Accepted
-	(*CommandError)(nil),             // 18: nook.agent.v1.CommandError
-	(*InspectNodeResult)(nil),        // 19: nook.agent.v1.InspectNodeResult
-	(*DockerInfo)(nil),               // 20: nook.agent.v1.DockerInfo
-	(*ManagedContainer)(nil),         // 21: nook.agent.v1.ManagedContainer
-	(*BuildCommand)(nil),             // 22: nook.agent.v1.BuildCommand
-	(*CancelBuildCommand)(nil),       // 23: nook.agent.v1.CancelBuildCommand
-	(*BuildLog)(nil),                 // 24: nook.agent.v1.BuildLog
-	(*BuildFinished)(nil),            // 25: nook.agent.v1.BuildFinished
-	(*StartInstanceCommand)(nil),     // 26: nook.agent.v1.StartInstanceCommand
-	(*EnvVar)(nil),                   // 27: nook.agent.v1.EnvVar
-	(*StopInstanceCommand)(nil),      // 28: nook.agent.v1.StopInstanceCommand
-	(*StreamLogsCommand)(nil),        // 29: nook.agent.v1.StreamLogsCommand
-	(*StopLogsCommand)(nil),          // 30: nook.agent.v1.StopLogsCommand
-	(*InstanceStatus)(nil),           // 31: nook.agent.v1.InstanceStatus
-	(*InstanceReport)(nil),           // 32: nook.agent.v1.InstanceReport
-	(*AppLog)(nil),                   // 33: nook.agent.v1.AppLog
-	(*LogLine)(nil),                  // 34: nook.agent.v1.LogLine
-	nil,                              // 35: nook.agent.v1.JoinRequest.LabelsEntry
-	nil,                              // 36: nook.agent.v1.ManagedContainer.LabelsEntry
-	(*durationpb.Duration)(nil),      // 37: google.protobuf.Duration
-	(*timestamppb.Timestamp)(nil),    // 38: google.protobuf.Timestamp
+	(CommandErrorCode)(0),              // 0: nook.agent.v1.CommandErrorCode
+	(BuildResult)(0),                   // 1: nook.agent.v1.BuildResult
+	(InstanceState)(0),                 // 2: nook.agent.v1.InstanceState
+	(DatabaseState)(0),                 // 3: nook.agent.v1.DatabaseState
+	(DumpStage)(0),                     // 4: nook.agent.v1.DumpStage
+	(*NodeInfo)(nil),                   // 5: nook.agent.v1.NodeInfo
+	(*JoinRequest)(nil),                // 6: nook.agent.v1.JoinRequest
+	(*JoinResponse)(nil),               // 7: nook.agent.v1.JoinResponse
+	(*RenewCertificateRequest)(nil),    // 8: nook.agent.v1.RenewCertificateRequest
+	(*RenewCertificateResponse)(nil),   // 9: nook.agent.v1.RenewCertificateResponse
+	(*ConnectRequest)(nil),             // 10: nook.agent.v1.ConnectRequest
+	(*ConnectResponse)(nil),            // 11: nook.agent.v1.ConnectResponse
+	(*Hello)(nil),                      // 12: nook.agent.v1.Hello
+	(*ConnectAccepted)(nil),            // 13: nook.agent.v1.ConnectAccepted
+	(*KnownInstance)(nil),              // 14: nook.agent.v1.KnownInstance
+	(*Heartbeat)(nil),                  // 15: nook.agent.v1.Heartbeat
+	(*Command)(nil),                    // 16: nook.agent.v1.Command
+	(*InspectNodeCommand)(nil),         // 17: nook.agent.v1.InspectNodeCommand
+	(*CommandResult)(nil),              // 18: nook.agent.v1.CommandResult
+	(*Accepted)(nil),                   // 19: nook.agent.v1.Accepted
+	(*CommandError)(nil),               // 20: nook.agent.v1.CommandError
+	(*InspectNodeResult)(nil),          // 21: nook.agent.v1.InspectNodeResult
+	(*DockerInfo)(nil),                 // 22: nook.agent.v1.DockerInfo
+	(*ManagedContainer)(nil),           // 23: nook.agent.v1.ManagedContainer
+	(*BuildCommand)(nil),               // 24: nook.agent.v1.BuildCommand
+	(*CancelBuildCommand)(nil),         // 25: nook.agent.v1.CancelBuildCommand
+	(*BuildLog)(nil),                   // 26: nook.agent.v1.BuildLog
+	(*BuildFinished)(nil),              // 27: nook.agent.v1.BuildFinished
+	(*StartInstanceCommand)(nil),       // 28: nook.agent.v1.StartInstanceCommand
+	(*EnvVar)(nil),                     // 29: nook.agent.v1.EnvVar
+	(*StopInstanceCommand)(nil),        // 30: nook.agent.v1.StopInstanceCommand
+	(*StreamLogsCommand)(nil),          // 31: nook.agent.v1.StreamLogsCommand
+	(*StopLogsCommand)(nil),            // 32: nook.agent.v1.StopLogsCommand
+	(*InstanceStatus)(nil),             // 33: nook.agent.v1.InstanceStatus
+	(*InstanceReport)(nil),             // 34: nook.agent.v1.InstanceReport
+	(*AppLog)(nil),                     // 35: nook.agent.v1.AppLog
+	(*LogLine)(nil),                    // 36: nook.agent.v1.LogLine
+	(*DatabaseEndpoint)(nil),           // 37: nook.agent.v1.DatabaseEndpoint
+	(*StartDatabaseCommand)(nil),       // 38: nook.agent.v1.StartDatabaseCommand
+	(*StopDatabaseCommand)(nil),        // 39: nook.agent.v1.StopDatabaseCommand
+	(*BackupDatabaseCommand)(nil),      // 40: nook.agent.v1.BackupDatabaseCommand
+	(*DumpDatabaseCommand)(nil),        // 41: nook.agent.v1.DumpDatabaseCommand
+	(*UploadDumpCommand)(nil),          // 42: nook.agent.v1.UploadDumpCommand
+	(*UpdateDatabaseTLSCommand)(nil),   // 43: nook.agent.v1.UpdateDatabaseTLSCommand
+	(*SetDatabaseEndpointCommand)(nil), // 44: nook.agent.v1.SetDatabaseEndpointCommand
+	(*DatabaseStatus)(nil),             // 45: nook.agent.v1.DatabaseStatus
+	(*DatabaseBackupFinished)(nil),     // 46: nook.agent.v1.DatabaseBackupFinished
+	(*DatabaseDumpFinished)(nil),       // 47: nook.agent.v1.DatabaseDumpFinished
+	(*DatabaseReport)(nil),             // 48: nook.agent.v1.DatabaseReport
+	nil,                                // 49: nook.agent.v1.JoinRequest.LabelsEntry
+	nil,                                // 50: nook.agent.v1.ManagedContainer.LabelsEntry
+	nil,                                // 51: nook.agent.v1.UploadDumpCommand.HeadersEntry
+	(*durationpb.Duration)(nil),        // 52: google.protobuf.Duration
+	(*timestamppb.Timestamp)(nil),      // 53: google.protobuf.Timestamp
 }
 var file_nook_agent_v1_node_service_proto_depIdxs = []int32{
-	35, // 0: nook.agent.v1.JoinRequest.labels:type_name -> nook.agent.v1.JoinRequest.LabelsEntry
-	3,  // 1: nook.agent.v1.JoinRequest.info:type_name -> nook.agent.v1.NodeInfo
-	10, // 2: nook.agent.v1.ConnectRequest.hello:type_name -> nook.agent.v1.Hello
-	13, // 3: nook.agent.v1.ConnectRequest.heartbeat:type_name -> nook.agent.v1.Heartbeat
-	16, // 4: nook.agent.v1.ConnectRequest.command_result:type_name -> nook.agent.v1.CommandResult
-	24, // 5: nook.agent.v1.ConnectRequest.build_log:type_name -> nook.agent.v1.BuildLog
-	25, // 6: nook.agent.v1.ConnectRequest.build_finished:type_name -> nook.agent.v1.BuildFinished
-	31, // 7: nook.agent.v1.ConnectRequest.instance_status:type_name -> nook.agent.v1.InstanceStatus
-	33, // 8: nook.agent.v1.ConnectRequest.app_log:type_name -> nook.agent.v1.AppLog
-	11, // 9: nook.agent.v1.ConnectResponse.accepted:type_name -> nook.agent.v1.ConnectAccepted
-	14, // 10: nook.agent.v1.ConnectResponse.command:type_name -> nook.agent.v1.Command
-	3,  // 11: nook.agent.v1.Hello.info:type_name -> nook.agent.v1.NodeInfo
-	32, // 12: nook.agent.v1.Hello.instances:type_name -> nook.agent.v1.InstanceReport
-	37, // 13: nook.agent.v1.ConnectAccepted.heartbeat_interval:type_name -> google.protobuf.Duration
-	12, // 14: nook.agent.v1.ConnectAccepted.instances:type_name -> nook.agent.v1.KnownInstance
-	37, // 15: nook.agent.v1.Heartbeat.uptime:type_name -> google.protobuf.Duration
-	37, // 16: nook.agent.v1.Command.timeout:type_name -> google.protobuf.Duration
-	15, // 17: nook.agent.v1.Command.inspect_node:type_name -> nook.agent.v1.InspectNodeCommand
-	22, // 18: nook.agent.v1.Command.build:type_name -> nook.agent.v1.BuildCommand
-	23, // 19: nook.agent.v1.Command.cancel_build:type_name -> nook.agent.v1.CancelBuildCommand
-	26, // 20: nook.agent.v1.Command.start_instance:type_name -> nook.agent.v1.StartInstanceCommand
-	28, // 21: nook.agent.v1.Command.stop_instance:type_name -> nook.agent.v1.StopInstanceCommand
-	29, // 22: nook.agent.v1.Command.stream_logs:type_name -> nook.agent.v1.StreamLogsCommand
-	30, // 23: nook.agent.v1.Command.stop_logs:type_name -> nook.agent.v1.StopLogsCommand
-	18, // 24: nook.agent.v1.CommandResult.error:type_name -> nook.agent.v1.CommandError
-	19, // 25: nook.agent.v1.CommandResult.inspect_node:type_name -> nook.agent.v1.InspectNodeResult
-	17, // 26: nook.agent.v1.CommandResult.accepted:type_name -> nook.agent.v1.Accepted
-	0,  // 27: nook.agent.v1.CommandError.code:type_name -> nook.agent.v1.CommandErrorCode
-	20, // 28: nook.agent.v1.InspectNodeResult.docker:type_name -> nook.agent.v1.DockerInfo
-	21, // 29: nook.agent.v1.InspectNodeResult.containers:type_name -> nook.agent.v1.ManagedContainer
-	36, // 30: nook.agent.v1.ManagedContainer.labels:type_name -> nook.agent.v1.ManagedContainer.LabelsEntry
-	38, // 31: nook.agent.v1.ManagedContainer.created_at:type_name -> google.protobuf.Timestamp
-	37, // 32: nook.agent.v1.BuildCommand.timeout:type_name -> google.protobuf.Duration
-	1,  // 33: nook.agent.v1.BuildFinished.result:type_name -> nook.agent.v1.BuildResult
-	37, // 34: nook.agent.v1.StartInstanceCommand.startup_timeout:type_name -> google.protobuf.Duration
-	27, // 35: nook.agent.v1.StartInstanceCommand.env:type_name -> nook.agent.v1.EnvVar
-	37, // 36: nook.agent.v1.StopInstanceCommand.drain:type_name -> google.protobuf.Duration
-	38, // 37: nook.agent.v1.StreamLogsCommand.since:type_name -> google.protobuf.Timestamp
-	37, // 38: nook.agent.v1.StreamLogsCommand.max_duration:type_name -> google.protobuf.Duration
-	2,  // 39: nook.agent.v1.InstanceStatus.state:type_name -> nook.agent.v1.InstanceState
-	34, // 40: nook.agent.v1.AppLog.lines:type_name -> nook.agent.v1.LogLine
-	38, // 41: nook.agent.v1.LogLine.time:type_name -> google.protobuf.Timestamp
-	4,  // 42: nook.agent.v1.NodeService.Join:input_type -> nook.agent.v1.JoinRequest
-	8,  // 43: nook.agent.v1.NodeService.Connect:input_type -> nook.agent.v1.ConnectRequest
-	6,  // 44: nook.agent.v1.NodeService.RenewCertificate:input_type -> nook.agent.v1.RenewCertificateRequest
-	5,  // 45: nook.agent.v1.NodeService.Join:output_type -> nook.agent.v1.JoinResponse
-	9,  // 46: nook.agent.v1.NodeService.Connect:output_type -> nook.agent.v1.ConnectResponse
-	7,  // 47: nook.agent.v1.NodeService.RenewCertificate:output_type -> nook.agent.v1.RenewCertificateResponse
-	45, // [45:48] is the sub-list for method output_type
-	42, // [42:45] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	49, // 0: nook.agent.v1.JoinRequest.labels:type_name -> nook.agent.v1.JoinRequest.LabelsEntry
+	5,  // 1: nook.agent.v1.JoinRequest.info:type_name -> nook.agent.v1.NodeInfo
+	12, // 2: nook.agent.v1.ConnectRequest.hello:type_name -> nook.agent.v1.Hello
+	15, // 3: nook.agent.v1.ConnectRequest.heartbeat:type_name -> nook.agent.v1.Heartbeat
+	18, // 4: nook.agent.v1.ConnectRequest.command_result:type_name -> nook.agent.v1.CommandResult
+	26, // 5: nook.agent.v1.ConnectRequest.build_log:type_name -> nook.agent.v1.BuildLog
+	27, // 6: nook.agent.v1.ConnectRequest.build_finished:type_name -> nook.agent.v1.BuildFinished
+	33, // 7: nook.agent.v1.ConnectRequest.instance_status:type_name -> nook.agent.v1.InstanceStatus
+	35, // 8: nook.agent.v1.ConnectRequest.app_log:type_name -> nook.agent.v1.AppLog
+	45, // 9: nook.agent.v1.ConnectRequest.database_status:type_name -> nook.agent.v1.DatabaseStatus
+	46, // 10: nook.agent.v1.ConnectRequest.database_backup_finished:type_name -> nook.agent.v1.DatabaseBackupFinished
+	47, // 11: nook.agent.v1.ConnectRequest.database_dump_finished:type_name -> nook.agent.v1.DatabaseDumpFinished
+	13, // 12: nook.agent.v1.ConnectResponse.accepted:type_name -> nook.agent.v1.ConnectAccepted
+	16, // 13: nook.agent.v1.ConnectResponse.command:type_name -> nook.agent.v1.Command
+	5,  // 14: nook.agent.v1.Hello.info:type_name -> nook.agent.v1.NodeInfo
+	34, // 15: nook.agent.v1.Hello.instances:type_name -> nook.agent.v1.InstanceReport
+	48, // 16: nook.agent.v1.Hello.databases:type_name -> nook.agent.v1.DatabaseReport
+	52, // 17: nook.agent.v1.ConnectAccepted.heartbeat_interval:type_name -> google.protobuf.Duration
+	14, // 18: nook.agent.v1.ConnectAccepted.instances:type_name -> nook.agent.v1.KnownInstance
+	37, // 19: nook.agent.v1.ConnectAccepted.database_endpoint:type_name -> nook.agent.v1.DatabaseEndpoint
+	52, // 20: nook.agent.v1.Heartbeat.uptime:type_name -> google.protobuf.Duration
+	52, // 21: nook.agent.v1.Command.timeout:type_name -> google.protobuf.Duration
+	17, // 22: nook.agent.v1.Command.inspect_node:type_name -> nook.agent.v1.InspectNodeCommand
+	24, // 23: nook.agent.v1.Command.build:type_name -> nook.agent.v1.BuildCommand
+	25, // 24: nook.agent.v1.Command.cancel_build:type_name -> nook.agent.v1.CancelBuildCommand
+	28, // 25: nook.agent.v1.Command.start_instance:type_name -> nook.agent.v1.StartInstanceCommand
+	30, // 26: nook.agent.v1.Command.stop_instance:type_name -> nook.agent.v1.StopInstanceCommand
+	31, // 27: nook.agent.v1.Command.stream_logs:type_name -> nook.agent.v1.StreamLogsCommand
+	32, // 28: nook.agent.v1.Command.stop_logs:type_name -> nook.agent.v1.StopLogsCommand
+	38, // 29: nook.agent.v1.Command.start_database:type_name -> nook.agent.v1.StartDatabaseCommand
+	39, // 30: nook.agent.v1.Command.stop_database:type_name -> nook.agent.v1.StopDatabaseCommand
+	40, // 31: nook.agent.v1.Command.backup_database:type_name -> nook.agent.v1.BackupDatabaseCommand
+	41, // 32: nook.agent.v1.Command.dump_database:type_name -> nook.agent.v1.DumpDatabaseCommand
+	42, // 33: nook.agent.v1.Command.upload_dump:type_name -> nook.agent.v1.UploadDumpCommand
+	43, // 34: nook.agent.v1.Command.update_database_tls:type_name -> nook.agent.v1.UpdateDatabaseTLSCommand
+	44, // 35: nook.agent.v1.Command.set_database_endpoint:type_name -> nook.agent.v1.SetDatabaseEndpointCommand
+	20, // 36: nook.agent.v1.CommandResult.error:type_name -> nook.agent.v1.CommandError
+	21, // 37: nook.agent.v1.CommandResult.inspect_node:type_name -> nook.agent.v1.InspectNodeResult
+	19, // 38: nook.agent.v1.CommandResult.accepted:type_name -> nook.agent.v1.Accepted
+	0,  // 39: nook.agent.v1.CommandError.code:type_name -> nook.agent.v1.CommandErrorCode
+	22, // 40: nook.agent.v1.InspectNodeResult.docker:type_name -> nook.agent.v1.DockerInfo
+	23, // 41: nook.agent.v1.InspectNodeResult.containers:type_name -> nook.agent.v1.ManagedContainer
+	50, // 42: nook.agent.v1.ManagedContainer.labels:type_name -> nook.agent.v1.ManagedContainer.LabelsEntry
+	53, // 43: nook.agent.v1.ManagedContainer.created_at:type_name -> google.protobuf.Timestamp
+	52, // 44: nook.agent.v1.BuildCommand.timeout:type_name -> google.protobuf.Duration
+	1,  // 45: nook.agent.v1.BuildFinished.result:type_name -> nook.agent.v1.BuildResult
+	52, // 46: nook.agent.v1.StartInstanceCommand.startup_timeout:type_name -> google.protobuf.Duration
+	29, // 47: nook.agent.v1.StartInstanceCommand.env:type_name -> nook.agent.v1.EnvVar
+	52, // 48: nook.agent.v1.StopInstanceCommand.drain:type_name -> google.protobuf.Duration
+	53, // 49: nook.agent.v1.StreamLogsCommand.since:type_name -> google.protobuf.Timestamp
+	52, // 50: nook.agent.v1.StreamLogsCommand.max_duration:type_name -> google.protobuf.Duration
+	2,  // 51: nook.agent.v1.InstanceStatus.state:type_name -> nook.agent.v1.InstanceState
+	36, // 52: nook.agent.v1.AppLog.lines:type_name -> nook.agent.v1.LogLine
+	53, // 53: nook.agent.v1.LogLine.time:type_name -> google.protobuf.Timestamp
+	29, // 54: nook.agent.v1.StartDatabaseCommand.env:type_name -> nook.agent.v1.EnvVar
+	53, // 55: nook.agent.v1.BackupDatabaseCommand.retain_after:type_name -> google.protobuf.Timestamp
+	51, // 56: nook.agent.v1.UploadDumpCommand.headers:type_name -> nook.agent.v1.UploadDumpCommand.HeadersEntry
+	37, // 57: nook.agent.v1.SetDatabaseEndpointCommand.endpoint:type_name -> nook.agent.v1.DatabaseEndpoint
+	3,  // 58: nook.agent.v1.DatabaseStatus.state:type_name -> nook.agent.v1.DatabaseState
+	4,  // 59: nook.agent.v1.DatabaseDumpFinished.stage:type_name -> nook.agent.v1.DumpStage
+	6,  // 60: nook.agent.v1.NodeService.Join:input_type -> nook.agent.v1.JoinRequest
+	10, // 61: nook.agent.v1.NodeService.Connect:input_type -> nook.agent.v1.ConnectRequest
+	8,  // 62: nook.agent.v1.NodeService.RenewCertificate:input_type -> nook.agent.v1.RenewCertificateRequest
+	7,  // 63: nook.agent.v1.NodeService.Join:output_type -> nook.agent.v1.JoinResponse
+	11, // 64: nook.agent.v1.NodeService.Connect:output_type -> nook.agent.v1.ConnectResponse
+	9,  // 65: nook.agent.v1.NodeService.RenewCertificate:output_type -> nook.agent.v1.RenewCertificateResponse
+	63, // [63:66] is the sub-list for method output_type
+	60, // [60:63] is the sub-list for method input_type
+	60, // [60:60] is the sub-list for extension type_name
+	60, // [60:60] is the sub-list for extension extendee
+	0,  // [0:60] is the sub-list for field type_name
 }
 
 func init() { file_nook_agent_v1_node_service_proto_init() }
@@ -3321,6 +4580,9 @@ func file_nook_agent_v1_node_service_proto_init() {
 		(*ConnectRequest_BuildFinished)(nil),
 		(*ConnectRequest_InstanceStatus)(nil),
 		(*ConnectRequest_AppLog)(nil),
+		(*ConnectRequest_DatabaseStatus)(nil),
+		(*ConnectRequest_DatabaseBackupFinished)(nil),
+		(*ConnectRequest_DatabaseDumpFinished)(nil),
 	}
 	file_nook_agent_v1_node_service_proto_msgTypes[6].OneofWrappers = []any{
 		(*ConnectResponse_Accepted)(nil),
@@ -3334,6 +4596,13 @@ func file_nook_agent_v1_node_service_proto_init() {
 		(*Command_StopInstance)(nil),
 		(*Command_StreamLogs)(nil),
 		(*Command_StopLogs)(nil),
+		(*Command_StartDatabase)(nil),
+		(*Command_StopDatabase)(nil),
+		(*Command_BackupDatabase)(nil),
+		(*Command_DumpDatabase)(nil),
+		(*Command_UploadDump)(nil),
+		(*Command_UpdateDatabaseTls)(nil),
+		(*Command_SetDatabaseEndpoint)(nil),
 	}
 	file_nook_agent_v1_node_service_proto_msgTypes[13].OneofWrappers = []any{
 		(*CommandResult_Error)(nil),
@@ -3345,8 +4614,8 @@ func file_nook_agent_v1_node_service_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nook_agent_v1_node_service_proto_rawDesc), len(file_nook_agent_v1_node_service_proto_rawDesc)),
-			NumEnums:      3,
-			NumMessages:   34,
+			NumEnums:      5,
+			NumMessages:   47,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -52,6 +52,13 @@ message NodeInfo {
   // Why the node cannot run builds even though it has build slots (with
   // the fix), or empty when it can.
   string builds_unavailable_reason = 12;
+  // Where app containers reach an app database server on this node, the
+  // port it is published on, and why the node cannot host one (with the
+  // fix), or empty when it can.
+  string database_address = 13;
+  string database_publish_address = 14;
+  int32 database_port = 15;
+  string database_unavailable_reason = 16;
 }
 
 message JoinRequest {
@@ -102,6 +109,12 @@ message ConnectRequest {
     // Output of an app's container for a log stream the control plane
     // opened with StreamLogsCommand.
     AppLog app_log = 7;
+    // A change in the state of the app database server on the node.
+    DatabaseStatus database_status = 8;
+    // How a base backup ended.
+    DatabaseBackupFinished database_backup_finished = 9;
+    // How a step of a database dump ended.
+    DatabaseDumpFinished database_dump_finished = 10;
   }
 }
 
@@ -123,6 +136,10 @@ message Hello {
   // removes those it no longer wants and restarts those it wants that are
   // missing or not running.
   repeated InstanceReport instances = 3;
+  // App database server containers on the node. The control plane stops
+  // those that are no longer current (fencing) and starts the current one
+  // if it is not running.
+  repeated DatabaseReport databases = 4;
 }
 
 message ConnectAccepted {
@@ -132,6 +149,9 @@ message ConnectAccepted {
   // The instances the control plane has on the node, with their restart
   // counts, so a restarted agent continues counting where it left off.
   repeated KnownInstance instances = 3;
+  // The app database server app containers may connect to (none if
+  // unset); the egress firewall allows exactly this address and port.
+  DatabaseEndpoint database_endpoint = 4;
 }
 
 message KnownInstance {
@@ -169,6 +189,13 @@ message Command {
     StopInstanceCommand stop_instance = 7;
     StreamLogsCommand stream_logs = 8;
     StopLogsCommand stop_logs = 9;
+    StartDatabaseCommand start_database = 10;
+    StopDatabaseCommand stop_database = 11;
+    BackupDatabaseCommand backup_database = 12;
+    DumpDatabaseCommand dump_database = 13;
+    UploadDumpCommand upload_dump = 14;
+    UpdateDatabaseTLSCommand update_database_tls = 15;
+    SetDatabaseEndpointCommand set_database_endpoint = 16;
   }
 }
 
@@ -430,4 +457,135 @@ message LogLine {
   // "stdout" or "stderr".
   string stream = 2;
   string text = 3;
+}
+
+// DatabaseEndpoint is where the current app database server listens.
+message DatabaseEndpoint {
+  string address = 1;
+  int32 port = 2;
+}
+
+// StartDatabaseCommand asks the agent to run the app database server
+// (image nook-postgres) on its volume, publishing it on the node's
+// database address and port, and to report RUNNING once it accepts
+// connections and has finished recovering, or FAILED. Idempotent by
+// server_id: a server that runs is left alone; a stopped one is
+// recreated with this command's settings on the same volume.
+message StartDatabaseCommand {
+  string server_id = 1;
+  // Image reference (pinned by digest outside development).
+  string image = 2;
+  // "init", "restore" or "existing" (see nook-db.sh).
+  string mode = 3;
+  int64 memory_bytes = 4;
+  int64 cpu_millicores = 5;
+  // The server's environment (settings, certificate and key, storage
+  // credentials, backup encryption key), built by the control plane for
+  // this command only. Never logged by either side.
+  repeated EnvVar env = 6;
+}
+
+// StopDatabaseCommand stops the server's container and reports STOPPED.
+// With final_archive, the server is shut down cleanly and the WAL it had
+// not archived yet is pushed (no data loss), and the report names the
+// last segment. With remove, the container and its volume are deleted.
+message StopDatabaseCommand {
+  string server_id = 1;
+  bool final_archive = 2;
+  bool remove = 3;
+}
+
+// BackupDatabaseCommand asks for a base backup, then deletes backups and
+// WAL no longer needed to restore any point after retain_after (keeping
+// at least one backup). Reported with DatabaseBackupFinished.
+message BackupDatabaseCommand {
+  string server_id = 1;
+  google.protobuf.Timestamp retain_after = 2;
+}
+
+// DumpDatabaseCommand asks for a plain-SQL pg_dump of one database into a
+// file on the node (at most max_bytes); reported with DatabaseDumpFinished
+// (stage DUMPED) carrying its size and SHA-256.
+message DumpDatabaseCommand {
+  string dump_id = 1;
+  string server_id = 2;
+  string database = 3;
+  int64 max_bytes = 4;
+}
+
+// UploadDumpCommand sends a finished dump to the presigned URL (which
+// accepts exactly that file) and deletes it from the node; reported with
+// DatabaseDumpFinished (stage UPLOADED).
+message UploadDumpCommand {
+  string dump_id = 1;
+  string url = 2;
+  map<string, string> headers = 3;
+}
+
+// UpdateDatabaseTLSCommand replaces the running server's certificate.
+message UpdateDatabaseTLSCommand {
+  string server_id = 1;
+  string certificate_pem = 2;
+  string private_key_pem = 3;
+}
+
+// SetDatabaseEndpointCommand changes the endpoint app containers may
+// reach (an empty address: none).
+message SetDatabaseEndpointCommand {
+  DatabaseEndpoint endpoint = 1;
+}
+
+enum DatabaseState {
+  DATABASE_STATE_UNSPECIFIED = 0;
+  // Starting or restoring.
+  DATABASE_STATE_STARTING = 1;
+  // Accepting connections, recovery finished.
+  DATABASE_STATE_RUNNING = 2;
+  // The container was stopped (and removed, if asked).
+  DATABASE_STATE_STOPPED = 3;
+  // The server could not start, or exited.
+  DATABASE_STATE_FAILED = 4;
+}
+
+// DatabaseStatus reports a change of the server's state.
+message DatabaseStatus {
+  string server_id = 1;
+  DatabaseState state = 2;
+  // Where apps reach it (RUNNING).
+  string address = 3;
+  int32 port = 4;
+  // Why it failed (user-facing).
+  string message = 5;
+  // STOPPED with final_archive: the last WAL segment pushed.
+  string final_wal = 6;
+}
+
+message DatabaseBackupFinished {
+  string server_id = 1;
+  bool ok = 2;
+  string backup_name = 3;
+  string message = 4;
+}
+
+enum DumpStage {
+  DUMP_STAGE_UNSPECIFIED = 0;
+  DUMP_STAGE_DUMPED = 1;
+  DUMP_STAGE_UPLOADED = 2;
+}
+
+message DatabaseDumpFinished {
+  string dump_id = 1;
+  DumpStage stage = 2;
+  bool ok = 3;
+  int64 size_bytes = 4;
+  bytes sha256 = 5;
+  string message = 6;
+}
+
+// DatabaseReport describes an app database server container on the node.
+message DatabaseReport {
+  string server_id = 1;
+  bool running = 2;
+  // A base backup of this server is running on the node.
+  bool backup_running = 3;
 }

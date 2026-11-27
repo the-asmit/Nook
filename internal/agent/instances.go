@@ -168,14 +168,14 @@ func (m *instances) launch(ctx context.Context, inst *instance, cmd *agentv1.Sta
 		if why, running := m.containerState(ctx, id); !running {
 			reason = why
 		}
-		lines := m.tailLog(context.WithoutCancel(ctx), id)
+		lines := m.docker.tailLog(context.WithoutCancel(ctx), id)
 		m.removeContainer(context.WithoutCancel(ctx), id, inst.appID)
 		fail(reason, lines)
 		return
 	}
 	m.report(&agentv1.InstanceStatus{InstanceId: inst.id, State: agentv1.InstanceState_INSTANCE_STATE_STARTING, ContainerId: id, HostPort: int32(port)}) //nolint:gosec // G115: a TCP port.
 	if err := m.waitHealthy(ctx, id, port, cmd.GetHealthCheckPath(), inst.startup); err != nil {
-		lines := m.tailLog(context.WithoutCancel(ctx), id)
+		lines := m.docker.tailLog(context.WithoutCancel(ctx), id)
 		if ctx.Err() == nil {
 			m.removeContainer(context.WithoutCancel(ctx), id, inst.appID)
 		}

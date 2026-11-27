@@ -84,6 +84,13 @@ func (a *Agent) execute(ctx context.Context, cmd *agentv1.Command) *agentv1.Comm
 		a.instances.stopLogs(kind.StopLogs.GetStreamId())
 		res.Result = accepted
 	default:
+		if handled, msg := a.executeDatabase(ctx, cmd); handled {
+			if msg != "" {
+				return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_FAILED, msg)
+			}
+			res.Result = accepted
+			break
+		}
 		return fail(agentv1.CommandErrorCode_COMMAND_ERROR_CODE_UNSUPPORTED, "this agent does not support the command; upgrade nook-agent")
 	}
 	a.metrics.commands.WithLabelValues(kindOf(cmd), "ok").Inc()
@@ -106,7 +113,53 @@ func kindOf(cmd *agentv1.Command) string {
 		return "stream_logs"
 	case cmd.GetStopLogs() != nil:
 		return "stop_logs"
+	case cmd.GetStartDatabase() != nil:
+		return "start_database"
+	case cmd.GetStopDatabase() != nil:
+		return "stop_database"
+	case cmd.GetBackupDatabase() != nil:
+		return "backup_database"
+	case cmd.GetDumpDatabase() != nil:
+		return "dump_database"
+	case cmd.GetUploadDump() != nil:
+		return "upload_dump"
+	case cmd.GetUpdateDatabaseTls() != nil:
+		return "update_database_tls"
+	case cmd.GetSetDatabaseEndpoint() != nil:
+		return "set_database_endpoint"
 	default:
 		return "unknown"
 	}
+}
+
+// executeDatabase runs the app database server's commands. It reports
+// whether cmd was one of them and, if it failed, why. The long-running
+// ones only start here (their results are reported later): the manager
+// owns their context.
+func (a *Agent) executeDatabase(ctx context.Context, cmd *agentv1.Command) (bool, string) {
+	var err error
+	switch kind := cmd.GetKind().(type) {
+	case *agentv1.Command_StartDatabase:
+		if err = a.databases.start(kind.StartDatabase); err == nil { //nolint:contextcheck // see above
+			a.logger.InfoContext(ctx, "starting the app database server", "server", kind.StartDatabase.GetServerId(), "mode", kind.StartDatabase.GetMode())
+		}
+	case *agentv1.Command_StopDatabase:
+		err = a.databases.stop(kind.StopDatabase) //nolint:contextcheck // see above
+	case *agentv1.Command_BackupDatabase:
+		err = a.databases.backup(kind.BackupDatabase) //nolint:contextcheck // see above
+	case *agentv1.Command_DumpDatabase:
+		err = a.databases.dump(kind.DumpDatabase) //nolint:contextcheck // see above
+	case *agentv1.Command_UploadDump:
+		err = a.databases.upload(kind.UploadDump) //nolint:contextcheck // see above
+	case *agentv1.Command_UpdateDatabaseTls:
+		err = a.databases.updateTLS(ctx, kind.UpdateDatabaseTls)
+	case *agentv1.Command_SetDatabaseEndpoint:
+		err = a.databases.setEndpoint(ctx, kind.SetDatabaseEndpoint.GetEndpoint())
+	default:
+		return false, ""
+	}
+	if err != nil {
+		return true, err.Error()
+	}
+	return true, ""
 }
