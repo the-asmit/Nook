@@ -83,12 +83,15 @@ func (t *table) resync(ctx context.Context) error {
 		byHost[r.Host] = r
 		byApp[r.AppID] = r.Host
 	}
+	// The size is read before unlocking: from then on byHost is the
+	// table, which refresh may change.
+	n := len(byHost)
 	t.mu.Lock()
 	t.byHost, t.byApp = byHost, byApp
 	t.notify()
 	t.mu.Unlock()
 	t.loaded.Store(true)
-	t.m.routes.Set(float64(len(byHost)))
+	t.m.routes.Set(float64(n))
 	t.m.resyncs.Inc()
 	return nil
 }
