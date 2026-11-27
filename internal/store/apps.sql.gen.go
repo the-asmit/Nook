@@ -398,7 +398,7 @@ func (q *Queries) GetWorkspaceBySlug(ctx context.Context, slug string) (Workspac
 }
 
 const getWorkspaceQuota = `-- name: GetWorkspaceQuota :one
-SELECT workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at, max_memory_mb FROM workspace_quotas WHERE workspace_id = $1
+SELECT workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at, max_memory_mb, max_databases FROM workspace_quotas WHERE workspace_id = $1
 `
 
 func (q *Queries) GetWorkspaceQuota(ctx context.Context, workspaceID uuid.UUID) (WorkspaceQuota, error) {
@@ -411,6 +411,7 @@ func (q *Queries) GetWorkspaceQuota(ctx context.Context, workspaceID uuid.UUID) 
 		&i.UpdatedBy,
 		&i.UpdatedAt,
 		&i.MaxMemoryMb,
+		&i.MaxDatabases,
 	)
 	return i, err
 }
@@ -1607,12 +1608,13 @@ func (q *Queries) UpdateAppSettings(ctx context.Context, arg UpdateAppSettingsPa
 }
 
 const upsertWorkspaceQuota = `-- name: UpsertWorkspaceQuota :one
-INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, max_memory_mb, updated_by, updated_at)
-VALUES ($1, $2, $3, $4, $5, now())
+INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, max_memory_mb, max_databases, updated_by, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, now())
 ON CONFLICT (workspace_id) DO UPDATE
 SET max_apps = EXCLUDED.max_apps, max_concurrent_builds = EXCLUDED.max_concurrent_builds,
-    max_memory_mb = EXCLUDED.max_memory_mb, updated_by = EXCLUDED.updated_by, updated_at = now()
-RETURNING workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at, max_memory_mb
+    max_memory_mb = EXCLUDED.max_memory_mb, max_databases = EXCLUDED.max_databases,
+    updated_by = EXCLUDED.updated_by, updated_at = now()
+RETURNING workspace_id, max_apps, max_concurrent_builds, updated_by, updated_at, max_memory_mb, max_databases
 `
 
 type UpsertWorkspaceQuotaParams struct {
@@ -1620,6 +1622,7 @@ type UpsertWorkspaceQuotaParams struct {
 	MaxApps             int32
 	MaxConcurrentBuilds int32
 	MaxMemoryMb         int32
+	MaxDatabases        int32
 	UpdatedBy           *uuid.UUID
 }
 
@@ -1629,6 +1632,7 @@ func (q *Queries) UpsertWorkspaceQuota(ctx context.Context, arg UpsertWorkspaceQ
 		arg.MaxApps,
 		arg.MaxConcurrentBuilds,
 		arg.MaxMemoryMb,
+		arg.MaxDatabases,
 		arg.UpdatedBy,
 	)
 	var i WorkspaceQuota
@@ -1639,6 +1643,7 @@ func (q *Queries) UpsertWorkspaceQuota(ctx context.Context, arg UpsertWorkspaceQ
 		&i.UpdatedBy,
 		&i.UpdatedAt,
 		&i.MaxMemoryMb,
+		&i.MaxDatabases,
 	)
 	return i, err
 }

@@ -2,11 +2,12 @@
 SELECT * FROM workspace_quotas WHERE workspace_id = @workspace_id;
 
 -- name: UpsertWorkspaceQuota :one
-INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, max_memory_mb, updated_by, updated_at)
-VALUES (@workspace_id, @max_apps, @max_concurrent_builds, @max_memory_mb, @updated_by, now())
+INSERT INTO workspace_quotas (workspace_id, max_apps, max_concurrent_builds, max_memory_mb, max_databases, updated_by, updated_at)
+VALUES (@workspace_id, @max_apps, @max_concurrent_builds, @max_memory_mb, @max_databases, @updated_by, now())
 ON CONFLICT (workspace_id) DO UPDATE
 SET max_apps = EXCLUDED.max_apps, max_concurrent_builds = EXCLUDED.max_concurrent_builds,
-    max_memory_mb = EXCLUDED.max_memory_mb, updated_by = EXCLUDED.updated_by, updated_at = now()
+    max_memory_mb = EXCLUDED.max_memory_mb, max_databases = EXCLUDED.max_databases,
+    updated_by = EXCLUDED.updated_by, updated_at = now()
 RETURNING *;
 
 -- name: GetWorkspaceBySlug :one

@@ -127,6 +127,9 @@ func (s *Service) SetEnv(ctx context.Context, actor workspace.Actor, wsSlug, app
 				return apperr.Forbidden("only workspace admins and owners can set or change secrets")
 			}
 		}
+		if err := refuseManaged(ctx, q, app, keys); err != nil {
+			return err
+		}
 		total, count := envSize(current, vars)
 		if count > maxEnvVars || total > maxEnvTotalBytes {
 			return apperr.Invalid("env_too_large", "an app may have at most %d variables of %d bytes in total", maxEnvVars, maxEnvTotalBytes)
@@ -163,6 +166,9 @@ func (s *Service) UnsetEnv(ctx context.Context, actor workspace.Actor, wsSlug, a
 		}
 		if cur.IsSecret && !v.Allows(store.WorkspaceRoleAdmin) {
 			return apperr.Forbidden("only workspace admins and owners can remove secrets")
+		}
+		if err := refuseManaged(ctx, q, app, []string{key}); err != nil {
+			return err
 		}
 		if _, err := q.DeleteAppEnv(ctx, store.DeleteAppEnvParams{AppID: app.ID, Key: key}); err != nil {
 			return fmt.Errorf("delete variable: %w", err)
@@ -202,7 +208,7 @@ func (s *Service) changeEnv(ctx context.Context, actor workspace.Actor, wsSlug, 
 		if app.CurrentDeploymentID == nil {
 			return nil // the next deployment takes the new environment
 		}
-		d, err := s.configDeployment(ctx, q, &app, *app.CurrentDeploymentID, actor.UserID)
+		d, err := s.configDeployment(ctx, q, &app, *app.CurrentDeploymentID, &actor.UserID)
 		if err != nil {
 			return err
 		}
@@ -220,12 +226,12 @@ func (s *Service) changeEnv(ctx context.Context, actor workspace.Actor, wsSlug, 
 
 // configDeployment creates a deployment of the live deployment's image
 // with a snapshot of the app's current environment.
-func (s *Service) configDeployment(ctx context.Context, q *store.Queries, app *store.App, liveID, userID uuid.UUID) (store.Deployment, error) {
+func (s *Service) configDeployment(ctx context.Context, q *store.Queries, app *store.App, liveID uuid.UUID, userID *uuid.UUID) (store.Deployment, error) {
 	live, err := q.GetDeploymentByID(ctx, liveID)
 	if err != nil {
 		return store.Deployment{}, fmt.Errorf("read live deployment: %w", err)
 	}
-	snap, err := q.CreateEnvSnapshot(ctx, store.CreateEnvSnapshotParams{AppID: app.ID, CreatedBy: &userID})
+	snap, err := q.CreateEnvSnapshot(ctx, store.CreateEnvSnapshotParams{AppID: app.ID, CreatedBy: userID})
 	if err != nil {
 		return store.Deployment{}, fmt.Errorf("create environment snapshot: %w", err)
 	}
@@ -239,7 +245,7 @@ func (s *Service) configDeployment(ctx context.Context, q *store.Queries, app *s
 	d, err := q.CreateReleaseDeployment(ctx, store.CreateReleaseDeploymentParams{
 		AppID: app.ID, Number: number, Kind: store.DeploymentKindConfig, ImageOfDeploymentID: &live.ID, EnvSnapshotID: &snap.ID,
 		SourceKey: live.SourceKey, SourceSha256: live.SourceSha256, SourceSize: live.SourceSize,
-		ImageDigest: live.ImageDigest, CreatedBy: &userID,
+		ImageDigest: live.ImageDigest, CreatedBy: userID,
 	})
 	if err != nil {
 		return store.Deployment{}, fmt.Errorf("create deployment: %w", err)
@@ -262,3 +268,85 @@ func envSize(current map[string]store.AppEnv, set map[string]string) (total, cou
 	}
 	return total, count
 }
+
+// DatabaseURLKey is the variable Nook manages for apps with a database.
+const DatabaseURLKey = "DATABASE_URL"
+
+// refuseManaged stops users from changing DATABASE_URL while Nook manages
+// it (a failover would overwrite it, and the app would lose its database).
+func refuseManaged(ctx context.Context, q *store.Queries, app *store.App, keys []string) error {
+	if !slices.Contains(keys, DatabaseURLKey) {
+		return nil
+	}
+	if _, err := q.GetAppDatabase(ctx, app.ID); err == nil {
+		return apperr.Conflict("managed_variable", "%s is managed by Nook for the app's database (nook db)", DatabaseURLKey)
+	} else if !store.IsNotFound(err) {
+		return fmt.Errorf("read app database: %w", err)
+	}
+	return nil
+}
+
+// SetManagedEnv sets a secret variable Nook manages (DATABASE_URL) in the
+// caller's transaction, with the app locked, audited with actor (nil: Nook
+// itself, as after a failover). It returns the deployment that releases
+// the change, if the app has a live one; release it with Release after
+// the transaction commits. The value is never logged or audited.
+func (s *Service) SetManagedEnv(ctx context.Context, q *store.Queries, appID uuid.UUID, key, value string, actor *uuid.UUID) (*store.Deployment, error) {
+	app, err := q.LockApp(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("lock app: %w", err)
+	}
+	sealed, version, err := s.keyring.Seal(secrets.EnvAAD(app.ID, key), []byte(value))
+	if err != nil {
+		return nil, err
+	}
+	if err := q.UpsertAppEnv(ctx, store.UpsertAppEnvParams{
+		AppID: app.ID, Key: key, Value: sealed, KeyVersion: int32(version), IsSecret: true, UpdatedBy: actor, //nolint:gosec // G115: versions are at most 1e6.
+	}); err != nil {
+		return nil, fmt.Errorf("store variable: %w", err)
+	}
+	if err := audit.Record(ctx, q, &audit.Entry{
+		WorkspaceID: &app.WorkspaceID, ActorID: actor, Action: audit.ActionEnvSet, TargetType: audit.TargetApp, TargetID: app.ID.String(),
+		Metadata: map[string]any{"app": app.Slug, "keys": []string{key}, "secret": true, "managed": true},
+	}); err != nil {
+		return nil, err
+	}
+	return s.managedRelease(ctx, q, &app, actor)
+}
+
+// UnsetManagedEnv removes a variable Nook manages, like SetManagedEnv.
+func (s *Service) UnsetManagedEnv(ctx context.Context, q *store.Queries, appID uuid.UUID, key string, actor *uuid.UUID) (*store.Deployment, error) {
+	app, err := q.LockApp(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("lock app: %w", err)
+	}
+	n, err := q.DeleteAppEnv(ctx, store.DeleteAppEnvParams{AppID: app.ID, Key: key})
+	if err != nil {
+		return nil, fmt.Errorf("delete variable: %w", err)
+	}
+	if n == 0 {
+		return nil, nil
+	}
+	if err := audit.Record(ctx, q, &audit.Entry{
+		WorkspaceID: &app.WorkspaceID, ActorID: actor, Action: audit.ActionEnvUnset, TargetType: audit.TargetApp, TargetID: app.ID.String(),
+		Metadata: map[string]any{"app": app.Slug, "key": key, "secret": true, "managed": true},
+	}); err != nil {
+		return nil, err
+	}
+	return s.managedRelease(ctx, q, &app, actor)
+}
+
+func (s *Service) managedRelease(ctx context.Context, q *store.Queries, app *store.App, actor *uuid.UUID) (*store.Deployment, error) {
+	if app.CurrentDeploymentID == nil || app.DeletedAt != nil {
+		return nil, nil //nolint:nilnil // no live deployment: the next one takes the new environment
+	}
+	d, err := s.configDeployment(ctx, q, app, *app.CurrentDeploymentID, actor)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
+}
+
+// Release hands a deployment created in a committed transaction to the
+// queue.
+func (s *Service) Release(ctx context.Context, deploymentID uuid.UUID) { s.release(ctx, deploymentID) }

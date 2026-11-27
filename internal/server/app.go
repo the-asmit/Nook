@@ -51,7 +51,7 @@ func (s *Server) mountApplication(ctx context.Context, router gin.IRouter, cfg *
 		AgentServer: cfg.GRPC.ResolvePublicAddr(publicHost), CAHash: s.ca.Fingerprint(),
 		Apps: s.apps, Logs: s.logs, AppLogs: s.appLogs, GCWindow: s.gcWindow, RegistryGCSecret: cfg.Registry.GCSecret,
 		RegistryAddr: cfg.Registry.Addr, MaxSourceBytes: cfg.Apps.MaxSourceBytes, AppsBase: cfg.AppsBase(),
-		Releases: s.rollout, LastRequest: func(ctx context.Context, app uuid.UUID) *time.Time {
+		Releases: s.rollout, Databases: s.databases, LastRequest: func(ctx context.Context, app uuid.UUID) *time.Time {
 			t, lastErr := activity.Last(ctx, s.redis, app)
 			if lastErr != nil {
 				return nil // shown without the live time
@@ -116,7 +116,7 @@ func (s *Server) startNodes(ctx context.Context, st *store.Store, cfg *Config, l
 
 	publicHost := cfg.PublicURLParsed().Hostname()
 	s.grpc, err = agentlink.Listen(ctx, cfg.GRPC.Addr, cfg.GRPC.CertificateNames(publicHost), &agentlink.Deps{
-		Registry: registry, Builds: s.dispatcher, Runtime: runtimeEvents{s.rollout, s.appLogs}, Hub: s.hub, CA: ca, Limiter: limiter, Metrics: reg, Logger: s.logger,
+		Registry: registry, Builds: s.dispatcher, Runtime: runtimeEvents{s.rollout, s.appLogs}, Databases: s.databases, Hub: s.hub, CA: ca, Limiter: limiter, Metrics: reg, Logger: s.logger,
 	})
 	if err != nil {
 		return nil, err

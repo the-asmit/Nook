@@ -117,3 +117,34 @@ func TestAddKey(t *testing.T) {
 		t.Fatal("empty key accepted")
 	}
 }
+
+func TestDerive(t *testing.T) {
+	l1, _ := NewKeyLine(1)
+	l2, _ := NewKeyLine(2)
+	k, err := ParseKeyring(l1 + "\n" + l2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := k.Derive(1, "appdb-backups/v1", 32)
+	if err != nil || len(a) != 32 {
+		t.Fatalf("derive: %d bytes, %v", len(a), err)
+	}
+	again, _ := k.Derive(1, "appdb-backups/v1", 32)
+	other, _ := k.Derive(1, "something-else", 32)
+	newer, _ := k.Derive(2, "appdb-backups/v1", 32)
+	if !bytes.Equal(a, again) || bytes.Equal(a, other) || bytes.Equal(a, newer) {
+		t.Fatal("derived keys must be stable per version and purpose, and differ otherwise")
+	}
+	if _, err := k.Derive(3, "appdb-backups/v1", 32); err == nil {
+		t.Fatal("a missing version derived a key")
+	}
+	// Passwords are bound to their owner: one copied elsewhere does not open.
+	app1, app2 := uuid.NewV7(), uuid.NewV7()
+	sealed, v, _ := k.Seal(DatabasePasswordAAD(app1), []byte("pw"))
+	if _, err := k.Open(v, DatabasePasswordAAD(app2), sealed); err == nil {
+		t.Fatal("a password opened for another app")
+	}
+	if _, err := k.Open(v, DatabaseSuperuserAAD(app1), sealed); err == nil {
+		t.Fatal("an app password opened as a server password")
+	}
+}

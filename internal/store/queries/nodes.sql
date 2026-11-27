@@ -42,7 +42,9 @@ SET hostname = @hostname, addresses = @addresses, cpu_count = @cpu_count,
     memory_total_bytes = @memory_total_bytes, disk_total_bytes = @disk_total_bytes,
     docker_version = @docker_version, agent_version = @agent_version, os = @os, arch = @arch,
     build_slots = @build_slots, advertise_address = @advertise_address,
-    builds_unavailable_reason = @builds_unavailable_reason
+    builds_unavailable_reason = @builds_unavailable_reason,
+    db_address = @db_address, db_publish_address = @db_publish_address, db_port = @db_port,
+    db_unavailable_reason = @db_unavailable_reason
 WHERE id = @id AND removed_at IS NULL;
 
 -- name: InsertNodeCertificate :exec
@@ -119,3 +121,6 @@ WHERE id = @id AND removed_at IS NULL;
 
 -- name: ListNodeEvents :many
 SELECT * FROM node_events WHERE node_id = @node_id ORDER BY id DESC LIMIT @row_limit;
+
+-- name: SetNodeLabels :exec
+UPDATE nodes SET labels = @labels WHERE id = @id AND removed_at IS NULL;

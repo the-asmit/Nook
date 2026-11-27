@@ -74,6 +74,137 @@ func AllAppAccessModeValues() []AppAccessMode {
 	}
 }
 
+type AppDatabaseState string
+
+const (
+	AppDatabaseStateCreating AppDatabaseState = "creating"
+	AppDatabaseStateReady    AppDatabaseState = "ready"
+	AppDatabaseStateDeleting AppDatabaseState = "deleting"
+)
+
+func (e *AppDatabaseState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppDatabaseState(s)
+	case string:
+		*e = AppDatabaseState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppDatabaseState: %T", src)
+	}
+	return nil
+}
+
+type NullAppDatabaseState struct {
+	AppDatabaseState AppDatabaseState
+	Valid            bool // Valid is true if AppDatabaseState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppDatabaseState) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppDatabaseState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppDatabaseState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppDatabaseState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppDatabaseState), nil
+}
+
+func (e AppDatabaseState) Valid() bool {
+	switch e {
+	case AppDatabaseStateCreating,
+		AppDatabaseStateReady,
+		AppDatabaseStateDeleting:
+		return true
+	}
+	return false
+}
+
+func AllAppDatabaseStateValues() []AppDatabaseState {
+	return []AppDatabaseState{
+		AppDatabaseStateCreating,
+		AppDatabaseStateReady,
+		AppDatabaseStateDeleting,
+	}
+}
+
+type AppDbServerState string
+
+const (
+	AppDbServerStateStarting AppDbServerState = "starting"
+	AppDbServerStateRunning  AppDbServerState = "running"
+	AppDbServerStateStopping AppDbServerState = "stopping"
+	AppDbServerStateFenced   AppDbServerState = "fenced"
+	AppDbServerStateRemoved  AppDbServerState = "removed"
+	AppDbServerStateFailed   AppDbServerState = "failed"
+)
+
+func (e *AppDbServerState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = AppDbServerState(s)
+	case string:
+		*e = AppDbServerState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for AppDbServerState: %T", src)
+	}
+	return nil
+}
+
+type NullAppDbServerState struct {
+	AppDbServerState AppDbServerState
+	Valid            bool // Valid is true if AppDbServerState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullAppDbServerState) Scan(value interface{}) error {
+	if value == nil {
+		ns.AppDbServerState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.AppDbServerState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullAppDbServerState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.AppDbServerState), nil
+}
+
+func (e AppDbServerState) Valid() bool {
+	switch e {
+	case AppDbServerStateStarting,
+		AppDbServerStateRunning,
+		AppDbServerStateStopping,
+		AppDbServerStateFenced,
+		AppDbServerStateRemoved,
+		AppDbServerStateFailed:
+		return true
+	}
+	return false
+}
+
+func AllAppDbServerStateValues() []AppDbServerState {
+	return []AppDbServerState{
+		AppDbServerStateStarting,
+		AppDbServerStateRunning,
+		AppDbServerStateStopping,
+		AppDbServerStateFenced,
+		AppDbServerStateRemoved,
+		AppDbServerStateFailed,
+	}
+}
+
 type AppDesiredState string
 
 const (
@@ -667,6 +798,83 @@ type AppAccessGrant struct {
 	CreatedAt time.Time
 }
 
+type AppDatabase struct {
+	AppID              uuid.UUID
+	WorkspaceID        uuid.UUID
+	Name               string
+	State              AppDatabaseState
+	Password           []byte
+	PasswordKeyVersion int32
+	ConnectionLimit    int32
+	ServerGeneration   *int32
+	SizeBytes          int64
+	Connections        int32
+	LastError          string
+	CreatedBy          *uuid.UUID
+	CreatedAt          time.Time
+	ReadyAt            *time.Time
+	PasswordRotatedAt  *time.Time
+	UpdatedAt          time.Time
+}
+
+type AppDbDump struct {
+	ID          uuid.UUID
+	AppID       uuid.UUID
+	WorkspaceID uuid.UUID
+	State       string
+	ObjectKey   string
+	SizeBytes   int64
+	Sha256      []byte
+	Error       string
+	CreatedBy   *uuid.UUID
+	CreatedAt   time.Time
+	FinishedAt  *time.Time
+	ExpiresAt   time.Time
+}
+
+type AppDbServer struct {
+	ID                 uuid.UUID
+	Generation         int32
+	State              AppDbServerState
+	Mode               string
+	Cause              string
+	CauseAt            time.Time
+	NodeID             *uuid.UUID
+	NodeName           string
+	Address            string
+	Port               int32
+	MemoryMb           int32
+	SuperuserPassword  []byte
+	PasswordKeyVersion int32
+	BackupKeyVersion   int32
+	StartSentAt        *time.Time
+	RunningAt          *time.Time
+	TlsExpiresAt       *time.Time
+	LastError          string
+	CheckedAt          *time.Time
+	ArchivedCount      int64
+	LastArchivedWal    string
+	LastArchivedAt     *time.Time
+	ArchiveFailedCount int64
+	LastFailedWal      string
+	LastFailedAt       *time.Time
+	DatabasesSizeBytes int64
+	Connections        int32
+	BackupStartedAt    *time.Time
+	LastBackupAt       *time.Time
+	LastBackupName     string
+	LastBackupError    string
+	MoveToNodeID       *uuid.UUID
+	StopRequestedAt    *time.Time
+	StopSentAt         *time.Time
+	FinalWal           string
+	StoppedAt          *time.Time
+	FencedAt           *time.Time
+	RemovedAt          *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
 type AppEnv struct {
 	AppID      uuid.UUID
 	Key        string
@@ -864,6 +1072,10 @@ type Node struct {
 	BuildSlots              int32
 	AdvertiseAddress        string
 	BuildsUnavailableReason string
+	DbAddress               string
+	DbPublishAddress        string
+	DbPort                  int32
+	DbUnavailableReason     string
 }
 
 type NodeCertificate struct {
@@ -961,4 +1173,5 @@ type WorkspaceQuota struct {
 	UpdatedBy           *uuid.UUID
 	UpdatedAt           time.Time
 	MaxMemoryMb         int32
+	MaxDatabases        int32
 }

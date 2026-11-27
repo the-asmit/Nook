@@ -53,6 +53,12 @@ tags:
     description: Deploys of an app, their uploads, builds and build logs.
   - name: access
     description: Who may open an app through the gateway (members view; admins and owners change).
+  - name: databases
+    description: |
+      An app's PostgreSQL database on the installation's app database
+      server (members view; admins and owners create, rotate, dump and
+      delete). The app gets DATABASE_URL as a secret variable; passwords
+      are never returned.
   - name: registry
     description: Endpoints used by Nook's private image registry.
   - name: internal
@@ -600,6 +606,102 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
+  /api/v1/nodes/{node}/labels:
+    parameters:
+      - $ref: "#/components/parameters/NodeRef"
+    put:
+      tags: [nodes]
+      operationId: setNodeLabels
+      summary: Replace a node's labels
+      description: Labels steer placement; `nook.database=true` prefers the node for the app database server.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [labels]
+              properties:
+                labels: { type: object, maxProperties: 32, additionalProperties: { type: string, maxLength: 63 } }
+      responses:
+        "200":
+          description: The node.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Node" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/database:
+    get:
+      tags: [admin]
+      operationId: getDatabaseServerStatus
+      summary: The app database server and its generations
+      description: |
+        Archiving state (last archived WAL, failures), base backups, sizes,
+        connections, and every generation of the server (each failover
+        restores a new one; replaced ones are fenced and keep their volume
+        until removed).
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatabaseServerStatus" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/database/failover:
+    post:
+      tags: [admin]
+      operationId: failOverDatabaseServer
+      summary: Move the app database server to another node (planned)
+      description: |
+        Shuts the server down cleanly, archives the WAL not yet archived,
+        restores it on the target node from the backups (losing nothing)
+        and re-points the apps. Apps cannot reach their databases meanwhile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [to]
+              properties:
+                to: { type: string, description: The target node's name. }
+      responses:
+        "202":
+          description: The status after starting the move.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatabaseServerStatus" }
+        "400": { $ref: "#/components/responses/Invalid" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/admin/database/servers/{server}:
+    parameters:
+      - name: server
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [admin]
+      operationId: removeDatabaseServer
+      summary: Remove a replaced server's container and volume
+      responses:
+        "204": { description: Removed. }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
   /api/v1/nodes/{node}:
     parameters:
       - $ref: "#/components/parameters/NodeRef"
@@ -953,6 +1055,126 @@ paths:
         "401": { $ref: "#/components/responses/Unauthenticated" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/database:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    get:
+      tags: [databases]
+      operationId: getDatabase
+      summary: Show the app's database (any member)
+      responses:
+        "200":
+          description: The database (never its password).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Database" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      tags: [databases]
+      operationId: createDatabase
+      summary: Create a database for the app (admins and owners)
+      description: |
+        Creates a database and a role of its own for the app on the app
+        database server (starting the server if this is the first one).
+        No other app's role may connect to it. Once it exists, the app gets
+        DATABASE_URL (a secret variable, sslmode=require) and is redeployed
+        without a rebuild. Poll the database until `state` is `ready`.
+        Refused when the workspace's database quota is used up or the
+        server's disk is nearly full.
+      responses:
+        "202":
+          description: The database, being created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Database" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [databases]
+      operationId: deleteDatabase
+      summary: Delete the app's database (admins and owners)
+      description: |
+        Drops the database and its role and removes DATABASE_URL (the app is
+        redeployed). Its backups age out with the retention period.
+      responses:
+        "202":
+          description: The database, being deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Database" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/database/rotate-password:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    post:
+      tags: [databases]
+      operationId: rotateDatabasePassword
+      summary: Give the app's role a new password (admins and owners)
+      description: The old password stops working at once; the app is redeployed with the new DATABASE_URL.
+      responses:
+        "200":
+          description: The database.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Database" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/database/dumps:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+    post:
+      tags: [databases]
+      operationId: createDatabaseDump
+      summary: Export the app's database as SQL (admins and owners)
+      description: |
+        Runs pg_dump (plain SQL, without owners or privileges) on the
+        server's node. Poll the dump; once `ready` it carries a download URL
+        valid for a few minutes. Dumps are deleted after an hour.
+      responses:
+        "202":
+          description: The dump, running.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatabaseDump" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /api/v1/workspaces/{slug}/apps/{app}/database/dumps/{dump}:
+    parameters:
+      - $ref: "#/components/parameters/Slug"
+      - $ref: "#/components/parameters/AppSlug"
+      - name: dump
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [databases]
+      operationId: getDatabaseDump
+      summary: Show a dump (admins and owners)
+      responses:
+        "200":
+          description: The dump; `download_url` is set when it is ready.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DatabaseDump" }
+        "401": { $ref: "#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/workspaces/{slug}/apps/{app}/rollback:
     parameters:
@@ -1417,6 +1639,7 @@ paths:
                 max_apps: { type: integer, minimum: 0, maximum: 10000 }
                 max_concurrent_builds: { type: integer, minimum: 0, maximum: 100 }
                 max_memory_mb: { type: integer, minimum: 0, maximum: 10485760, description: Omitted keeps the current memory quota. }
+                max_databases: { type: integer, minimum: 0, maximum: 1000, description: Omitted keeps the current database quota. }
       responses:
         "200":
           description: The new quota.
@@ -1935,6 +2158,9 @@ components:
         advertise_address: { type: string, description: Private address apps are published on. }
         build_slots: { type: integer }
         builds_unavailable_reason: { type: string, description: "Why the node cannot build, with the fix; empty when it can." }
+        database_address: { type: string, description: Where app containers would reach an app database server on the node. }
+        database_port: { type: integer }
+        database_unavailable_reason: { type: string, description: "Why the node cannot host the app database server; empty when it can." }
         joined_at: { type: string, format: date-time }
         last_heartbeat_at: { type: [string, "null"], format: date-time }
         heartbeat:
@@ -2073,7 +2299,7 @@ components:
           required: [live_deployment, health, instance]
           properties:
             live_deployment: { type: [integer, "null"] }
-            health: { type: string, enum: [running, starting, unhealthy, crashed, sleeping, waking, stopped, not_deployed] }
+            health: { type: string, enum: [running, starting, unhealthy, crashed, sleeping, waking, stopped, not_deployed, database_unavailable] }
             sleeping_since: { type: [string, "null"], format: date-time }
             sleep_reason: { type: string, enum: [idle, evicted], description: Set while the app sleeps. }
             last_request_at: { type: [string, "null"], format: date-time, description: When the gateways last saw a request for the app. }
@@ -2158,6 +2384,87 @@ components:
         superseded_at: { type: [string, "null"], format: date-time }
         rolled_back_at: { type: [string, "null"], format: date-time }
         instance: { $ref: "#/components/schemas/Instance" }
+    Database:
+      type: object
+      required: [app, name, state, available, size_bytes, connections, connection_limit, created_at]
+      properties:
+        app: { type: string }
+        name: { type: string, description: The database's and its role's name. }
+        state: { type: string, enum: [creating, ready, deleting] }
+        available: { type: boolean, description: Ready and its server accepts connections. }
+        size_bytes: { type: integer, format: int64, description: As last measured (PostgreSQL cannot cap one database's size). }
+        connections: { type: integer }
+        connection_limit: { type: integer }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        ready_at: { type: [string, "null"], format: date-time }
+        password_rotated_at: { type: [string, "null"], format: date-time }
+        server:
+          type: object
+          properties:
+            node: { type: string }
+            state: { type: string, enum: [starting, running, stopping] }
+            generation: { type: integer }
+            last_archived_at: { type: [string, "null"], format: date-time }
+            last_archived_wal: { type: string }
+            last_backup_at: { type: [string, "null"], format: date-time }
+            archive_failures: { type: integer, format: int64 }
+    DatabaseDump:
+      type: object
+      required: [id, state, size_bytes, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        state: { type: string, enum: [dumping, uploading, ready, failed] }
+        size_bytes: { type: integer, format: int64 }
+        error: { type: string }
+        created_at: { type: string, format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        expires_at: { type: string, format: date-time }
+        download_url: { type: string, description: A presigned URL valid for a few minutes (ready dumps only). }
+    DatabaseServer:
+      type: object
+      required: [id, generation, state, node, mode, cause, cause_at, archived_count, archive_failures, backup_running, size_bytes, connections, container_stopped]
+      properties:
+        id: { type: string, format: uuid }
+        generation: { type: integer }
+        state: { type: string, enum: [starting, running, stopping, fenced, removed, failed] }
+        node: { type: string }
+        address: { type: string }
+        port: { type: integer }
+        mode: { type: string, enum: [init, restore] }
+        cause: { type: string, enum: [first, failover, planned, retry] }
+        cause_at: { type: string, format: date-time }
+        running_at: { type: [string, "null"], format: date-time }
+        last_error: { type: string }
+        archived_count: { type: integer, format: int64 }
+        last_archived_wal: { type: string }
+        last_archived_at: { type: [string, "null"], format: date-time }
+        archive_failures: { type: integer, format: int64 }
+        last_failed_wal: { type: string }
+        last_failed_at: { type: [string, "null"], format: date-time }
+        last_backup_at: { type: [string, "null"], format: date-time }
+        last_backup: { type: string }
+        last_backup_error: { type: string }
+        backup_running: { type: boolean }
+        size_bytes: { type: integer, format: int64 }
+        connections: { type: integer }
+        checked_at: { type: [string, "null"], format: date-time }
+        final_wal: { type: string, description: The last WAL segment a planned stop archived. }
+        fenced_at: { type: [string, "null"], format: date-time }
+        container_stopped: { type: boolean }
+        tls_expires_at: { type: [string, "null"], format: date-time }
+    DatabaseServerStatus:
+      type: object
+      required: [enabled, databases, storage, archive_timeout, backup_interval, retention, servers]
+      properties:
+        enabled: { type: boolean }
+        databases: { type: integer, format: int64 }
+        storage: { type: string, description: Where backups and WAL go (s3://bucket/prefix). }
+        archive_timeout: { type: string, description: The most recent writes a crash may lose. }
+        backup_interval: { type: string }
+        retention: { type: string }
+        current: { $ref: "#/components/schemas/DatabaseServer" }
+        servers: { type: array, items: { $ref: "#/components/schemas/DatabaseServer" } }
     Quota:
       type: object
       required: [max_apps, max_concurrent_builds, max_memory_mb, default]
@@ -2165,4 +2472,5 @@ components:
         max_apps: { type: integer }
         max_concurrent_builds: { type: integer }
         max_memory_mb: { type: integer, description: Memory the workspace's running instances may reserve. }
+        max_databases: { type: integer, description: App databases the workspace may have. }
         default: { type: boolean, description: True when the instance defaults apply. }

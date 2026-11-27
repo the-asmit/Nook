@@ -59,10 +59,15 @@ type NodeView struct {
 	BuildSlots       int32  `json:"build_slots"`
 	// BuildsUnavailableReason says why the node cannot build (with the
 	// fix), or is empty.
-	BuildsUnavailableReason string         `json:"builds_unavailable_reason"`
-	JoinedAt                time.Time      `json:"joined_at"`
-	LastHeartbeatAt         *time.Time     `json:"last_heartbeat_at"`
-	Heartbeat               *HeartbeatView `json:"heartbeat"`
+	BuildsUnavailableReason string `json:"builds_unavailable_reason"`
+	// Where app containers would reach an app database server on the node,
+	// or why the node cannot host one.
+	DatabaseAddress           string         `json:"database_address"`
+	DatabasePort              int32          `json:"database_port"`
+	DatabaseUnavailableReason string         `json:"database_unavailable_reason"`
+	JoinedAt                  time.Time      `json:"joined_at"`
+	LastHeartbeatAt           *time.Time     `json:"last_heartbeat_at"`
+	Heartbeat                 *HeartbeatView `json:"heartbeat"`
 }
 
 // NodeEventView is one state transition.
@@ -91,6 +96,7 @@ func nodeView(n *store.Node, hb *nodes.Sample) NodeView {
 		DiskTotalBytes: n.DiskTotalBytes, DockerVersion: n.DockerVersion, AgentVersion: n.AgentVersion,
 		OS: n.Os, Arch: n.Arch, JoinedAt: n.JoinedAt, LastHeartbeatAt: n.LastHeartbeatAt,
 		AdvertiseAddress: n.AdvertiseAddress, BuildSlots: n.BuildSlots, BuildsUnavailableReason: n.BuildsUnavailableReason,
+		DatabaseAddress: n.DbAddress, DatabasePort: n.DbPort, DatabaseUnavailableReason: n.DbUnavailableReason,
 	}
 	if hb != nil {
 		v.Heartbeat = &HeartbeatView{

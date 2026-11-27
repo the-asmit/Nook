@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/the-asmit/nook/internal/agentlink"
+	"github.com/the-asmit/nook/internal/appdb"
 	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/auth"
 	"github.com/the-asmit/nook/internal/builds"
@@ -59,6 +60,8 @@ type Config struct {
 	Secrets   secrets.Config
 	Scheduler scheduler.Config
 	Rollout   rollout.Config
+	// AppDB is the app database server (storage defaults to Storage's).
+	AppDB appdb.Config
 	// AppsBaseURL is the apps domain with scheme and port, e.g.
 	// https://apps.example.com; app URLs are <app>--<workspace>.<domain>.
 	AppsBaseURL string `env:"NOOK_APPS_BASE_URL,required,notEmpty"`
@@ -86,6 +89,8 @@ type Config struct {
 
 // Validate checks every section, then the rules that span sections.
 func (c *Config) Validate() error {
+	// App database backups default to Nook's own storage settings.
+	c.AppDB.Resolve(&c.Storage)
 	var errs []error
 	if err := c.Environment.Validate(); err != nil {
 		errs = append(errs, fmt.Errorf("NOOK_ENV: %w", err))
@@ -108,6 +113,7 @@ func (c *Config) Validate() error {
 		c.Secrets.Validate(),
 		c.Scheduler.Validate(),
 		c.Rollout.Validate(),
+		c.AppDB.Validate(c.Environment.RequiresTLS()),
 		c.Visitor.Validate(),
 		c.validateApps(),
 		config.CheckDuration("NOOK_LEADER_RETRY_INTERVAL", c.LeaderInterval, 100*time.Millisecond, time.Minute),

@@ -114,6 +114,26 @@ func TestInfoIsSanitized(t *testing.T) {
 	}
 }
 
+func TestDatabaseInfoIsSanitized(t *testing.T) {
+	ok := Info{DatabaseAddress: "10.0.0.7", DatabasePublishAddress: "::ffff:10.0.0.7", DatabasePort: 5433}
+	if out := ok.sanitized(); out.DatabaseAddress != "10.0.0.7" || out.DatabasePublishAddress != "10.0.0.7" || out.DatabasePort != 5433 {
+		t.Fatalf("sanitized = %+v", out)
+	}
+	for _, bad := range []Info{
+		{DatabaseAddress: "0.0.0.0", DatabasePublishAddress: "10.0.0.7", DatabasePort: 5433},
+		{DatabaseAddress: "10.0.0.7", DatabasePublishAddress: "nope", DatabasePort: 5433},
+		{DatabaseAddress: "10.0.0.7", DatabasePublishAddress: "10.0.0.7", DatabasePort: 70000},
+	} {
+		if out := bad.sanitized(); out.DatabaseAddress != "" || out.DatabasePort != 0 {
+			t.Errorf("%+v kept as %+v", bad, out)
+		}
+	}
+	long := Info{DatabaseUnavailableReason: strings.Repeat("r", 600)}
+	if out := long.sanitized(); len(out.DatabaseUnavailableReason) != 500 {
+		t.Fatalf("reason kept at %d bytes", len(out.DatabaseUnavailableReason))
+	}
+}
+
 func TestJoinTokenFormat(t *testing.T) {
 	tok, prefix := NewJoinToken()
 	if !LooksLikeJoinToken(tok) || !strings.HasPrefix(tok, prefix) || len(prefix) != len(JoinTokenPrefix)+4 {

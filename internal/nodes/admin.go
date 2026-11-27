@@ -215,3 +215,35 @@ func (r *Registry) RevokeJoinToken(ctx context.Context, actor audit.Actor, id uu
 		})
 	})
 }
+
+// SetLabels replaces a node's labels (instance admins). Labels steer
+// placement, such as which node hosts the app database server.
+func (r *Registry) SetLabels(ctx context.Context, actor audit.Actor, ref string, labels map[string]string) (store.Node, error) {
+	node, err := r.Resolve(ctx, ref)
+	if err != nil {
+		return store.Node{}, err
+	}
+	data, err := encodeLabels(labels)
+	if err != nil {
+		return store.Node{}, err
+	}
+	var out store.Node
+	err = r.store.InTx(ctx, func(q *store.Queries) error {
+		n, lockErr := q.LockLiveNode(ctx, node.ID)
+		if store.IsNotFound(lockErr) {
+			return apperr.NotFound("node not found")
+		}
+		if lockErr != nil {
+			return fmt.Errorf("lock node: %w", lockErr)
+		}
+		if setErr := q.SetNodeLabels(ctx, store.SetNodeLabelsParams{ID: n.ID, Labels: data}); setErr != nil {
+			return fmt.Errorf("set labels: %w", setErr)
+		}
+		n.Labels, out = data, n
+		return audit.Record(ctx, q, &audit.Entry{
+			ActorID: &actor.UserID, IP: actor.IP, Action: audit.ActionNodeLabel, TargetType: audit.TargetNode, TargetID: n.ID.String(),
+			Metadata: map[string]any{"name": n.Name, "labels": labels},
+		})
+	})
+	return out, err
+}

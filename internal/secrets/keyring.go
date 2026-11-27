@@ -14,7 +14,9 @@ import (
 	"bufio"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -61,14 +63,16 @@ var ErrDecrypt = errors.New("the value cannot be decrypted with the configured m
 
 // Keyring holds the master keys by version.
 type Keyring struct {
-	aeads  map[int]cipher.AEAD
+	aeads map[int]cipher.AEAD
+	// raw keys, only for deriving purpose-specific keys (Derive).
+	raw    map[int][]byte
 	active int
 }
 
 // ParseKeyring reads "<version>:<base64 key>" lines; blank lines and
 // lines starting with # are ignored. Errors never include key material.
 func ParseKeyring(text string) (*Keyring, error) {
-	k := &Keyring{aeads: map[int]cipher.AEAD{}}
+	k := &Keyring{aeads: map[int]cipher.AEAD{}, raw: map[int][]byte{}}
 	sc := bufio.NewScanner(strings.NewReader(text))
 	line := 0
 	for sc.Scan() {
@@ -97,6 +101,7 @@ func ParseKeyring(text string) (*Keyring, error) {
 			return nil, err
 		}
 		k.aeads[v] = aead
+		k.raw[v] = raw
 		k.active = max(k.active, v)
 	}
 	if err := sc.Err(); err != nil {
@@ -200,4 +205,31 @@ func NewKeyLine(version int) (string, error) {
 		return "", fmt.Errorf("generate key: %w", err)
 	}
 	return strconv.Itoa(version) + ":" + base64.StdEncoding.EncodeToString(key), nil
+}
+
+// Derive returns a size-byte key for purpose, derived with HKDF-SHA256
+// from master key version v. Different purposes get unrelated keys, so a
+// key handed to one component (the app database server's backup
+// encryption) never decrypts anything else.
+func (k *Keyring) Derive(v int, purpose string, size int) ([]byte, error) {
+	raw, ok := k.raw[v]
+	if !ok {
+		return nil, fmt.Errorf("master key version %d is not configured", v)
+	}
+	key, err := hkdf.Key(sha256.New, raw, nil, "nook/"+purpose, size)
+	if err != nil {
+		return nil, fmt.Errorf("derive key: %w", err)
+	}
+	return key, nil
+}
+
+// DatabasePasswordAAD binds a sealed app database password to its app.
+func DatabasePasswordAAD(appID uuid.UUID) []byte {
+	return []byte("nook/appdb-password/v1\x00" + appID.String())
+}
+
+// DatabaseSuperuserAAD binds a sealed database server superuser password
+// to its server.
+func DatabaseSuperuserAAD(serverID uuid.UUID) []byte {
+	return []byte("nook/appdb-superuser/v1\x00" + serverID.String())
 }

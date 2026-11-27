@@ -65,7 +65,7 @@ func Rotate(ctx context.Context, st *store.Store, k *Keyring) (int, error) {
 		return 0, err
 	}
 	total := 0
-	for _, batch := range []func(context.Context, *store.Store, *Keyring) (int, int, error){rotateEnv, rotateSnapshots, rotateCerts} {
+	for _, batch := range []func(context.Context, *store.Store, *Keyring) (int, int, error){rotateEnv, rotateSnapshots, rotateCerts, rotateDBPasswords, rotateDBServers} {
 		for {
 			seen, n, err := batch(ctx, st, k)
 			total += n
@@ -215,4 +215,81 @@ func rotateCerts(ctx context.Context, st *store.Store, k *Keyring) (seen, n int,
 		return 0, 0, nil
 	}
 	return seen, n, err
+}
+
+// rotateDBPasswords re-encrypts app database passwords. (App database
+// backups stay encrypted with the key derived from the version recorded
+// on their server, which therefore stays in use.)
+func rotateDBPasswords(ctx context.Context, st *store.Store, k *Keyring) (seen, n int, err error) {
+	err = st.InTx(ctx, func(q *store.Queries) error {
+		rows, listErr := q.ListAppDatabasesNotOnVersion(ctx, store.ListAppDatabasesNotOnVersionParams{Version: int32(k.active), RowLimit: rotateBatch}) //nolint:gosec // G115: versions are at most 1e6.
+		if listErr != nil {
+			return fmt.Errorf("list app database passwords: %w", listErr)
+		}
+		if len(rows) == 0 {
+			return errNothing
+		}
+		seen = len(rows)
+		for _, r := range rows {
+			c, rerr := reseal(k, DatabasePasswordAAD(r.AppID), int(r.PasswordKeyVersion), r.Password, func(sealed []byte, v int) (int64, error) {
+				return q.ReencryptAppDatabasePassword(ctx, store.ReencryptAppDatabasePasswordParams{
+					AppID: r.AppID, Password: sealed, NewVersion: int32(v), OldVersion: r.PasswordKeyVersion, //nolint:gosec // G115: versions are at most 1e6.
+				})
+			})
+			if rerr != nil {
+				return fmt.Errorf("app database password of %s: %w", r.AppID, rerr)
+			}
+			n += int(c)
+		}
+		return nil
+	})
+	if errors.Is(err, errNothing) {
+		return 0, 0, nil
+	}
+	return seen, n, err
+}
+
+// rotateDBServers re-encrypts the database servers' superuser passwords.
+func rotateDBServers(ctx context.Context, st *store.Store, k *Keyring) (seen, n int, err error) {
+	err = st.InTx(ctx, func(q *store.Queries) error {
+		rows, listErr := q.ListDBServersNotOnVersion(ctx, store.ListDBServersNotOnVersionParams{Version: int32(k.active), RowLimit: rotateBatch}) //nolint:gosec // G115: versions are at most 1e6.
+		if listErr != nil {
+			return fmt.Errorf("list database server passwords: %w", listErr)
+		}
+		if len(rows) == 0 {
+			return errNothing
+		}
+		seen = len(rows)
+		for _, r := range rows {
+			c, rerr := reseal(k, DatabaseSuperuserAAD(r.ID), int(r.PasswordKeyVersion), r.SuperuserPassword, func(sealed []byte, v int) (int64, error) {
+				return q.ReencryptDBServerPassword(ctx, store.ReencryptDBServerPasswordParams{
+					ID: r.ID, SuperuserPassword: sealed, NewVersion: int32(v), OldVersion: r.PasswordKeyVersion, //nolint:gosec // G115: versions are at most 1e6.
+				})
+			})
+			if rerr != nil {
+				return fmt.Errorf("database server password of %s: %w", r.ID, rerr)
+			}
+			n += int(c)
+		}
+		return nil
+	})
+	if errors.Is(err, errNothing) {
+		return 0, 0, nil
+	}
+	return seen, n, err
+}
+
+// reseal opens a value sealed with version v and stores it sealed with the
+// active version through save.
+func reseal(k *Keyring, aad []byte, v int, sealed []byte, save func([]byte, int) (int64, error)) (int64, error) {
+	plain, err := k.Open(v, aad, sealed)
+	if err != nil {
+		return 0, fmt.Errorf("key version %d: %w", v, err)
+	}
+	out, nv, err := k.Seal(aad, plain)
+	clear(plain)
+	if err != nil {
+		return 0, err
+	}
+	return save(out, nv)
 }

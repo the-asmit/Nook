@@ -126,6 +126,13 @@ type Info struct {
 	AdvertiseAddress string
 	// BuildsUnavailableReason says why the node cannot build, or is empty.
 	BuildsUnavailableReason string
+	// What the node offers for the app database server: the address apps
+	// reach it at, the address and port it is published on, or why it
+	// cannot host one.
+	DatabaseAddress           string
+	DatabasePublishAddress    string
+	DatabasePort              int32
+	DatabaseUnavailableReason string
 }
 
 // sanitized bounds everything an agent reports, since it is stored and
@@ -144,7 +151,13 @@ func (i *Info) sanitized() Info {
 		Addresses:        []string{},
 		// An agent reporting no build reason but a broken one is caught by
 		// the build itself; the reason is shown to administrators.
-		BuildsUnavailableReason: clean(i.BuildsUnavailableReason, 500),
+		BuildsUnavailableReason:   clean(i.BuildsUnavailableReason, 500),
+		DatabaseUnavailableReason: clean(i.DatabaseUnavailableReason, 500),
+	}
+	db, errDB := netip.ParseAddr(i.DatabaseAddress)
+	pub, errPub := netip.ParseAddr(i.DatabasePublishAddress)
+	if errDB == nil && errPub == nil && !db.IsUnspecified() && !pub.IsUnspecified() && i.DatabasePort > 0 && i.DatabasePort <= 65535 {
+		out.DatabaseAddress, out.DatabasePublishAddress, out.DatabasePort = db.Unmap().String(), pub.Unmap().String(), i.DatabasePort
 	}
 	// Only a specific unicast address can publish apps: never a wildcard
 	// (0.0.0.0 would expose apps on every interface of the node).

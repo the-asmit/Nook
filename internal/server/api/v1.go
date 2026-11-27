@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/the-asmit/nook/internal/agentlink"
+	"github.com/the-asmit/nook/internal/appdb"
 	"github.com/the-asmit/nook/internal/apperr"
 	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/auth"
@@ -71,6 +72,8 @@ type V1Deps struct {
 	// LastRequest returns when an app last received a request (gateway
 	// activity), or nil.
 	LastRequest func(ctx context.Context, app uuid.UUID) *time.Time
+	// Databases manages app databases.
+	Databases *appdb.Controller
 }
 
 // RouteBuildLog streams build logs; it is exempt from the request timeout.
@@ -130,6 +133,12 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	appRoutes.POST("/:app/deployments/:number/upload-complete", h.confirmUpload)
 	appRoutes.POST("/:app/deployments/:number/cancel", h.cancelDeployment)
 	appRoutes.GET("/:app/deployments/:number/build-log", h.buildLog)
+	appRoutes.GET("/:app/database", h.getDatabase)
+	appRoutes.POST("/:app/database", h.createDatabase)
+	appRoutes.DELETE("/:app/database", h.deleteDatabase)
+	appRoutes.POST("/:app/database/rotate-password", h.rotateDatabasePassword)
+	appRoutes.POST("/:app/database/dumps", h.createDatabaseDump)
+	appRoutes.GET("/:app/database/dumps/:dump", h.getDatabaseDump)
 
 	// The registry's GC job uses BusyBox wget, which only sends GET and POST.
 	gc := v1.Group("/registry/gc-window", h.requireGCSecret)
@@ -150,6 +159,10 @@ func RegisterV1(r gin.IRouter, d *V1Deps) {
 	admin.POST("/nodes/:node/drain", h.setDraining(true))
 	admin.POST("/nodes/:node/undrain", h.setDraining(false))
 	admin.DELETE("/nodes/:node", h.removeNode)
+	admin.PUT("/nodes/:node/labels", h.setNodeLabels)
+	admin.GET("/admin/database", h.databaseStatus)
+	admin.POST("/admin/database/failover", h.databaseFailover)
+	admin.DELETE("/admin/database/servers/:server", h.removeDatabaseServer)
 
 	admin.GET("/admin/workspaces/:slug/quota", h.getQuota)
 	admin.PUT("/admin/workspaces/:slug/quota", h.setQuota)

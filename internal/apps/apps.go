@@ -231,6 +231,8 @@ type Quota struct {
 	MaxConcurrentBuilds int32 `json:"max_concurrent_builds"`
 	// MaxMemoryMB caps the memory the workspace's instances reserve.
 	MaxMemoryMB int32 `json:"max_memory_mb"`
+	// MaxDatabases caps the workspace's app databases.
+	MaxDatabases int32 `json:"max_databases"`
 	// Default is true when no override is set.
 	Default bool `json:"default"`
 }
@@ -241,13 +243,13 @@ func (s *Service) QuotaFor(ctx context.Context, q *store.Queries, workspaceID uu
 	if store.IsNotFound(err) {
 		return Quota{
 			MaxApps: s.cfg.DefaultMaxApps, MaxConcurrentBuilds: s.cfg.DefaultMaxConcurrentBuilds,
-			MaxMemoryMB: s.cfg.DefaultMaxMemoryMB, Default: true,
+			MaxMemoryMB: s.cfg.DefaultMaxMemoryMB, MaxDatabases: s.cfg.DefaultMaxDatabases, Default: true,
 		}, nil
 	}
 	if err != nil {
 		return Quota{}, fmt.Errorf("read quota: %w", err)
 	}
-	return Quota{MaxApps: row.MaxApps, MaxConcurrentBuilds: row.MaxConcurrentBuilds, MaxMemoryMB: row.MaxMemoryMb}, nil
+	return Quota{MaxApps: row.MaxApps, MaxConcurrentBuilds: row.MaxConcurrentBuilds, MaxMemoryMB: row.MaxMemoryMb, MaxDatabases: row.MaxDatabases}, nil
 }
 
 // MemoryQuotaMB returns a workspace's memory quota (for the rollout
@@ -396,13 +398,16 @@ func (s *Service) GetQuota(ctx context.Context, wsSlug string) (Quota, error) {
 }
 
 // SetQuota overrides a workspace's quota (instance admins). A nil
-// maxMemory keeps the workspace's current memory quota.
-func (s *Service) SetQuota(ctx context.Context, actor workspace.Actor, wsSlug string, maxApps, maxBuilds int32, maxMemory *int32) (Quota, error) {
+// maxMemory or maxDatabases keeps the workspace's current value.
+func (s *Service) SetQuota(ctx context.Context, actor workspace.Actor, wsSlug string, maxApps, maxBuilds int32, maxMemory, maxDatabases *int32) (Quota, error) {
 	if maxApps < 0 || maxApps > 10000 || maxBuilds < 0 || maxBuilds > 100 {
 		return Quota{}, apperr.Invalid("invalid_quota", "max_apps must be 0..10000 and max_concurrent_builds 0..100")
 	}
 	if maxMemory != nil && (*maxMemory < 0 || *maxMemory > maxQuotaMemoryMB) {
 		return Quota{}, apperr.Invalid("invalid_quota", "max_memory_mb must be 0..%d", maxQuotaMemoryMB)
+	}
+	if maxDatabases != nil && (*maxDatabases < 0 || *maxDatabases > maxQuotaDatabases) {
+		return Quota{}, apperr.Invalid("invalid_quota", "max_databases must be 0..%d", maxQuotaDatabases)
 	}
 	ws, err := s.workspaceBySlug(ctx, wsSlug)
 	if err != nil {
@@ -414,20 +419,24 @@ func (s *Service) SetQuota(ctx context.Context, actor workspace.Actor, wsSlug st
 		if quotaErr != nil {
 			return quotaErr
 		}
-		memory := current.MaxMemoryMB
+		memory, databases := current.MaxMemoryMB, current.MaxDatabases
 		if maxMemory != nil {
 			memory = *maxMemory
 		}
+		if maxDatabases != nil {
+			databases = *maxDatabases
+		}
 		if _, upErr := q.UpsertWorkspaceQuota(ctx, store.UpsertWorkspaceQuotaParams{
-			WorkspaceID: ws.ID, MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds, MaxMemoryMb: memory, UpdatedBy: &actor.UserID,
+			WorkspaceID: ws.ID, MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds, MaxMemoryMb: memory,
+			MaxDatabases: databases, UpdatedBy: &actor.UserID,
 		}); upErr != nil {
 			return fmt.Errorf("set quota: %w", upErr)
 		}
-		out = Quota{MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds, MaxMemoryMB: memory}
+		out = Quota{MaxApps: maxApps, MaxConcurrentBuilds: maxBuilds, MaxMemoryMB: memory, MaxDatabases: databases}
 		return audit.Record(ctx, q, &audit.Entry{
 			WorkspaceID: &ws.ID, ActorID: &actor.UserID, IP: actor.IP,
 			Action: audit.ActionQuotaUpdate, TargetType: audit.TargetWorkspace, TargetID: ws.ID.String(),
-			Metadata: map[string]any{"max_apps": maxApps, "max_concurrent_builds": maxBuilds, "max_memory_mb": memory},
+			Metadata: map[string]any{"max_apps": maxApps, "max_concurrent_builds": maxBuilds, "max_memory_mb": memory, "max_databases": databases},
 		})
 	})
 	if err != nil {

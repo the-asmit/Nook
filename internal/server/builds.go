@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/the-asmit/nook/internal/activity"
+	"github.com/the-asmit/nook/internal/appdb"
 	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/builds"
 	"github.com/the-asmit/nook/internal/nodes"
@@ -63,6 +64,12 @@ func (s *Server) startBuilds(ctx context.Context, st *store.Store, cfg *Config, 
 		return err
 	}
 	s.appLogs = rollout.NewLogStreams(s.redis, s.hub, &cfg.Rollout, s.logger)
+	if s.databases, err = appdb.New(&appdb.Deps{
+		Store: st, Commander: s.hub, CA: s.ca, Keyring: keyring, Apps: s.apps, Objects: objects, Logger: s.logger, Metrics: reg,
+		NodeReservedMemoryMB: cfg.Scheduler.ReservedMemoryMB,
+	}, &cfg.AppDB); err != nil {
+		return err
+	}
 	deps := &builds.Deps{
 		Store: st, Redis: s.redis, Commander: s.hub, Heartbeats: nodeRegistry, Apps: s.apps,
 		Objects: objects, Issuer: issuer, Registry: regClient, RegistryAddr: cfg.Registry.Addr,

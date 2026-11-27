@@ -29,6 +29,8 @@ type Config struct {
 	DefaultMaxConcurrentBuilds int32 `env:"NOOK_QUOTA_MAX_CONCURRENT_BUILDS" envDefault:"2"`
 	// DefaultMaxMemoryMB caps the memory a workspace's running apps reserve.
 	DefaultMaxMemoryMB int32 `env:"NOOK_QUOTA_MAX_MEMORY_MB" envDefault:"8192"`
+	// DefaultMaxDatabases caps a workspace's app databases.
+	DefaultMaxDatabases int32 `env:"NOOK_QUOTA_MAX_DATABASES" envDefault:"5"`
 	// MaxStartupTimeout is the longest startup timeout an app may ask for
 	// in nook.toml.
 	MaxStartupTimeout time.Duration `env:"NOOK_APP_MAX_STARTUP_TIMEOUT" envDefault:"10m"`
@@ -53,6 +55,7 @@ func (c *Config) Validate() error {
 		config.CheckRange("NOOK_QUOTA_MAX_APPS", c.DefaultMaxApps, 0, 10000),
 		config.CheckRange("NOOK_QUOTA_MAX_CONCURRENT_BUILDS", c.DefaultMaxConcurrentBuilds, 0, 100),
 		config.CheckRange("NOOK_QUOTA_MAX_MEMORY_MB", c.DefaultMaxMemoryMB, 0, maxQuotaMemoryMB),
+		config.CheckRange("NOOK_QUOTA_MAX_DATABASES", c.DefaultMaxDatabases, 0, maxQuotaDatabases),
 		config.CheckDuration("NOOK_APP_MAX_STARTUP_TIMEOUT", c.MaxStartupTimeout, DefaultStartupTimeout, time.Hour),
 		config.CheckRange("NOOK_APP_MAX_MEMORY_MB", c.MaxAppMemoryMB, DefaultMemoryMB, 1048576),
 		config.CheckRange("NOOK_APP_MAX_CPU_MILLICORES", c.MaxAppCPUMillicores, DefaultCPUMillicores, 1024000),
@@ -71,6 +74,8 @@ const (
 	DefaultStartupTimeout  = 60 * time.Second
 	// maxQuotaMemoryMB bounds a workspace memory quota (10 TiB).
 	maxQuotaMemoryMB = 10485760
+	// maxQuotaDatabases bounds a workspace database quota.
+	maxQuotaDatabases = 1000
 	// minimums keep limits meaningful.
 	minMemoryMB      = 16
 	minCPUMillicores = 10

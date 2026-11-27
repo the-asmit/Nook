@@ -155,6 +155,8 @@ func infoFromProto(i *agentv1.NodeInfo) nodes.Info {
 		MemoryTotalBytes: i.GetMemoryTotalBytes(), DiskTotalBytes: i.GetDiskTotalBytes(),
 		DockerVersion: i.GetDockerVersion(), AgentVersion: i.GetAgentVersion(), OS: i.GetOs(), Arch: i.GetArch(),
 		BuildSlots: i.GetBuildSlots(), AdvertiseAddress: i.GetAdvertiseAddress(), BuildsUnavailableReason: i.GetBuildsUnavailableReason(),
+		DatabaseAddress: i.GetDatabaseAddress(), DatabasePublishAddress: i.GetDatabasePublishAddress(),
+		DatabasePort: i.GetDatabasePort(), DatabaseUnavailableReason: i.GetDatabaseUnavailableReason(),
 	}
 }
 
@@ -208,6 +210,7 @@ func (s *Server) Connect(stream agentv1.NodeService_ConnectServer) error {
 	}
 	accepted := &agentv1.ConnectResponse{Message: &agentv1.ConnectResponse_Accepted{Accepted: &agentv1.ConnectAccepted{
 		NodeId: id.NodeID.String(), HeartbeatInterval: durationpb.New(s.registry.HeartbeatInterval()), Instances: known,
+		DatabaseEndpoint: s.databases.CurrentEndpoint(ctx),
 	}}}
 	if sendErr := stream.Send(accepted); sendErr != nil {
 		return sendErr
@@ -235,6 +238,7 @@ func (s *Server) Connect(stream agentv1.NodeService_ConnectServer) error {
 	// Reconciliation sends commands and waits for their results, which
 	// arrive through this handler's loop: it must not block it.
 	go s.runtime.AgentConnected(sess.ctx, id.NodeID, hello.GetInstances())
+	go s.databases.AgentConnected(sess.ctx, id.NodeID, hello.GetDatabases())
 
 	for {
 		select {
@@ -304,6 +308,18 @@ func (s *Server) handleMessage(ctx context.Context, id nodes.Identity, sess *ses
 		}
 	case *agentv1.ConnectRequest_AppLog:
 		if err := s.runtime.AppLog(ctx, id.NodeID, msg.AppLog); err != nil {
+			return s.toStatus(ctx, err)
+		}
+	case *agentv1.ConnectRequest_DatabaseStatus:
+		if err := s.databases.DatabaseStatus(ctx, id.NodeID, msg.DatabaseStatus); err != nil {
+			return s.toStatus(ctx, err)
+		}
+	case *agentv1.ConnectRequest_DatabaseBackupFinished:
+		if err := s.databases.DatabaseBackupFinished(ctx, id.NodeID, msg.DatabaseBackupFinished); err != nil {
+			return s.toStatus(ctx, err)
+		}
+	case *agentv1.ConnectRequest_DatabaseDumpFinished:
+		if err := s.databases.DatabaseDumpFinished(ctx, id.NodeID, msg.DatabaseDumpFinished); err != nil {
 			return s.toStatus(ctx, err)
 		}
 	default:

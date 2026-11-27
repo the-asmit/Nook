@@ -71,31 +71,45 @@ type RuntimeEvents interface {
 	KnownInstances(ctx context.Context, nodeID uuid.UUID) ([]*agentv1.KnownInstance, error)
 }
 
+// DatabaseEvents receives what agents report about the app database
+// server (appdb.Controller).
+type DatabaseEvents interface {
+	DatabaseStatus(ctx context.Context, nodeID uuid.UUID, m *agentv1.DatabaseStatus) error
+	DatabaseBackupFinished(ctx context.Context, nodeID uuid.UUID, m *agentv1.DatabaseBackupFinished) error
+	DatabaseDumpFinished(ctx context.Context, nodeID uuid.UUID, m *agentv1.DatabaseDumpFinished) error
+	// AgentConnected reconciles the node's database server containers.
+	AgentConnected(ctx context.Context, nodeID uuid.UUID, reports []*agentv1.DatabaseReport)
+	// CurrentEndpoint is the server app containers may reach (nil: none).
+	CurrentEndpoint(ctx context.Context) *agentv1.DatabaseEndpoint
+}
+
 // Deps are the collaborators of the gRPC server.
 type Deps struct {
-	Registry *nodes.Registry
-	Builds   BuildEvents
-	Runtime  RuntimeEvents
-	Hub      *Hub
-	CA       *pki.CA
-	Limiter  *ratelimit.Limiter
-	Metrics  prometheus.Registerer
-	Logger   *slog.Logger
+	Registry  *nodes.Registry
+	Builds    BuildEvents
+	Runtime   RuntimeEvents
+	Databases DatabaseEvents
+	Hub       *Hub
+	CA        *pki.CA
+	Limiter   *ratelimit.Limiter
+	Metrics   prometheus.Registerer
+	Logger    *slog.Logger
 }
 
 // Server is the agent-facing gRPC server.
 type Server struct {
 	agentv1.UnimplementedNodeServiceServer
-	registry *nodes.Registry
-	builds   BuildEvents
-	runtime  RuntimeEvents
-	hub      *Hub
-	ca       *pki.CA
-	limiter  *ratelimit.Limiter
-	logger   *slog.Logger
-	grpc     *grpc.Server
-	listener net.Listener
-	health   *health.Server
+	registry  *nodes.Registry
+	builds    BuildEvents
+	runtime   RuntimeEvents
+	databases DatabaseEvents
+	hub       *Hub
+	ca        *pki.CA
+	limiter   *ratelimit.Limiter
+	logger    *slog.Logger
+	grpc      *grpc.Server
+	listener  net.Listener
+	health    *health.Server
 }
 
 // Listen binds the gRPC listener and builds the server. names are the
@@ -118,7 +132,7 @@ func Listen(ctx context.Context, addr string, names []string, d *Deps) (*Server,
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{registry: d.Registry, builds: d.Builds, runtime: d.Runtime, hub: d.Hub, ca: d.CA, limiter: d.Limiter, logger: d.Logger, health: health.NewServer()}
+	s := &Server{registry: d.Registry, builds: d.Builds, runtime: d.Runtime, databases: d.Databases, hub: d.Hub, ca: d.CA, limiter: d.Limiter, logger: d.Logger, health: health.NewServer()}
 	s.grpc = grpc.NewServer(
 		grpc.Creds(credentials.NewTLS(tlsCfg)),
 		grpc.ConnectionTimeout(handshakeTimeout),

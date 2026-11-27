@@ -110,13 +110,19 @@ ORDER BY id
 FOR UPDATE;
 
 -- name: NodeReservations :many
--- What instances holding resources reserve on each node.
+-- What instances holding resources reserve on each node, with the app
+-- database server's memory on its node (counted as no instance).
 SELECT node_id,
        sum(memory_mb)::bigint AS memory_mb,
        sum(cpu_millicores)::bigint AS cpu_millicores,
-       count(*)::integer AS instances
-FROM app_instances
-WHERE node_id IS NOT NULL AND state IN ('starting', 'healthy', 'unhealthy', 'stopping')
+       sum(instances)::integer AS instances
+FROM (
+    SELECT node_id, memory_mb, cpu_millicores, 1 AS instances FROM app_instances
+    WHERE node_id IS NOT NULL AND state IN ('starting', 'healthy', 'unhealthy', 'stopping')
+    UNION ALL
+    SELECT node_id, memory_mb, 0, 0 FROM app_db_servers
+    WHERE node_id IS NOT NULL AND state IN ('starting', 'running', 'stopping')
+) r
 GROUP BY node_id;
 
 -- name: WorkspaceReservedMemory :one
@@ -266,6 +272,14 @@ UNION
 SELECT key_version FROM env_snapshot_vars
 UNION
 SELECT key_version FROM gateway_certificates
+UNION
+SELECT password_key_version FROM app_databases
+UNION
+SELECT password_key_version FROM app_db_servers
+UNION
+-- App database backups are encrypted with a key derived from this
+-- version; it must stay as long as any server or its backups exist.
+SELECT backup_key_version FROM app_db_servers
 ORDER BY 1;
 
 -- name: ListSecretKeyChecks :many

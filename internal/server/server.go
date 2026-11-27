@@ -14,6 +14,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/the-asmit/nook/internal/agentlink"
+	"github.com/the-asmit/nook/internal/appdb"
 	"github.com/the-asmit/nook/internal/apps"
 	"github.com/the-asmit/nook/internal/builds"
 	"github.com/the-asmit/nook/internal/identity"
@@ -66,6 +67,9 @@ type Server struct {
 	appLogs    *rollout.LogStreams
 	routes     *routes.Publisher
 	visitors   *visitor.Service
+
+	// App databases (stage 8).
+	databases *appdb.Controller
 }
 
 // New connects to every dependency, applies migrations and binds the HTTP
@@ -229,6 +233,11 @@ func (s *Server) Serve(ctx context.Context) error {
 			var loops sync.WaitGroup
 			loops.Go(func() {
 				s.rollout.RunLeader(ctx, func(ctx context.Context, fn func(rollout.DB) error) error {
+					return sess.Do(ctx, func(conn *pgx.Conn) error { return fn(conn) })
+				})
+			})
+			loops.Go(func() {
+				s.databases.RunLeader(ctx, func(ctx context.Context, fn func(appdb.DB) error) error {
 					return sess.Do(ctx, func(conn *pgx.Conn) error { return fn(conn) })
 				})
 			})

@@ -104,6 +104,10 @@ func (h *V1) appDetailView(ctx context.Context, ws string, rt *apps.Runtime) App
 			v.Health = "stopped"
 		}
 	}
+	// A running app whose database server is down cannot do its work.
+	if h.Databases != nil && (v.Health == "running" || v.Health == "starting" || v.Health == "unhealthy") && h.Databases.Unavailable(ctx, rt.App.ID) {
+		v.Health = "database_unavailable"
+	}
 	return v
 }
 
@@ -250,6 +254,8 @@ type QuotaRequest struct {
 	MaxConcurrentBuilds *int32 `json:"max_concurrent_builds"`
 	// MaxMemoryMB is optional; omitted keeps the current memory quota.
 	MaxMemoryMB *int32 `json:"max_memory_mb"`
+	// MaxDatabases is optional: omitted keeps the current value.
+	MaxDatabases *int32 `json:"max_databases"`
 }
 
 func (h *V1) getQuota(c *gin.Context) {
@@ -270,7 +276,7 @@ func (h *V1) setQuota(c *gin.Context) {
 		writeError(c, h.Logger, apperr.Invalid("invalid_body", `"max_apps" and "max_concurrent_builds" are required`))
 		return
 	}
-	q, err := h.Apps.SetQuota(c.Request.Context(), actor(c), c.Param("slug"), *req.MaxApps, *req.MaxConcurrentBuilds, req.MaxMemoryMB)
+	q, err := h.Apps.SetQuota(c.Request.Context(), actor(c), c.Param("slug"), *req.MaxApps, *req.MaxConcurrentBuilds, req.MaxMemoryMB, req.MaxDatabases)
 	if err != nil {
 		writeError(c, h.Logger, err)
 		return

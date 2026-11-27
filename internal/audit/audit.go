@@ -39,6 +39,7 @@ const (
 	ActionNodeUndrain        = "node.undrain"
 	ActionNodeRemove         = "node.remove"
 	ActionNodeCertRenew      = "node.certificate_renew"
+	ActionNodeLabel          = "node.label"
 	ActionJoinTokenCreate    = "join_token.create" //nolint:gosec // G101: an action name, not a credential.
 	ActionJoinTokenRevoke    = "join_token.revoke" //nolint:gosec // G101: an action name, not a credential.
 	ActionAppCreate          = "app.create"
@@ -60,6 +61,13 @@ const (
 	ActionAccessGrant        = "access.grant"
 	ActionAccessRevoke       = "access.revoke"
 	ActionVisitorSignIn      = "visitor.sign_in"
+	// App databases. Metadata never holds a password.
+	ActionDatabaseCreate         = "database.create"
+	ActionDatabaseDelete         = "database.delete"
+	ActionDatabaseRotatePassword = "database.rotate_password"
+	ActionDatabaseDump           = "database.dump"
+	ActionDatabaseFailover       = "database.failover"
+	ActionDatabaseRemoveServer   = "database.remove_server"
 )
 
 // Target types.
@@ -75,6 +83,7 @@ const (
 	TargetJoinToken  = "join_token"
 	TargetApp        = "app"
 	TargetDeployment = "deployment"
+	TargetDBServer   = "database_server"
 )
 
 // Actor is the authenticated user performing an action, plus the request
