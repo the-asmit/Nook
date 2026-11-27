@@ -194,7 +194,27 @@ test: ## Run unit tests with the race detector
 
 .PHONY: test-integration
 test-integration: ## Run unit + integration tests (needs Docker, no internet) with the race detector
-	go test -race -shuffle=on -count=1 -tags=integration -timeout=40m ./...
+	go test $(INTEGRATION_FLAGS) -timeout=40m ./...
+
+# CI runs the integration suite as parallel jobs that together cover exactly
+# what test-integration runs: every package except internal/server, plus
+# internal/server's tests dealt round-robin (by sorted name) into SHARD=k/n,
+# so a new test always lands in some shard.
+INTEGRATION_FLAGS := -race -shuffle=on -count=1 -tags=integration
+SHARD ?= 1/1
+
+.PHONY: test-integration-packages
+test-integration-packages: ## Run unit + integration tests of every package except internal/server
+	go test $(INTEGRATION_FLAGS) -timeout=25m $$(go list ./... | grep -v '^$(MODULE)/internal/server$$')
+
+.PHONY: test-integration-server
+test-integration-server: ## Run internal/server's unit + integration tests, shard SHARD=k/n of them
+	@shard='$(SHARD)'; k=$${shard%/*}; n=$${shard#*/}; \
+	if ! [[ $$shard =~ ^[1-9][0-9]*/[1-9][0-9]*$$ ]] || (( k > n )); then echo "SHARD must be k/n with 1 <= k <= n, got '$$shard'" >&2; exit 2; fi; \
+	tests=$$(go test $(INTEGRATION_FLAGS) -list '.*' ./internal/server | grep -E '^(Test|Example|Fuzz)' | sort | awk -v k="$$k" -v n="$$n" '(NR - 1) % n == k - 1' | paste -sd'|' -); \
+	if [[ -z $$tests ]]; then echo "shard $$shard has no tests" >&2; exit 1; fi; \
+	echo "shard $$shard: $$(tr '|' '\n' <<<"$$tests" | wc -l) tests"; \
+	go test $(INTEGRATION_FLAGS) -timeout=25m -run "^($$tests)\$$" ./internal/server
 
 .PHONY: test-e2e-internet
 test-e2e-internet: ## Run the end-to-end tests that need the public internet (Docker Hub, public DNS)

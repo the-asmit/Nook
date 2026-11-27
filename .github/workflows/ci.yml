@@ -90,9 +90,27 @@ jobs:
           go-version-file: go.mod
       - run: make test
 
+  # Parallel jobs that together run exactly `make test-integration`: every
+  # package except internal/server, and internal/server's tests in shards
+  # (round-robin by name, so new tests are always included).
   integration:
+    name: integration (${{ matrix.group }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: packages
+            target: test-integration-packages
+          - group: server 1/4
+            target: test-integration-server SHARD=1/4
+          - group: server 2/4
+            target: test-integration-server SHARD=2/4
+          - group: server 3/4
+            target: test-integration-server SHARD=3/4
+          - group: server 4/4
+            target: test-integration-server SHARD=4/4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,7 +126,7 @@ jobs:
       # The runner's Docker daemon hosts the testcontainers services, the
       # builds and the apps; the tests install and remove iptables rules in
       # its network namespace through a helper container.
-      - run: make test-integration
+      - run: make ${{ matrix.target }}
 
   vuln:
     runs-on: ubuntu-24.04

@@ -72,6 +72,7 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Run the dev gateway (apps at `http://<app>--<ws>.apps.localhost:8090`) | `make run-gateway` |
 | Unit tests (race) | `make test` |
 | Unit + integration tests | `make test-integration` (needs Docker, no internet) |
+| Integration tests as CI splits them | `make test-integration-packages` / `make test-integration-server SHARD=k/n` |
 | End-to-end tests that need the internet | `make test-e2e-internet` (CI: nightly and on version tags) |
 | Lint / format | `make lint` / `make fmt` |
 | Vulnerability scan | `make vuln` |
@@ -255,7 +256,7 @@ nook/
 ├── buf.yaml / buf.gen.yaml    # buf module (proto/), lint + breaking rules, Go code generation (make proto)
 ├── .goreleaser.yaml           # builds the nook CLI for linux/darwin/windows × amd64/arm64
 ├── .github/
-│   ├── workflows/ci.yml       # lint, sqlc/proto/OpenAPI checks, buf lint + breaking, race tests, integration tests, govulncheck, CLI + image builds
+│   ├── workflows/ci.yml       # lint, sqlc/proto/OpenAPI checks, buf lint + breaking, race tests, integration tests (a parallel matrix), govulncheck, CLI + image builds
 │   └── dependabot.yml         # keeps pinned Go modules, actions and images current
 ├── api/
 │   ├── openapi.yaml           # OpenAPI 3.1 contract for every HTTP endpoint (tested against the router)
@@ -300,7 +301,7 @@ nook/
 │   ├── secrets/               # AES-256-GCM keyring (versioned master key), key checks, rotation
 │   ├── cli/                   # Cobra commands, API client, config file (0600) for the nook CLI
 │   ├── version/               # build info set via ldflags
-│   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex, MinIO, registry (integration build tag only)
+│   ├── testinfra/             # testcontainers helpers: Postgres, Redis, Dex, MinIO, registry, routing between test networks on native engines, plain logs (integration build tag only)
 │   ├── scheduler/             # best-fit placement on reserved memory/CPU, serialized by node row locks; LRU eviction of idle apps on one node
 │   ├── agent/                 # worker agent: state dir, join, mTLS stream, heartbeats, Docker client, renewal, local health,
 │   │                          #   builds in locked-down rootless BuildKit containers (custom seccomp, userns check),
