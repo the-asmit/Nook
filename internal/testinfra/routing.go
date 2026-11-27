@@ -69,14 +69,8 @@ func AllowRouting(ctx context.Context, networks ...string) (func(), error) {
 		bridges = append(bridges, br)
 	}
 	run := func(ctx context.Context, mode string) error {
-		if _, err := d.ImageInspect(ctx, IPTablesImage); err != nil {
-			pull, err := d.ImagePull(ctx, IPTablesImage, client.ImagePullOptions{})
-			if err != nil {
-				return fmt.Errorf("pull %s: %w", IPTablesImage, err)
-			}
-			if err := pull.Wait(ctx); err != nil {
-				return fmt.Errorf("pull %s: %w", IPTablesImage, err)
-			}
+		if err := EnsureImage(ctx, IPTablesImage); err != nil {
+			return err
 		}
 		created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
 			Config: &container.Config{

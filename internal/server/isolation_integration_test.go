@@ -159,7 +159,7 @@ func TestAppContainersAreLockedDown(t *testing.T) {
 const (
 	metadataStandIn = "169.254.169.254"
 	publicStandIn   = "198.51.100.10" // TEST-NET-2: not a private range
-	standInImage    = "busybox:1.37@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
+	standInImage    = testinfra.BusyboxImage
 )
 
 // startStandIn runs an HTTP server at ip in a reachable network.
@@ -185,15 +185,8 @@ func startStandIn(t *testing.T, name, subnet, ip string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(unroute)
-	// Pinned by digest: a local copy is the same image.
-	if _, inspectErr := d.ImageInspect(ctx, standInImage); inspectErr != nil {
-		pull, pullErr := d.ImagePull(ctx, standInImage, client.ImagePullOptions{})
-		if pullErr != nil {
-			t.Fatal(pullErr)
-		}
-		if err = pull.Wait(ctx); err != nil {
-			t.Fatal(err)
-		}
+	if err = testinfra.EnsureImage(ctx, standInImage); err != nil {
+		t.Fatal(err)
 	}
 	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name:       name,
@@ -229,6 +222,9 @@ func runProbe(t *testing.T, nw string, cmd []string) bool {
 	t.Helper()
 	ctx := context.Background()
 	d := dockerClient(t)
+	if err := testinfra.EnsureImage(ctx, standInImage); err != nil {
+		t.Fatal(err)
+	}
 	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config:     &container.Config{Image: standInImage, Cmd: cmd},
 		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(nw)},

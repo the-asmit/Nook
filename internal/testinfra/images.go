@@ -50,25 +50,42 @@ func BusyboxLayer(ctx context.Context) ([]byte, error) {
 	return layer, nil
 }
 
+// EnsureImage pulls ref unless the engine has it. References are pinned by
+// digest, so a local copy is the same image; tests that use an image call
+// this themselves instead of relying on an earlier test (they run
+// shuffled).
+func EnsureImage(ctx context.Context, ref string) error {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	d, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+	defer func() { _ = d.Close() }()
+	if _, err = d.ImageInspect(ctx, ref); err == nil {
+		return nil
+	}
+	pull, err := d.ImagePull(ctx, ref, client.ImagePullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull %s: %w", ref, err)
+	}
+	if err := pull.Wait(ctx); err != nil {
+		return fmt.Errorf("pull %s: %w", ref, err)
+	}
+	return nil
+}
+
 func exportBusybox(ctx context.Context) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	if err := EnsureImage(ctx, BusyboxImage); err != nil {
+		return nil, err
+	}
 	d, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("docker client: %w", err)
 	}
 	defer func() { _ = d.Close() }()
-	// The reference is pinned by digest, so a local copy is the same
-	// image; pull only when there is none.
-	if _, inspectErr := d.ImageInspect(ctx, BusyboxImage); inspectErr != nil {
-		pull, pullErr := d.ImagePull(ctx, BusyboxImage, client.ImagePullOptions{})
-		if pullErr != nil {
-			return nil, fmt.Errorf("pull %s: %w", BusyboxImage, pullErr)
-		}
-		if pullErr = pull.Wait(ctx); pullErr != nil {
-			return nil, fmt.Errorf("pull %s: %w", BusyboxImage, pullErr)
-		}
-	}
 	created, err := d.ContainerCreate(ctx, client.ContainerCreateOptions{Config: &container.Config{Image: BusyboxImage, Cmd: []string{"true"}}})
 	if err != nil {
 		return nil, fmt.Errorf("create busybox container: %w", err)

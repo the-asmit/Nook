@@ -21,6 +21,7 @@ import (
 	"github.com/the-asmit/nook/internal/scheduler"
 	"github.com/the-asmit/nook/internal/secrets"
 	"github.com/the-asmit/nook/internal/store"
+	"github.com/the-asmit/nook/internal/testinfra"
 )
 
 // TestReconciliationAfterAgentRestart: while the agent is down, the app's
@@ -45,6 +46,9 @@ func TestReconciliationAfterAgentRestart(t *testing.T) {
 		t.Fatalf("app containers: %v", err)
 	}
 	if _, err = d.ContainerRemove(ctx, list.Items[0].ID, client.ContainerRemoveOptions{Force: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err = testinfra.EnsureImage(ctx, standInImage); err != nil {
 		t.Fatal(err)
 	}
 	strayID := uuid.NewV7().String()
