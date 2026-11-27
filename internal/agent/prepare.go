@@ -22,11 +22,20 @@ import (
 //go:embed seccomp_build.json
 var buildSeccompProfile string
 
-// buildSecurityOpts are the build container's (and its probe's) security
-// options: the build seccomp profile, and no AppArmor profile (Docker's
-// default denies the mounts rootless BuildKit makes in its user namespace).
-func buildSecurityOpts() []string {
-	return []string{"seccomp=" + buildSeccompProfile, "apparmor=unconfined"}
+// confineBuild applies the security settings a build container and its
+// probe share: the build seccomp profile; no AppArmor profile (Docker's
+// default denies the mounts rootless BuildKit makes in its user
+// namespace); and no masked or read-only /proc and /sys paths (what the
+// CLI calls systempaths=unconfined), without which the kernel refuses the
+// fresh /proc every RUN step's sandbox mounts: procfs may only be mounted
+// where one is fully visible. Without capabilities, in an unprivileged
+// user namespace, the unmasked paths stay unwritable and unreadable where
+// they matter (sysrq-trigger, kcore).
+func confineBuild(hc *container.HostConfig) {
+	hc.SecurityOpt = []string{"seccomp=" + buildSeccompProfile, "apparmor=unconfined"}
+	// Empty, not nil: nil means Docker's default set.
+	hc.MaskedPaths = []string{}
+	hc.ReadonlyPaths = []string{}
 }
 
 // notReadyError means the node cannot run containers yet or at all.
@@ -240,11 +249,17 @@ func (d *docker) ensureBuildNetwork(ctx context.Context, name string) error {
 }
 
 // probeScript prints the AppArmor user-namespace restriction (Ubuntu
-// 23.10+) and tries what rootless BuildKit does first: create a user
-// namespace with rootlesskit.
+// 23.10+) and tries what rootless BuildKit does: create a user namespace
+// with rootlesskit, then, inside it, what runc does for every RUN step
+// (a PID namespace with a fresh /proc).
 const probeScript = `r=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo absent)
 echo "apparmor_restrict_unprivileged_userns=$r"
-rootlesskit true`
+rootlesskit true || exit 1
+echo "` + probeUserNSOK + `"
+rootlesskit unshare -p -f --mount-proc true`
+
+// probeUserNSOK is the probe's output once the user namespace works.
+const probeUserNSOK = "user namespace: ok"
 
 // userNSFix is the fix for the Ubuntu AppArmor restriction.
 const userNSFix = "the kernel restricts unprivileged user namespaces (kernel.apparmor_restrict_unprivileged_userns=1, Ubuntu 23.10 and later). " +
@@ -261,18 +276,19 @@ func (a *Agent) probeBuilds(ctx context.Context) string {
 		return "the BuildKit image could not be pulled; check the node's Docker engine and network"
 	}
 	pids := int64(64)
+	hc := &container.HostConfig{
+		NetworkMode: "none",
+		CapDrop:     []string{"ALL"},
+		CapAdd:      []string{"SETUID", "SETGID"},
+		Resources:   container.Resources{Memory: 256 << 20, PidsLimit: &pids},
+	}
+	confineBuild(hc)
 	code, out, err := a.docker.runOnce(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image: a.cfg.BuildImage, User: buildUser, Entrypoint: []string{"sh", "-c", probeScript},
 			Labels: map[string]string{buildNodeLabel: a.NodeID(), "nook.build.probe": "true"},
 		},
-		HostConfig: &container.HostConfig{
-			NetworkMode: "none",
-			CapDrop:     []string{"ALL"},
-			CapAdd:      []string{"SETUID", "SETGID"},
-			SecurityOpt: buildSecurityOpts(),
-			Resources:   container.Resources{Memory: 256 << 20, PidsLimit: &pids},
-		},
+		HostConfig: hc,
 	})
 	if err != nil {
 		a.logger.WarnContext(ctx, "could not run the build check", "error", err.Error())
@@ -286,6 +302,10 @@ func (a *Agent) probeBuilds(ctx context.Context) string {
 func probeVerdict(code int64, out string) string {
 	if code == 0 {
 		return ""
+	}
+	if strings.Contains(out, probeUserNSOK) {
+		return "rootless BuildKit cannot mount /proc for RUN steps here (" + lastLine(out) +
+			"); the container runtime or the kernel forbids mounting procfs in a user namespace"
 	}
 	if strings.Contains(out, "apparmor_restrict_unprivileged_userns=1") {
 		return userNSFix

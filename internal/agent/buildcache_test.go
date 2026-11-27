@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -46,5 +47,23 @@ func TestBuildCacheFlags(t *testing.T) {
 	spec := b.containerSpec(validBuildCommand(), proxyConfig{})
 	if !strings.Contains(strings.Join(spec.Config.Cmd, " "), "--export-cache") {
 		t.Fatalf("the build container does not export the cache: %v", spec.Config.Cmd)
+	}
+}
+
+func TestBuildContainerConfinement(t *testing.T) {
+	b := &builder{cfg: &Config{BuildImage: "img", BuildNetwork: "nook-builds"}, nodeID: func() string { return "n" }}
+	hc := b.containerSpec(validBuildCommand(), proxyConfig{}).HostConfig
+	if hc.Privileged || !slices.Equal(hc.CapDrop, []string{"ALL"}) || !slices.Equal(hc.CapAdd, []string{"SETUID", "SETGID"}) {
+		t.Fatalf("privileges: privileged=%v drop=%v add=%v", hc.Privileged, hc.CapDrop, hc.CapAdd)
+	}
+	if len(hc.SecurityOpt) != 2 || hc.SecurityOpt[0] != "seccomp="+buildSeccompProfile || hc.SecurityOpt[1] != "apparmor=unconfined" {
+		t.Fatalf("security options: %.80q", hc.SecurityOpt)
+	}
+	// Empty lists, not nil: nil would give Docker's default masks.
+	if hc.MaskedPaths == nil || len(hc.MaskedPaths) != 0 || hc.ReadonlyPaths == nil || len(hc.ReadonlyPaths) != 0 {
+		t.Fatalf("masked %v, read-only %v", hc.MaskedPaths, hc.ReadonlyPaths)
+	}
+	if len(hc.Binds) != 0 || len(hc.Mounts) != 0 {
+		t.Fatalf("host mounts: %v %v", hc.Binds, hc.Mounts)
 	}
 }

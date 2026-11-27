@@ -229,9 +229,8 @@ func cacheArgs(cmd *agentv1.BuildCommand) []string {
 // map that namespace, no host mounts, no Docker socket and hard limits.
 // Its seccomp profile is Docker's default plus the system calls that
 // creating the user namespace needs, and it runs without Docker's AppArmor
-// profile, whose "deny mount" stops rootlesskit from setting up the
-// namespace's mounts on AppArmor hosts such as Ubuntu (see the
-// build-isolation ADR; ignored where AppArmor is absent).
+// profile and path masks, which stop rootless BuildKit's mounts (see
+// confineBuild and the build-isolation ADR).
 func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) client.ContainerCreateOptions {
 	// Validated at startup.
 	pairs, _ := parseBuildHosts(b.cfg.BuildHosts)
@@ -240,6 +239,16 @@ func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) cl
 	memory := min(max(cmd.GetMemoryBytes(), minBuildMemory), maxBuildMemory)
 	millicores := min(max(cmd.GetCpuMillicores(), 100), maxBuildMillicore)
 	pids := int64(buildPIDsLimit)
+	hc := &container.HostConfig{
+		NetworkMode: container.NetworkMode(b.cfg.BuildNetwork),
+		ExtraHosts:  hosts.extraHosts(),
+		CapDrop:     []string{"ALL"},
+		CapAdd:      []string{"SETUID", "SETGID"},
+		Resources: container.Resources{
+			Memory: memory, MemorySwap: memory, NanoCPUs: millicores * 1_000_000, PidsLimit: &pids,
+		},
+	}
+	confineBuild(hc)
 	return client.ContainerCreateOptions{
 		Name: "nook-build-" + cmd.GetBuildId(),
 		Config: &container.Config{
@@ -260,16 +269,7 @@ func (b *builder) containerSpec(cmd *agentv1.BuildCommand, proxy proxyConfig) cl
 			}, proxy.env(registryHost(cmd.GetRegistry()))...),
 			Labels: map[string]string{buildLabel: cmd.GetBuildId(), buildNodeLabel: b.nodeID()},
 		},
-		HostConfig: &container.HostConfig{
-			NetworkMode: container.NetworkMode(b.cfg.BuildNetwork),
-			ExtraHosts:  hosts.extraHosts(),
-			CapDrop:     []string{"ALL"},
-			CapAdd:      []string{"SETUID", "SETGID"},
-			SecurityOpt: buildSecurityOpts(),
-			Resources: container.Resources{
-				Memory: memory, MemorySwap: memory, NanoCPUs: millicores * 1_000_000, PidsLimit: &pids,
-			},
-		},
+		HostConfig: hc,
 	}
 }
 

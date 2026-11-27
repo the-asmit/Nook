@@ -172,6 +172,10 @@ func TestProbeVerdict(t *testing.T) {
 	if !strings.Contains(got, "fork/exec /proc/self/exe: operation not permitted") || !strings.Contains(got, "max_user_namespaces") {
 		t.Fatalf("other failure: %q", got)
 	}
+	got = probeVerdict(1, "apparmor_restrict_unprivileged_userns=0\nuser namespace: ok\nunshare: mount('proc','/proc'): Operation not permitted")
+	if !strings.Contains(got, "cannot mount /proc for RUN steps") || !strings.Contains(got, "Operation not permitted") {
+		t.Fatalf("proc mount failure: %q", got)
+	}
 }
 
 func TestAppNetworkNames(t *testing.T) {
