@@ -121,6 +121,16 @@ func (c *Controller) Failover(ctx context.Context, actor workspace.Actor, toNode
 		if cur.State != store.AppDbServerStateRunning {
 			return apperr.Conflict("database_server_busy", "the app database server is %s; wait until it runs", cur.State)
 		}
+		// The target restores from a base backup, and stopping the server
+		// ends a backup that is still running: moving before the first one
+		// has finished would leave nothing to restore.
+		hasBackup, err := q.AnyDBServerBackup(ctx)
+		if err != nil {
+			return fmt.Errorf("check for a base backup: %w", err)
+		}
+		if !hasBackup {
+			return apperr.Conflict("database_no_backup", "the app database server has no base backup yet to restore from; wait until `nook admin db status` shows one")
+		}
 		node, err := q.GetLiveNodeByName(ctx, toNode)
 		if store.IsNotFound(err) {
 			return apperr.NotFound("node not found")

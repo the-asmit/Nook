@@ -663,6 +663,8 @@ paths:
         Shuts the server down cleanly, archives the WAL not yet archived,
         restores it on the target node from the backups (losing nothing)
         and re-points the apps. Apps cannot reach their databases meanwhile.
+        Refused (409, `database_no_backup`) until the first base backup
+        has finished.
       requestBody:
         required: true
         content:

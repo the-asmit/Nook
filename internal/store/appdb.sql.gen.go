@@ -12,6 +12,19 @@ import (
 	"uuid"
 )
 
+const anyDBServerBackup = `-- name: AnyDBServerBackup :one
+SELECT EXISTS (SELECT 1 FROM app_db_servers WHERE last_backup_at IS NOT NULL)::boolean
+`
+
+// Whether a base backup exists to restore from: every generation backs up
+// to the same storage prefix, so any generation's backup will do.
+func (q *Queries) AnyDBServerBackup(ctx context.Context) (bool, error) {
+	row := q.db.QueryRow(ctx, anyDBServerBackup)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const anyDBServerRan = `-- name: AnyDBServerRan :one
 SELECT EXISTS (SELECT 1 FROM app_db_servers WHERE running_at IS NOT NULL)
 `

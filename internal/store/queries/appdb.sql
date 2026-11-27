@@ -113,6 +113,11 @@ UPDATE app_db_servers SET backup_started_at = now(), updated_at = now()
 WHERE id = @id AND state = 'running' AND (backup_started_at IS NULL OR backup_started_at < @stale_before)
 RETURNING *;
 
+-- name: AnyDBServerBackup :one
+-- Whether a base backup exists to restore from: every generation backs up
+-- to the same storage prefix, so any generation's backup will do.
+SELECT EXISTS (SELECT 1 FROM app_db_servers WHERE last_backup_at IS NOT NULL)::boolean;
+
 -- name: DBServerBackupFinished :exec
 UPDATE app_db_servers
 SET backup_started_at = NULL,

@@ -127,11 +127,32 @@ func TestAppDatabaseFailoverAfterNodeDeath(t *testing.T) {
 	eventually(t, time.Minute, "the old volume to be removed", func() bool { return !volumeExists(t, "nook-db-"+gen1.ID.String()) })
 }
 
-// TestPlannedDatabaseFailoverLosesNothing: rows committed a moment before
-// a planned move (not archived yet by archive_timeout) are all there
-// after it, thanks to the clean shutdown and final archive.
+// TestPlannedDatabaseFailoverLosesNothing: a planned move waits for a base
+// backup to restore from; rows committed a moment before it (not archived
+// yet by archive_timeout) are all there after it, thanks to the clean
+// shutdown and final archive.
 func TestPlannedDatabaseFailoverLosesNothing(t *testing.T) {
 	d, _ := dbFailoverEnv(t)
+	// Stopping the server ends a running backup, so without one the target
+	// would have nothing to restore. Clearing the finished first backup
+	// shows the refusal without racing it.
+	var lastBackup *time.Time
+	eventually(t, time.Minute, "the first base backup", func() bool {
+		return d.db.QueryRow(t.Context(), "SELECT last_backup_at FROM app_db_servers WHERE generation = 1").Scan(&lastBackup) == nil && lastBackup != nil
+	})
+	if _, err := d.db.Exec(t.Context(), "UPDATE app_db_servers SET last_backup_at = NULL WHERE generation = 1"); err != nil {
+		t.Fatal(err)
+	}
+	refused := d.as(d.alice, http.MethodPost, "/api/v1/admin/database/failover", map[string]string{"to": "node-b"})
+	if refused.status != http.StatusConflict || refused.errorCode(t) != "database_no_backup" {
+		t.Fatalf("failover without a backup: %d %s", refused.status, refused.body)
+	}
+	if s := d.servers(); len(s) != 1 || s[0].State != "running" {
+		t.Fatalf("a refused failover changed the server: %+v", s)
+	}
+	if _, err := d.db.Exec(t.Context(), "UPDATE app_db_servers SET last_backup_at = $1 WHERE generation = 1", lastBackup); err != nil {
+		t.Fatal(err)
+	}
 	const n = 50
 	if out := d.appQuery(d.ws, "notes", "INSERT INTO notes (body) SELECT 'row ' || g FROM generate_series(1, "+strconv.Itoa(n)+") g RETURNING 'x'"); strings.HasPrefix(out, "error") && !strings.Contains(out, "no rows") {
 		t.Fatalf("insert: %s", out)
