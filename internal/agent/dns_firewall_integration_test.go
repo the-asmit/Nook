@@ -53,6 +53,7 @@ func TestDNSReachesOnlyTheResolvers(t *testing.T) {
 	suffix := randomHex(t, 3)
 	lan := "nook-test-linklocal-" + suffix
 	createNetwork(t, d, lan, linkLocalSubnet, map[string]string{"com.docker.network.bridge.gateway_mode_ipv4": "nat-unprotected"})
+	routed(t, lan)
 	for _, ip := range []string{resolverIP, otherDNSIP} {
 		startDNSStandIn(t, d, lan, ip)
 	}

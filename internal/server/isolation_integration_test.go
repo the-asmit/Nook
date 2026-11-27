@@ -177,11 +177,19 @@ func startStandIn(t *testing.T, name, subnet, ip string) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// A native engine drops traffic between bridge networks; the stand-in
+	// is another host on a routed network (an agent's firewall, inserted
+	// above these rules, still filters it).
+	unroute, err := testinfra.AllowRouting(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(unroute)
 	// Pinned by digest: a local copy is the same image.
 	if _, inspectErr := d.ImageInspect(ctx, standInImage); inspectErr != nil {
-		pull, err := d.ImagePull(ctx, standInImage, client.ImagePullOptions{})
-		if err != nil {
-			t.Fatal(err)
+		pull, pullErr := d.ImagePull(ctx, standInImage, client.ImagePullOptions{})
+		if pullErr != nil {
+			t.Fatal(pullErr)
 		}
 		if err = pull.Wait(ctx); err != nil {
 			t.Fatal(err)
@@ -310,7 +318,7 @@ func TestBuildEgressIsFiltered(t *testing.T) {
 	startStandIn(t, "nook-test-public", "198.51.100.0/24", publicStandIn)
 	b := startBuildEnv(t, nil)
 	nodePort := postgresPort(t)
-	if !fetchFrom(t, "bridge", "http://"+metadataStandIn+"/") || !tcpFrom(t, "bridge", "172.17.0.1", nodePort) {
+	if !fetchFrom(t, "bridge", "http://"+metadataStandIn+"/") || !tcpFrom(t, "bridge", networkGateway(t, "bridge"), nodePort) {
 		t.Fatal("the stand-ins are not reachable from an ordinary container; the test proves nothing")
 	}
 	gateway := networkGateway(t, shared.buildNetwork)

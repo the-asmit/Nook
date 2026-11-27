@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/network"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -33,16 +34,50 @@ const (
 // Network is a Docker network for containers that talk to each other
 // (registry → MinIO, build containers → registry).
 type Network struct {
-	*testcontainers.DockerNetwork
+	// Name is the network's name; containers join it by name.
+	Name string
+	id   string
 }
 
-// NewNetwork creates a network; callers remove it.
+// NewNetwork creates a network; callers remove it. Containers on other
+// networks (builds, the app database server) reach its containers by
+// address, as across a routed network: a native engine allows that only
+// with gateway mode nat-unprotected (and AllowRouting), even for
+// containers that publish ports. It is created with the Docker client
+// because testcontainers drops driver options.
 func NewNetwork(ctx context.Context) (*Network, error) {
-	nw, err := network.New(ctx)
+	d, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
+	}
+	defer func() { _ = d.Close() }()
+	ctx, cancel := context.WithTimeout(ctx, startTimeout)
+	defer cancel()
+	name := "nook-test-" + strings.ToLower(rand.Text())[:12]
+	res, err := d.NetworkCreate(ctx, name, client.NetworkCreateOptions{
+		Driver:  "bridge",
+		Options: map[string]string{"com.docker.network.bridge.gateway_mode_ipv4": "nat-unprotected"},
+		Labels:  testcontainers.GenericLabels(),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create network: %w", err)
 	}
-	return &Network{DockerNetwork: nw}, nil
+	return &Network{Name: name, id: res.ID}, nil
+}
+
+// Remove deletes the network.
+func (n *Network) Remove(ctx context.Context) error {
+	d, err := client.New(client.FromEnv)
+	if err != nil {
+		return fmt.Errorf("docker client: %w", err)
+	}
+	defer func() { _ = d.Close() }()
+	ctx, cancel := context.WithTimeout(ctx, startTimeout)
+	defer cancel()
+	if _, err := d.NetworkRemove(ctx, n.id, client.NetworkRemoveOptions{}); err != nil {
+		return fmt.Errorf("remove network %s: %w", n.Name, err)
+	}
+	return nil
 }
 
 // MinIO is a running S3-compatible object store.
@@ -63,7 +98,7 @@ func StartMinIO(ctx context.Context, nw *Network) (*MinIO, error) {
 		testcontainers.WithCmd("server", "/data"),
 		testcontainers.WithEnv(map[string]string{"MINIO_ROOT_USER": m.AccessKey, "MINIO_ROOT_PASSWORD": m.SecretKey}),
 		testcontainers.WithExposedPorts("9000/tcp"),
-		network.WithNetwork([]string{MinIOAlias}, nw.DockerNetwork),
+		network.WithNetworkName([]string{MinIOAlias}, nw.Name),
 		testcontainers.WithWaitStrategy(wait.ForHTTP("/minio/health/ready").WithPort("9000/tcp")),
 	)
 	if err != nil {
@@ -139,7 +174,7 @@ func StartRegistry(ctx context.Context, nw *Network, m *MinIO, o RegistryOptions
 		}),
 		testcontainers.WithConfigModifier(func(c *container.Config) { c.User = "65532:65532" }),
 		testcontainers.WithExposedPorts("5000/tcp"),
-		network.WithNetwork([]string{RegistryAlias}, nw.DockerNetwork),
+		network.WithNetworkName([]string{RegistryAlias}, nw.Name),
 		testcontainers.WithWaitStrategy(wait.ForLog("listening on")),
 	)
 	if err != nil {
@@ -185,6 +220,13 @@ func StartStorage(ctx context.Context, certDir string, buckets ...string) (*Stor
 		return nil, nil, err
 	}
 	s := &StorageT{Network: nw}
+	// Builds and the app database server reach storage by its address on
+	// this network, from networks of their own.
+	unroute, err := AllowRouting(ctx, nw.Name)
+	if err != nil {
+		_ = nw.Remove(context.WithoutCancel(ctx))
+		return nil, nil, err
+	}
 	cleanup := func() {
 		if s.Registry != nil {
 			_ = testcontainers.TerminateContainer(s.Registry)
@@ -192,6 +234,7 @@ func StartStorage(ctx context.Context, certDir string, buckets ...string) (*Stor
 		if s.MinIO != nil {
 			_ = testcontainers.TerminateContainer(s.MinIO)
 		}
+		unroute()
 		_ = nw.Remove(context.WithoutCancel(ctx))
 	}
 	if s.MinIO, err = StartMinIO(ctx, nw); err != nil {

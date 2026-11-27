@@ -30,15 +30,16 @@ const (
 	outsiderIP = "203.0.113.20"
 )
 
-// TestAppPortsAcceptOnlyTheGateways runs an app container the way the
-// agent does (its own bridge, the port published on the node's address)
-// and connects to the app's port from two hosts on another network that
-// routes to the node: without the firewall both get in; with
-// NOOK_AGENT_GATEWAY_ADDRS set only the gateway does. Docker lets routed
-// traffic reach a published container port directly (even one published
-// on 127.0.0.1) and DNATs traffic for the node's address to the same
-// place, so both paths meet this FORWARD rule; the routed one is used
-// because Docker Desktop publishes ports outside its VM's iptables.
+// TestAppPortsAcceptOnlyTheGateways runs an app container on a bridge
+// like the agent's and connects to the app's port from two hosts on
+// another network that routes to the node: without the firewall both get
+// in; with NOOK_AGENT_GATEWAY_ADDRS set only the gateway does. In
+// production the gateway connects to the port published on the node's
+// address, which Docker DNATs to the container: the same FORWARD rule.
+// The test connects to the container's address directly (Docker Desktop
+// publishes ports outside its VM's iptables, and a native engine drops
+// routed traffic to ports published on 127.0.0.1), so the app network
+// allows direct routing (nat-unprotected) and nothing is published.
 func TestAppPortsAcceptOnlyTheGateways(t *testing.T) {
 	ctx := context.Background()
 	d, err := newDocker()
@@ -54,18 +55,19 @@ func TestAppPortsAcceptOnlyTheGateways(t *testing.T) {
 	appNet := "nook-test-app-" + suffix
 	bridgePrefix := "nkt" + suffix
 	createNetwork(t, d, lan, lanSubnet, nil)
+	routed(t, lan)
 	createNetwork(t, d, appNet, "", map[string]string{
 		"com.docker.network.bridge.name": bridgePrefix + "0", "com.docker.network.bridge.enable_icc": "false",
+		"com.docker.network.bridge.gateway_mode_ipv4": "nat-unprotected",
 	})
 
 	created, err := d.client.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
-			Image: testinfra.BusyboxImage, User: "65534:65534", ExposedPorts: network.PortSet{network.MustParsePort("8080/tcp"): {}},
+			Image: testinfra.BusyboxImage, User: "65534:65534",
 			Cmd: []string{"sh", "-c", "mkdir -p /tmp/www && echo app > /tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www"},
 		},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(appNet), CapDrop: []string{"ALL"},
-			PortBindings: network.PortMap{network.MustParsePort("8080/tcp"): {{HostIP: netip.MustParseAddr("127.0.0.1")}}},
 		},
 	})
 	if err != nil {
@@ -151,6 +153,18 @@ func createNetwork(t *testing.T, d *docker, name, subnet string, options map[str
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = d.client.NetworkRemove(context.Background(), name, client.NetworkRemoveOptions{}) })
+}
+
+// routed lets traffic to and from a stand-in network pass Docker's
+// isolation between networks (a native engine drops it), as on a real
+// routed network; the firewall under test still filters it first.
+func routed(t *testing.T, nw string) {
+	t.Helper()
+	undo, err := testinfra.AllowRouting(context.Background(), nw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(undo)
 }
 
 // probeFrom fetches target from a throwaway container at ip on nw.
