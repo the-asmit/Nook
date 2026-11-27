@@ -140,9 +140,14 @@ func TestAgentLostMidBuildRetriesElsewhere(t *testing.T) {
 // that owns a deployment mid-build. Another instance reclaims the job
 // from the stream and sees the build through: exactly one build.
 func TestRedeliveryAfterOwnerDiesBuildsOnce(t *testing.T) {
-	b := startQueueOnly(t, nil)
+	// Exactly one build is the point. With the tests' 10 s accept timeout a
+	// build container slow to start on a busy machine counts as lost and is
+	// built again (lost builds are tested elsewhere), so every instance
+	// here waits longer for the agent to start it.
+	const accept = "2m"
+	b := startQueueOnly(t, map[string]string{"NOOK_BUILD_ACCEPT_TIMEOUT": accept})
 	a := b.primary
-	other := b.startInstance(map[string]string{"NOOK_HTTP_ADDR": "127.0.0.1:0"})
+	other := b.startInstance(map[string]string{"NOOK_HTTP_ADDR": "127.0.0.1:0", "NOOK_BUILD_ACCEPT_TIMEOUT": accept})
 	// The agent connects to the instance that will survive, so that the
 	// build's result reaches a live instance whichever one owned the job.
 	b.agent = b.joinBuilder("builder-1", other.grpc)
@@ -164,7 +169,7 @@ func TestRedeliveryAfterOwnerDiesBuildsOnce(t *testing.T) {
 		// then needs a live instance on its address.
 		other.stop()
 		b.base = a.base
-		b.startInstance(map[string]string{"NOOK_HTTP_ADDR": "127.0.0.1:0", "NOOK_GRPC_ADDR": other.grpc})
+		b.startInstance(map[string]string{"NOOK_HTTP_ADDR": "127.0.0.1:0", "NOOK_GRPC_ADDR": other.grpc, "NOOK_BUILD_ACCEPT_TIMEOUT": accept})
 	} else {
 		a.stop()
 		b.base = other.base

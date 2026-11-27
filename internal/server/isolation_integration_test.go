@@ -434,7 +434,11 @@ func tcpFrom(t *testing.T, nw, host, port string) bool {
 // TestRestartCountSurvivesAgentRestarts: an instance's restart count is
 // restored when a restarted agent adopts its container.
 func TestRestartCountSurvivesAgentRestarts(t *testing.T) {
-	r := startRuntimeEnvWith(t, nil, map[string]string{"NOOK_AGENT_RESTART_BACKOFF_MIN": "200ms", "NOOK_AGENT_RESTART_BACKOFF_MAX": "1s"})
+	// A restart, not a death: with the tests' 4 s threshold a slow restart
+	// on a busy machine would fail the instance over (a new instance
+	// counts from zero).
+	r := startRuntimeEnvWith(t, map[string]string{"NOOK_NODE_DEAD_AFTER": "2m"},
+		map[string]string{"NOOK_AGENT_RESTART_BACKOFF_MIN": "200ms", "NOOK_AGENT_RESTART_BACKOFF_MAX": "1s"})
 	r.newRuntimeApp(r.alice, r.ws, "web", nil)
 	r.waitLive(r.alice, r.ws, "web", r.release(r.ws, "web"))
 	crashAndWait := func(want int32) {
