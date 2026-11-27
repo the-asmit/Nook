@@ -56,7 +56,16 @@ Nook is built in stages. So far:
    another node by themselves, and `nook node drain` moves apps without a
    failed request. Apps must be stateless: keep state in a database.
 
-The dashboard and managed databases come later.
+8. **App databases**: `nook db create <app>` gives an app its own
+   PostgreSQL database on a Nook-managed server (separate from Nook's own),
+   and the app gets `DATABASE_URL`. WAL is archived continuously to your
+   object storage with WAL-G, encrypted, with daily base backups; if the
+   server's node dies, Nook restores it on another node and re-points the
+   apps (at most `archive_timeout`, 60 s, of the latest writes can be lost;
+   a planned `nook admin db failover` loses nothing). `nook db dump`
+   exports a database as SQL.
+
+The dashboard comes later.
 
 ## Prerequisites
 
@@ -150,6 +159,18 @@ cd examples/hello-go
 ../../bin/nook env set hello-go GREETING=hi        # releases the change without a rebuild
 ../../bin/nook logs hello-go --follow
 ../../bin/nook rollback hello-go
+```
+
+A database-backed app (build the database server image once with
+`make docker-postgres`):
+
+```sh
+cd examples/notes-go
+../../bin/nook deploy
+../../bin/nook db create notes-go          # DATABASE_URL, then a redeploy
+../../bin/nook db info notes-go            # size, connections, last archived WAL, last backup
+../../bin/nook db dump notes-go -f notes.sql
+../../bin/nook admin db status             # the server, archiving, backups (instance admins)
 ```
 
 `nook init` writes a `nook.toml` for your own project (port, health check

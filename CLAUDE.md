@@ -81,7 +81,8 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
 | Lint protobuf / breaking changes | `make proto-lint` / `make proto-breaking` (against `main`) |
 | Validate the OpenAPI spec | `make openapi-lint` |
 | CLI release archives | `make release-snapshot` (into `dist/`) |
-| Multi-arch images (server, agent, gateway) | `make docker-build`, then `make docker-run` (all three against the dev stack) / `make docker-stop` |
+| Multi-arch images (server, agent, gateway, postgres) | `make docker-build`, then `make docker-run` (server, agent and gateway against the dev stack) / `make docker-stop` |
+| App database server image for this machine | `make docker-postgres` (nook-postgres:dev; integration tests build nook-postgres:it themselves) |
 | Master key for app environment variables | `go run ./cmd/nook-server secrets init --out FILE` (`make dev-up` does it) |
 | Show the agent's egress rules | `go run ./cmd/nook-agent firewall rules` |
 
@@ -212,12 +213,31 @@ All commands run inside WSL2 (Ubuntu) or Linux/macOS. `make help` lists all.
   by `app_instances` rows (fencing): never route to or trust an instance
   because its container runs. Record why an instance exists in
   `cause`/`cause_at` and why it stopped in `stop_reason`.
+- **App databases**: one server per installation, managed only by
+  `appdb` (the leader's pass decides on the lock connection; agent
+  commands and SQL on the server run afterwards). App code never shares
+  Nook's own Postgres. One database and role per app, named
+  `DatabaseName(app id)`, `CONNECT` revoked from `PUBLIC`; roles get
+  SCRAM verifiers, never plaintext passwords; passwords and the superuser
+  password are sealed with the keyring (`DatabasePasswordAAD`,
+  `DatabaseSuperuserAAD`) and never logged, audited or returned.
+  `DATABASE_URL` is set only through `apps.SetManagedEnv` (users cannot
+  change it). DDL identifiers go through `sqlIdent`/`sqlLiteral`. Backups
+  are encrypted with the key derived from the recorded master key version
+  (`backup_key_version`); keep that version in the keyring. Every server
+  state change is a compare-and-set; apps may reach only the current
+  endpoint (agent firewall), and a replaced server is stopped, never
+  reused (its volume stays until an admin removes it).
 - **Spelling**: code and prose use US English (`canceled`); the API and
   database status value is `cancelled`, as specified.
 - **Tests** never sleep to wait; they poll with a deadline or synchronize on
   channels. Integration tests in `internal/server` share one Postgres,
   Redis and Dex (`harness_integration_test.go`) and get a fresh database per
-  test; the OIDC flow is always exercised against the real Dex.
+  test; the OIDC flow is always exercised against the real Dex. App
+  database tests build `nook-postgres:it` from its Dockerfile once per run
+  (Docker caches it) and keep backups under a prefix of their own. Every
+  agent's firewall filters all app bridges of its machine, so stop a dev
+  agent and run `nook-agent firewall remove` before the integration suite.
 
 ## Repository layout
 
@@ -285,7 +305,10 @@ nook/
 │   ├── agent/                 # worker agent: state dir, join, mTLS stream, heartbeats, Docker client, renewal, local health,
 │   │                          #   builds in locked-down rootless BuildKit containers (custom seccomp, userns check),
 │   │                          #   app instances (pull by digest, hardened containers, health checks, crash backoff,
-│   │                          #   adoption), log streaming, egress firewall (iptables via a helper container)
+│   │                          #   adoption), log streaming, egress firewall (iptables via a helper container),
+│   │                          #   the app database server container (start/restore, clean stop + final archive, backups, dumps)
+│   ├── appdb/                 # app databases: the per-installation PostgreSQL server (placement, generations, failover by restore,
+│   │                          #   fencing), per-app databases and roles, WAL-G backups, monitoring, dumps (leader pass + API side)
 │   ├── activity/              # apps' last request times: gateways' batched writes to a Redis sorted set (ZADD GT), reads for sleep and eviction
 │   ├── routes/                # app host scheme (<app>--<ws>.<domain>), route records, nook:routes Pub/Sub events
 │   ├── visitor/               # visitor sign-in: auth-host sessions, single-use host-bound codes, access checks, sealed certificates
@@ -302,8 +325,11 @@ nook/
 │   ├── compose/registry/gc.sh           # registry blob GC inside a control-plane maintenance window
 │   ├── docker/nook-server.Dockerfile    # multi-stage, distroless, non-root
 │   ├── docker/nook-agent.Dockerfile     # multi-arch, distroless, non-root; Docker socket = root on the host (dedicated workers only)
-│   └── docker/nook-gateway.Dockerfile   # multi-arch, distroless, non-root; stateless
-├── examples/                  # hello-go and hello-node: tiny apps with Dockerfile + nook.toml (used by tests and the README)
+│   ├── docker/nook-gateway.Dockerfile   # multi-arch, distroless, non-root; stateless
+│   ├── docker/nook-postgres.Dockerfile  # app database server: PostgreSQL + checksum-pinned WAL-G, multi-arch, no RUN steps
+│   └── docker/nook-db.sh                # nook-postgres entrypoint: init/restore/run, backup, final-archive, tls, dump
+├── examples/                  # hello-go and hello-node: tiny apps with Dockerfile + nook.toml (used by tests and the README);
+│                              #   notes-go: a notes app on an app database (its own module)
 ├── test/e2e/                  # (planned) end-to-end tests
 └── docs/
     ├── architecture.md        # the full system map
